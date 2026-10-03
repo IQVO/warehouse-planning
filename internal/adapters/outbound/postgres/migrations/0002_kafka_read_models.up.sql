@@ -6,9 +6,10 @@
 
 -- processed_events: idempotency guard shared by every inbound Kafka
 -- consumer in this service. (consumer, event_id) is claimed with an
--- INSERT ... ON CONFLICT DO NOTHING *before* any side effect is applied;
--- zero rows affected means this exact event was already handled by this
--- consumer, so the caller skips reprocessing it. This is what makes a
+-- INSERT ... ON CONFLICT DO NOTHING in the SAME transaction as the event's
+-- side effects (ports.UnitOfWork), so a rollback un-claims it; zero rows
+-- affected means a previous, committed handling exists, so the caller skips
+-- reprocessing it. This is what makes a
 -- redelivered ShiftPlanCommitted/LocationSlotRegistered/Decommissioned
 -- message a no-op rather than a double-counted increment.
 CREATE TABLE processed_events (
