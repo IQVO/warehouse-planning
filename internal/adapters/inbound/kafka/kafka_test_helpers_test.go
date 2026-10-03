@@ -2,10 +2,22 @@ package kafka_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"sync"
+	"sync/atomic"
+	"time"
 
+	kafkago "github.com/segmentio/kafka-go"
+
+	kafkaconsumer "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/tally"
+	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
 // testLogger returns a discard-everything logger so tests' expected WARN
@@ -39,4 +51,188 @@ func (f fakeFailingTally) RegisterSlot(context.Context, string, string, string, 
 
 func (f fakeFailingTally) DecommissionSlot(context.Context, string) ([]tally.Update, bool, error) {
 	return nil, false, f.err
+}
+
+// ---------------------------------------------------------------------
+// Atomicity / at-least-once test doubles.
+// ---------------------------------------------------------------------
+
+var errInjected = errors.New("injected transient database failure")
+
+// flakyPCRepo wraps the in-memory ProcessCapacityRepository and injects an
+// infrastructure error into Save and/or Find, to simulate a transient DB
+// failure on the SECOND step of a message (after the tally step already
+// ran). passSaves lets that many Save calls succeed first; the next
+// failSaves calls then fail; later ones succeed again. The embedded repo is
+// still a memory.Snapshotter so the UnitOfWork can roll it back.
+type flakyPCRepo struct {
+	*memory.ProcessCapacityRepo
+	mu        sync.Mutex
+	passSaves int
+	failSaves int
+	failFinds int
+	saveCalls int
+}
+
+func (f *flakyPCRepo) Save(ctx context.Context, pc *processcapacity.ProcessCapacity) error {
+	f.mu.Lock()
+	f.saveCalls++
+	fail := false
+	switch {
+	case f.passSaves > 0:
+		f.passSaves--
+	case f.failSaves > 0:
+		f.failSaves--
+		fail = true
+	}
+	f.mu.Unlock()
+	if fail {
+		return errInjected
+	}
+	return f.ProcessCapacityRepo.Save(ctx, pc)
+}
+
+func (f *flakyPCRepo) FindByProcessLocationWindow(ctx context.Context, pt processcapacity.ProcessType, loc string, s, e time.Time) (*processcapacity.ProcessCapacity, error) {
+	f.mu.Lock()
+	fail := f.failFinds > 0
+	if fail {
+		f.failFinds--
+	}
+	f.mu.Unlock()
+	if fail {
+		return nil, errInjected
+	}
+	return f.ProcessCapacityRepo.FindByProcessLocationWindow(ctx, pt, loc, s, e)
+}
+
+func (f *flakyPCRepo) failSaveAfter(pass, fail int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.passSaves, f.failSaves = pass, fail
+}
+
+// countingUoW counts how often a unit of work was opened, proving a
+// deterministic bad message never even touches the database.
+type countingUoW struct {
+	inner ports.UnitOfWork
+	calls atomic.Int32
+}
+
+func (u *countingUoW) Do(ctx context.Context, fn func(context.Context) error) error {
+	u.calls.Add(1)
+	return u.inner.Do(ctx, fn)
+}
+
+type storageHarness struct {
+	consumer  *kafkaconsumer.StorageCapacityConsumer
+	pcs       *memory.ProcessCapacityRepo // the real store behind flaky
+	flaky     *flakyPCRepo
+	processed *memory.ProcessedEventRepo
+	tally     *memory.StorageTallyRepo
+	uow       *countingUoW
+}
+
+// newStorageHarness wires a StorageCapacityConsumer over transactional
+// in-memory doubles: the UnitOfWork snapshots and, on error, restores the
+// constraint store, the tally AND the processed-event table.
+func newStorageHarness() storageHarness {
+	pcs, processed, tallyRepo := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
+	flaky := &flakyPCRepo{ProcessCapacityRepo: pcs}
+	uow := &countingUoW{inner: memory.NewUnitOfWork(pcs, processed, tallyRepo)}
+	return storageHarness{
+		consumer: &kafkaconsumer.StorageCapacityConsumer{
+			Register:        &usecases.RegisterProcessCapacityConstraint{Repo: flaky},
+			Tally:           tallyRepo,
+			ProcessedEvents: processed,
+			UoW:             uow,
+			Logger:          testLogger(),
+			Retry:           fastRetry,
+		},
+		pcs: pcs, flaky: flaky, processed: processed, tally: tallyRepo, uow: uow,
+	}
+}
+
+type laborHarness struct {
+	consumer  *kafkaconsumer.LaborCapacityConsumer
+	pcs       *memory.ProcessCapacityRepo
+	flaky     *flakyPCRepo
+	processed *memory.ProcessedEventRepo
+	uow       *countingUoW
+}
+
+func newLaborHarness() laborHarness {
+	pcs, processed := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo()
+	flaky := &flakyPCRepo{ProcessCapacityRepo: pcs}
+	uow := &countingUoW{inner: memory.NewUnitOfWork(pcs, processed)}
+	return laborHarness{
+		consumer: &kafkaconsumer.LaborCapacityConsumer{
+			Register:        &usecases.RegisterProcessCapacityConstraint{Repo: flaky},
+			ProcessedEvents: processed,
+			UoW:             uow,
+			Logger:          testLogger(),
+			Retry:           fastRetry,
+		},
+		pcs: pcs, flaky: flaky, processed: processed, uow: uow,
+	}
+}
+
+// fastRetry keeps Run-loop tests quick while still exercising backoff.
+var fastRetry = kafkaconsumer.RetryPolicy{Initial: time.Millisecond, Max: 4 * time.Millisecond}
+
+// fakeReader is a scripted kafkaconsumer.Reader. It records every
+// FetchMessage/CommitMessages in order so a test can assert that the
+// offset was committed only after the handler succeeded, and exactly once.
+// After the scripted messages it blocks until ctx is cancelled, like a
+// real reader on an idle topic.
+type fakeReader struct {
+	mu       sync.Mutex
+	msgs     []kafkago.Message
+	next     int
+	events   []string
+	commitFn func(kafkago.Message) // called (unlocked) after each commit
+}
+
+func newFakeReader(values ...[]byte) *fakeReader {
+	r := &fakeReader{}
+	for i, v := range values {
+		r.msgs = append(r.msgs, kafkago.Message{Partition: 0, Offset: int64(i), Value: v})
+	}
+	return r
+}
+
+func (r *fakeReader) FetchMessage(ctx context.Context) (kafkago.Message, error) {
+	r.mu.Lock()
+	if r.next < len(r.msgs) {
+		m := r.msgs[r.next]
+		r.next++
+		r.events = append(r.events, fmt.Sprintf("fetch:%d", m.Offset))
+		r.mu.Unlock()
+		return m, nil
+	}
+	r.mu.Unlock()
+	<-ctx.Done()
+	return kafkago.Message{}, ctx.Err()
+}
+
+func (r *fakeReader) CommitMessages(_ context.Context, msgs ...kafkago.Message) error {
+	r.mu.Lock()
+	for _, m := range msgs {
+		r.events = append(r.events, fmt.Sprintf("commit:%d", m.Offset))
+	}
+	fn := r.commitFn
+	r.mu.Unlock()
+	if fn != nil {
+		for _, m := range msgs {
+			fn(m)
+		}
+	}
+	return nil
+}
+
+func (r *fakeReader) Close() error { return nil }
+
+func (r *fakeReader) log() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.events...)
 }

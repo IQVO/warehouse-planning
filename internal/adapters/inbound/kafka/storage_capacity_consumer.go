@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -95,12 +96,22 @@ type locationSlotDecommissionedData struct {
 // storageProcessType/tallyRateUnit doc comments for the keying/unit
 // decisions this phase made where the upstream contract and the domain
 // model don't cleanly line up.
+//
+// UoW is REQUIRED: the processed-event claim, the tally mutation and every
+// ProcessCapacity constraint upsert for ONE message run inside a single
+// UoW.Do, so they commit or roll back together -- a failure between the
+// tally step and the constraint step can never leave the two out of sync.
+// Retry tunes the run loop's backoff (zero value = defaults).
 type StorageCapacityConsumer struct {
 	Reader          Reader
 	Register        *usecases.RegisterProcessCapacityConstraint
 	Tally           ports.StorageTallyRepository
 	ProcessedEvents ports.ProcessedEventRepository
+	UoW             ports.UnitOfWork
 	Logger          *slog.Logger
+	Retry           RetryPolicy
+
+	sleep sleepFunc // test hook; nil => real, ctx-cancellable sleep
 }
 
 // NewStorageCapacityConsumer constructs a StorageCapacityConsumer reading
@@ -112,6 +123,7 @@ func NewStorageCapacityConsumer(
 	register *usecases.RegisterProcessCapacityConstraint,
 	tallyRepo ports.StorageTallyRepository,
 	processedEvents ports.ProcessedEventRepository,
+	uow ports.UnitOfWork,
 	logger *slog.Logger,
 ) *StorageCapacityConsumer {
 	return &StorageCapacityConsumer{
@@ -119,22 +131,26 @@ func NewStorageCapacityConsumer(
 		Register:        register,
 		Tally:           tallyRepo,
 		ProcessedEvents: processedEvents,
+		UoW:             uow,
 		Logger:          defaultLogger(logger),
 	}
 }
 
-// Run consumes FacilityTopic until ctx is cancelled or the reader fails.
+// Run consumes FacilityTopic until ctx is cancelled or the reader fails. It
+// is at-least-once: a message's offset is committed only after
+// HandleMessage returned nil, and a transient failure retries the SAME
+// message with capped exponential backoff (see consumeLoop) -- it is never
+// skipped.
 func (c *StorageCapacityConsumer) Run(ctx context.Context) error {
-	for {
-		msg, err := c.Reader.ReadMessage(ctx)
-		if err != nil {
-			return err
-		}
-		if err := c.HandleMessage(ctx, msg.Value); err != nil {
-			c.Logger.ErrorContext(ctx, "storage capacity event handling failed",
-				"error", err, "partition", msg.Partition, "offset", msg.Offset)
-		}
+	loop := consumeLoop{
+		reader: c.Reader,
+		handle: func(ctx context.Context, msg kafkago.Message) error { return c.HandleMessage(ctx, msg.Value) },
+		logger: defaultLogger(c.Logger),
+		name:   "storage capacity consumer",
+		retry:  c.Retry,
+		sleep:  c.sleep,
 	}
+	return loop.run(ctx)
 }
 
 // Close releases the underlying Kafka reader.
@@ -143,9 +159,15 @@ func (c *StorageCapacityConsumer) Close() error {
 }
 
 // HandleMessage decodes one CloudEvents 1.0 message and dispatches it to
-// the matching handler. Anything that fails CloudEvents validation,
-// carries an unrecognized `type`, or has a malformed payload is logged
-// and skipped -- never an error that would stop the consumer.
+// the matching handler.
+//
+// It returns nil for anything deterministic -- failed CloudEvents
+// validation, an unrecognized `type`, a malformed payload, missing fields,
+// an already-processed event id, an untracked decommission, a domain
+// validation rejection (all logged) -- because retrying those can never
+// succeed. It returns a non-nil error ONLY for transient/infrastructure
+// failures, after the unit of work has rolled back (claim, tally and
+// constraint changes all undone), so the caller may retry the same message.
 func (c *StorageCapacityConsumer) HandleMessage(ctx context.Context, value []byte) error {
 	e, err := cloudevents.Decode(value)
 	if err != nil {
@@ -170,92 +192,103 @@ type eventDecoder interface {
 	DataAs(obj any) error
 }
 
-func (c *StorageCapacityConsumer) handleRegistered(ctx context.Context, e eventDecoder) error {
+// claim records this event as processed inside the current unit of work.
+// alreadyProcessed=true means a previous, COMMITTED handling exists (a
+// rolled-back one never counts), so the caller must skip.
+func (c *StorageCapacityConsumer) claim(ctx context.Context, e eventDecoder, eventName string) (alreadyProcessed bool, err error) {
 	claimed, err := c.ProcessedEvents.Claim(ctx, storageConsumerName, e.ID())
 	if err != nil {
-		return err
+		return false, fmt.Errorf("claim processed event: %w", err)
 	}
 	if !claimed {
-		c.Logger.InfoContext(ctx, "skipping already-processed LocationSlotRegistered event", "event_id", e.ID())
+		c.Logger.InfoContext(ctx, "skipping already-processed "+eventName+" event", "event_id", e.ID())
+	}
+	return !claimed, nil
+}
+
+// slotRegistration is a validated LocationSlotRegistered, ready to apply.
+type slotRegistration struct {
+	locationCode string
+	zoneID       string
+	tallyType    string
+	tallyKeys    []string
+}
+
+func (c *StorageCapacityConsumer) handleRegistered(ctx context.Context, e eventDecoder) error {
+	// Pure validation first (no DB): a deterministic bad payload returns
+	// nil without ever opening a transaction.
+	reg, ok := c.parseRegistered(ctx, e)
+	if !ok {
 		return nil
 	}
 
+	return c.UoW.Do(ctx, func(ctx context.Context) error {
+		if skip, err := c.claim(ctx, e, "LocationSlotRegistered"); err != nil || skip {
+			return err
+		}
+		updates, err := c.Tally.RegisterSlot(ctx, reg.locationCode, reg.zoneID, reg.tallyType, reg.tallyKeys)
+		if err != nil {
+			return fmt.Errorf("register slot: %w", err)
+		}
+		if updates == nil {
+			// The slot is already tallied. Safe under redelivery now that
+			// claim + tally + constraint are one transaction: a previous
+			// attempt that got this far also committed the constraint, and
+			// one that failed rolled the tally back too, so this branch
+			// can never mask a stale constraint.
+			c.Logger.InfoContext(ctx, "skipping already-registered locationCode", "location_code", reg.locationCode)
+			return nil
+		}
+		return c.applyTallyUpdates(ctx, updates)
+	})
+}
+
+// parseRegistered decodes and validates a LocationSlotRegistered payload.
+// ok=false means "deterministically unusable: warn and skip".
+func (c *StorageCapacityConsumer) parseRegistered(ctx context.Context, e eventDecoder) (slotRegistration, bool) {
 	var data locationSlotRegisteredData
 	if err := e.DataAs(&data); err != nil {
 		c.Logger.WarnContext(ctx, "skipping malformed LocationSlotRegistered payload", "error", err, "event_id", e.ID())
-		return nil
+		return slotRegistration{}, false
 	}
 	if data.LocationCode == "" || data.ZoneID == "" {
 		c.Logger.WarnContext(ctx, "skipping LocationSlotRegistered with missing locationCode/zoneId", "event_id", e.ID())
-		return nil
+		return slotRegistration{}, false
 	}
 
 	role := data.Role
 	if role == "" {
 		role = roleStorage
 	}
+	reg := slotRegistration{locationCode: data.LocationCode, zoneID: data.ZoneID}
 
 	switch role {
 	case roleStorage:
-		return c.registerStorageSlot(ctx, e, data)
+		// One tally bucket, keyed by locationType.
+		if data.LocationType == "" {
+			c.Logger.WarnContext(ctx, "skipping Storage LocationSlotRegistered with empty locationType", "event_id", e.ID())
+			return slotRegistration{}, false
+		}
+		reg.tallyType = tally.TypeLocation
+		reg.tallyKeys = []string{data.LocationType}
 	case roleWorkCenter:
-		return c.registerWorkCenterSlot(ctx, e, data)
+		// One tally bucket per activity, all keyed by zoneID.
+		if len(data.Activities) == 0 {
+			c.Logger.WarnContext(ctx, "skipping WorkCenter LocationSlotRegistered with no activities", "event_id", e.ID())
+			return slotRegistration{}, false
+		}
+		reg.tallyType = tally.TypeStation
+		for _, a := range data.Activities {
+			reg.tallyKeys = append(reg.tallyKeys, strings.ToUpper(a))
+		}
 	default:
 		c.Logger.WarnContext(ctx, "skipping LocationSlotRegistered with unrecognized role", "role", role, "event_id", e.ID())
-		return nil
+		return slotRegistration{}, false
 	}
-}
-
-// registerStorageSlot handles the role=Storage (or absent) branch of
-// handleRegistered: one tally bucket, keyed by locationType.
-func (c *StorageCapacityConsumer) registerStorageSlot(ctx context.Context, e eventDecoder, data locationSlotRegisteredData) error {
-	if data.LocationType == "" {
-		c.Logger.WarnContext(ctx, "skipping Storage LocationSlotRegistered with empty locationType", "event_id", e.ID())
-		return nil
-	}
-	updates, err := c.Tally.RegisterSlot(ctx, data.LocationCode, data.ZoneID, tally.TypeLocation, []string{data.LocationType})
-	if err != nil {
-		return err
-	}
-	if updates == nil {
-		c.Logger.InfoContext(ctx, "skipping already-registered locationCode", "location_code", data.LocationCode)
-		return nil
-	}
-	return c.applyTallyUpdates(ctx, updates)
-}
-
-// registerWorkCenterSlot handles the role=WorkCenter branch of
-// handleRegistered: one tally bucket per activity, all keyed by zoneID.
-func (c *StorageCapacityConsumer) registerWorkCenterSlot(ctx context.Context, e eventDecoder, data locationSlotRegisteredData) error {
-	if len(data.Activities) == 0 {
-		c.Logger.WarnContext(ctx, "skipping WorkCenter LocationSlotRegistered with no activities", "event_id", e.ID())
-		return nil
-	}
-	keys := make([]string, 0, len(data.Activities))
-	for _, a := range data.Activities {
-		keys = append(keys, strings.ToUpper(a))
-	}
-	updates, err := c.Tally.RegisterSlot(ctx, data.LocationCode, data.ZoneID, tally.TypeStation, keys)
-	if err != nil {
-		return err
-	}
-	if updates == nil {
-		c.Logger.InfoContext(ctx, "skipping already-registered locationCode", "location_code", data.LocationCode)
-		return nil
-	}
-	return c.applyTallyUpdates(ctx, updates)
+	return reg, true
 }
 
 func (c *StorageCapacityConsumer) handleDecommissioned(ctx context.Context, e eventDecoder) error {
-	claimed, err := c.ProcessedEvents.Claim(ctx, storageConsumerName, e.ID())
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		c.Logger.InfoContext(ctx, "skipping already-processed LocationSlotDecommissioned event", "event_id", e.ID())
-		return nil
-	}
-
 	var data locationSlotDecommissionedData
 	if err := e.DataAs(&data); err != nil {
 		c.Logger.WarnContext(ctx, "skipping malformed LocationSlotDecommissioned payload", "error", err, "event_id", e.ID())
@@ -266,21 +299,28 @@ func (c *StorageCapacityConsumer) handleDecommissioned(ctx context.Context, e ev
 		return nil
 	}
 
-	updates, found, err := c.Tally.DecommissionSlot(ctx, data.LocationCode)
-	if err != nil {
-		return err
-	}
-	if !found {
-		// Never crash, never go negative: a decommission for a slot
-		// this consumer never saw registered is logged and skipped.
-		c.Logger.WarnContext(ctx, "decommission received for an untracked slot", "location_code", data.LocationCode, "event_id", e.ID())
-		return nil
-	}
-	return c.applyTallyUpdates(ctx, updates)
+	return c.UoW.Do(ctx, func(ctx context.Context) error {
+		if skip, err := c.claim(ctx, e, "LocationSlotDecommissioned"); err != nil || skip {
+			return err
+		}
+		updates, found, err := c.Tally.DecommissionSlot(ctx, data.LocationCode)
+		if err != nil {
+			return fmt.Errorf("decommission slot: %w", err)
+		}
+		if !found {
+			// Never crash, never go negative: a decommission for a slot
+			// this consumer never saw registered is logged and skipped.
+			c.Logger.WarnContext(ctx, "decommission received for an untracked slot", "location_code", data.LocationCode, "event_id", e.ID())
+			return nil
+		}
+		return c.applyTallyUpdates(ctx, updates)
+	})
 }
 
 // applyTallyUpdates re-registers the ProcessCapacity CapacityConstraint
-// matching each updated tally bucket with its new count. See
+// matching each updated tally bucket with its new count, inside the
+// caller's unit of work. A domain-validation rejection is logged and
+// skipped; any other error (repository/infrastructure) is returned. See
 // storageProcessType/tallyRateUnit's doc comments for the keying
 // decisions:
 //   - TypeLocation (role=Storage): ProcessType=storageProcessType
@@ -324,8 +364,15 @@ func (c *StorageCapacityConsumer) applyTallyUpdates(ctx context.Context, updates
 			Period:         tallyRatePeriod,
 		})
 		if err != nil {
-			c.Logger.WarnContext(ctx, "skipping tally update that failed domain validation", "error", err, "zone_id", u.ZoneID, "tally_type", u.TallyType, "tally_key", u.TallyKey)
-			continue
+			if usecases.IsDomainValidationError(err) {
+				// Deterministic rejection: retrying can never help, and it
+				// must not roll back the tally or fail the message.
+				c.Logger.WarnContext(ctx, "skipping tally update that failed domain validation", "error", err, "zone_id", u.ZoneID, "tally_type", u.TallyType, "tally_key", u.TallyKey)
+				continue
+			}
+			// Infrastructure failure: surface it so the enclosing unit of
+			// work rolls the tally back too and the message is retried.
+			return fmt.Errorf("register %s constraint for %s/%s: %w", u.TallyType, u.ZoneID, u.TallyKey, err)
 		}
 	}
 	return nil

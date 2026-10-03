@@ -17,8 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
 	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
@@ -56,11 +54,12 @@ func run() error {
 	databaseURL := os.Getenv("DATABASE_URL")
 	migrationsPath := getenv("MIGRATIONS_PATH", defaultMigrationsPath)
 
-	pcRepo, pathRepo, processedEvents, storageTally, _, closeAdapters, err := buildAdapters(context.Background(), databaseURL, migrationsPath, logger)
+	ad, closeAdapters, err := buildAdapters(context.Background(), databaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
 	defer closeAdapters()
+	pcRepo, pathRepo := ad.processCapacities, ad.processPaths
 
 	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
 	server := &inboundhttp.Server{
@@ -75,9 +74,20 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	consumers, closeConsumers := startKafkaConsumers(register, processedEvents, storageTally, logger)
+	consumers, closeConsumers := startKafkaConsumers(register, ad.processedEvents, ad.storageTally, ad.uow, logger)
 
 	return serveUntilSignal(logger, httpServer, consumers, closeConsumers)
+}
+
+// adapters is the set of outbound adapters the composition root wires.
+type adapters struct {
+	processCapacities ports.ProcessCapacityRepository
+	processPaths      ports.ProcessPathRepository
+	processedEvents   ports.ProcessedEventRepository
+	storageTally      ports.StorageTallyRepository
+	// uow makes a Kafka message's claim + tally + constraint writes one
+	// atomic transaction; all three repositories above join it via ctx.
+	uow ports.UnitOfWork
 }
 
 // buildAdapters wires the Postgres adapters when DATABASE_URL is set, or
@@ -91,31 +101,43 @@ func run() error {
 // a restart even when DATABASE_URL is set. This is a known limitation,
 // not an oversight: closing it is tracked as follow-up work, not part of
 // Phase 3's Kafka-ingestion scope.
-func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logger *slog.Logger) (
-	ports.ProcessCapacityRepository, ports.ProcessPathRepository, ports.ProcessedEventRepository, ports.StorageTallyRepository, *pgxpool.Pool, func(), error,
-) {
+func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logger *slog.Logger) (adapters, func(), error) {
 	noop := func() {}
 	pathRepo := memory.NewProcessPathRepo()
 
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not configured; using in-memory adapters")
-		return memory.NewProcessCapacityRepo(), pathRepo, memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo(), nil, noop, nil
+		pcRepo, processed, tallyRepo := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
+		return adapters{
+			processCapacities: pcRepo,
+			processPaths:      pathRepo,
+			processedEvents:   processed,
+			storageTally:      tallyRepo,
+			// Participants make the in-memory UoW roll back on error too.
+			uow: memory.NewUnitOfWork(pcRepo, processed, tallyRepo),
+		}, noop, nil
 	}
 
 	if err := postgres.RunMigrations(databaseURL, migrationsPath); err != nil {
-		return nil, nil, nil, nil, nil, noop, err
+		return adapters{}, noop, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
-		return nil, nil, nil, nil, nil, noop, err
+		return adapters{}, noop, err
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, nil, nil, nil, nil, noop, err
+		return adapters{}, noop, err
 	}
 	logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
 
-	return postgres.NewProcessCapacityRepo(pool), pathRepo, postgres.NewProcessedEventRepo(pool), postgres.NewStorageTallyRepo(pool), pool, pool.Close, nil
+	return adapters{
+		processCapacities: postgres.NewProcessCapacityRepo(pool),
+		processPaths:      pathRepo,
+		processedEvents:   postgres.NewProcessedEventRepo(pool),
+		storageTally:      postgres.NewStorageTallyRepo(pool),
+		uow:               postgres.NewUnitOfWork(pool),
+	}, pool.Close, nil
 }
 
 // runningConsumer pairs a started Kafka consumer with the channel that
@@ -131,7 +153,7 @@ type runningConsumer struct {
 // KAFKA_BROKERS is set -- matching the fleet's lazy-dial pattern: a
 // kafka-go Reader never dials synchronously at construction time (see
 // internal/adapters/inbound/kafka/kafka.go's readerConfig doc comment),
-// the real TCP connection only happens inside ReadMessage, which these
+// the real TCP connection only happens inside FetchMessage, which these
 // goroutines call, so nothing here blocks process startup on Kafka being
 // reachable. If KAFKA_BROKERS is unset, Kafka ingestion is simply
 // disabled (logged, not fatal) -- the REST surface still works standalone.
@@ -139,6 +161,7 @@ func startKafkaConsumers(
 	register *usecases.RegisterProcessCapacityConstraint,
 	processedEvents ports.ProcessedEventRepository,
 	storageTally ports.StorageTallyRepository,
+	uow ports.UnitOfWork,
 	logger *slog.Logger,
 ) ([]runningConsumer, func()) {
 	raw := os.Getenv("KAFKA_BROKERS")
@@ -151,8 +174,8 @@ func startKafkaConsumers(
 	laborGroup := getenv("LABOR_CAPACITY_CONSUMER_GROUP", "warehouse-planning-labor-capacity")
 	storageGroup := getenv("STORAGE_CAPACITY_CONSUMER_GROUP", "warehouse-planning-storage-capacity")
 
-	laborConsumer := inboundkafka.NewLaborCapacityConsumer(brokers, laborGroup, register, processedEvents, logger)
-	storageConsumer := inboundkafka.NewStorageCapacityConsumer(brokers, storageGroup, register, storageTally, processedEvents, logger)
+	laborConsumer := inboundkafka.NewLaborCapacityConsumer(brokers, laborGroup, register, processedEvents, uow, logger)
+	storageConsumer := inboundkafka.NewStorageCapacityConsumer(brokers, storageGroup, register, storageTally, processedEvents, uow, logger)
 
 	laborCtx, stopLabor := context.WithCancel(context.Background())
 	storageCtx, stopStorage := context.WithCancel(context.Background())
@@ -162,7 +185,9 @@ func startKafkaConsumers(
 		defer close(laborDone)
 		logger.Info("labor capacity consumer running", "topic", inboundkafka.LaborTopic, "group_id", laborGroup, "brokers", brokers)
 		// Run only ever returns on error (including the plain
-		// context.Canceled of an orderly shutdown), never nil.
+		// context.Canceled of an orderly shutdown), never nil. A message
+		// that fails transiently does NOT end Run: it is retried with
+		// backoff and its offset is committed only after it succeeds.
 		if err := laborConsumer.Run(laborCtx); !errors.Is(err, context.Canceled) {
 			logger.Error("labor capacity consumer stopped", "error", err)
 		}

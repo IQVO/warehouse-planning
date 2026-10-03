@@ -11,7 +11,6 @@ import (
 
 	kafkaconsumer "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
-	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
@@ -40,14 +39,8 @@ func locationSlotEvent(t *testing.T, id, eventName string, occurredAt time.Time,
 }
 
 func newStorageConsumer() (*kafkaconsumer.StorageCapacityConsumer, *memory.ProcessCapacityRepo) {
-	pcRepo := memory.NewProcessCapacityRepo()
-	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
-	return &kafkaconsumer.StorageCapacityConsumer{
-		Register:        register,
-		Tally:           memory.NewStorageTallyRepo(),
-		ProcessedEvents: memory.NewProcessedEventRepo(),
-		Logger:          testLogger(),
-	}, pcRepo
+	h := newStorageHarness()
+	return h.consumer, h.pcs
 }
 
 // TestStorageCapacityConsumer_StorageSlotRegistered_IncrementsTally
