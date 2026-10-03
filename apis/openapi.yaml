@@ -17,6 +17,8 @@ servers:
 tags:
   - name: process-capacities
     description: Native and effective ProcessCapacity registration (Phase 1).
+  - name: process-paths
+    description: ProcessPath registration and normalized ProcessPathCapacity (Phase 2).
 paths:
   /process-capacities:
     post:
@@ -115,6 +117,125 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+  /process-paths:
+    post:
+      operationId: registerProcessPath
+      summary: Register (seed) a ProcessPath read model
+      tags: [process-paths]
+      description: >
+        Seeds a ProcessPath read model (id, name, an ordered non-empty list
+        of step process types) directly, since there is no event-driven
+        sync from process-path-management yet (a later phase). Re-posting
+        an existing id replaces the stored path wholesale.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterProcessPathRequest"
+      responses:
+        "201":
+          description: ProcessPath registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: Empty step list.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /process-paths/{id}/capacity:
+    get:
+      operationId: getProcessPathCapacity
+      summary: Get a ProcessPath's normalized, end-to-end capacity
+      tags: [process-paths]
+      description: >
+        Loads the ProcessPath identified by id, loads each of its steps'
+        ProcessCapacity for the given location and window, normalizes each
+        step's effective rate into ORDER/period via the WorkloadProfile
+        factors supplied on the request (Phase 2 simplification: there is
+        no dedicated WorkloadProfile persistence yet), and returns the
+        minimum normalized rate plus which step is the bottleneck.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: pick-rebin-pack
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: PATH-ZONE-A
+        - name: window_start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: window_end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: units_per_order
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+            exclusiveMinimum: true
+            minimum: 0
+          example: 2.5
+        - name: packages_per_order
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+            exclusiveMinimum: true
+            minimum: 0
+          example: 1
+      responses:
+        "200":
+          description: Normalized ProcessPathCapacity and bottleneck step.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathCapacityResponse"
+        "400":
+          description: Malformed window_start/window_end/units_per_order/packages_per_order.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: No ProcessPath registered under id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            A path step has no registered ProcessCapacity for this
+            location/window, or the WorkloadProfile is missing a needed
+            conversion factor / has an invalid one / cannot normalize a
+            step's native unit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 components:
   schemas:
     RegisterConstraintRequest:
@@ -205,3 +326,46 @@ components:
           type: string
         instance:
           type: string
+    RegisterProcessPathRequest:
+      type: object
+      required:
+        - id
+        - name
+        - steps
+      properties:
+        id:
+          type: string
+          example: pick-rebin-pack
+        name:
+          type: string
+          example: Pick-Rebin-Pack
+        steps:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          example: ["PICK", "REBIN", "PACK"]
+    ProcessPathResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        steps:
+          type: array
+          items:
+            type: string
+    ProcessPathCapacityResponse:
+      type: object
+      properties:
+        normalized_rate:
+          type: number
+          format: double
+          example: 1000
+        normalized_unit:
+          type: string
+          example: ORDER
+        bottleneck_step:
+          type: string
+          example: REBIN

@@ -52,9 +52,12 @@ type world struct {
 // in-memory repo.
 func (w *world) start() {
 	repo := memory.NewProcessCapacityRepo()
+	pathRepo := memory.NewProcessPathRepo()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
+		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
+		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo},
 	}
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.status = 0
@@ -132,6 +135,28 @@ func (w *world) iLookUpTheEffectiveCapacity(ctx context.Context, processType, lo
 	return w.record(ctx, http.MethodGet, path, nil)
 }
 
+// iRegisterAProcessPath handles "I register a process path "<id>" named
+// "<name>" with steps PICK, REBIN, PACK" -- stepsRaw is the raw
+// comma-separated step list as it appears in the Gherkin step text.
+func (w *world) iRegisterAProcessPath(ctx context.Context, id, name, stepsRaw string) error {
+	rawSteps := strings.Split(stepsRaw, ",")
+	steps := make([]string, 0, len(rawSteps))
+	for _, s := range rawSteps {
+		steps = append(steps, strings.TrimSpace(s))
+	}
+	return w.record(ctx, http.MethodPost, "/process-paths", map[string]any{
+		"id":    id,
+		"name":  name,
+		"steps": steps,
+	})
+}
+
+func (w *world) iLookUpTheProcessPathCapacity(ctx context.Context, pathID, location, windowStart, windowEnd string, unitsPerOrder, packagesPerOrder float64) error {
+	path := fmt.Sprintf("/process-paths/%s/capacity?location=%s&window_start=%s&window_end=%s&units_per_order=%v&packages_per_order=%v",
+		pathID, location, windowStart, windowEnd, unitsPerOrder, packagesPerOrder)
+	return w.record(ctx, http.MethodGet, path, nil)
+}
+
 // ----------------------------------------------------------------- Then ----
 
 func (w *world) theResponseStatusIs(expected int) error {
@@ -188,6 +213,23 @@ func (w *world) theProblemDetailTypeIs(slug string) error {
 	return nil
 }
 
+// theProcessPathCapacityResponseReports handles "the process path capacity
+// response reports <rate> ORDER per HOUR bound by <step>".
+func (w *world) theProcessPathCapacityResponseReports(rate float64, unit, _ string, bottleneck string) error {
+	var body struct {
+		NormalizedRate float64 `json:"normalized_rate"`
+		NormalizedUnit string  `json:"normalized_unit"`
+		BottleneckStep string  `json:"bottleneck_step"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	if body.NormalizedRate != rate || body.NormalizedUnit != unit || body.BottleneckStep != bottleneck {
+		return fmt.Errorf("expected %v %s/HOUR bound by %s, got %v %s bound by %s", rate, unit, bottleneck, body.NormalizedRate, body.NormalizedUnit, body.BottleneckStep)
+	}
+	return nil
+}
+
 // ------------------------------------------------------------- wiring ------
 
 // InitializeScenario registers the step definitions and gives every
@@ -209,9 +251,12 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 			return w.iRegisterAConstraint(ctx, constraintType, quantity, unit, processType, location, windowStart, windowEnd)
 		})
 	sc.Step(`^I look up the effective capacity for ([A-Z-]+) at ([A-Z0-9-]+) for the window "([^"]*)" to "([^"]*)"$`, w.iLookUpTheEffectiveCapacity)
+	sc.Step(`^I register a process path "([^"]*)" named "([^"]*)" with steps ([A-Z, ]+)$`, w.iRegisterAProcessPath)
+	sc.Step(`^I look up the capacity of process path "([^"]*)" at "([^"]*)" for the window "([^"]*)" to "([^"]*)" with units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iLookUpTheProcessPathCapacity)
 
 	sc.Step(`^the response status is (\d+)$`, w.theResponseStatusIs)
 	sc.Step(`^the effective capacity response reports (\d+(?:\.\d+)?) (UNIT|LINE|ORDER|PACKAGE) per (HOUR) bound by (LABOR|LOCATION|EQUIPMENT|STATION|CONVEYOR|BUFFER|REPLENISHMENT)$`, w.theEffectiveCapacityResponseReports)
 	sc.Step(`^the effective capacity response lists (\d+) constraints?$`, w.theEffectiveCapacityResponseListsConstraints)
 	sc.Step(`^the problem detail type is "([^"]*)"$`, w.theProblemDetailTypeIs)
+	sc.Step(`^the process path capacity response reports (\d+(?:\.\d+)?) (ORDER) per (HOUR) bound by ([A-Z-]+)$`, w.theProcessPathCapacityResponseReports)
 }

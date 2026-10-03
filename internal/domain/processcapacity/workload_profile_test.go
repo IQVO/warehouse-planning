@@ -113,6 +113,23 @@ func TestWorkloadProfile_NormalizeToOrderRate_OrderPassesThroughUnchanged(t *tes
 	}
 }
 
+// TestWorkloadProfile_NormalizeToOrderRate_PackageWithNonIdentityFactor
+// uses a PackagesPerOrder OTHER than 1 -- the worked example's
+// PackagesPerOrder=1 is an identity value for both `/` and `*`, so a test
+// built only around it would let an ARITHMETIC_BASE mutant flipping the
+// division to a multiplication survive undetected (see
+// .claude/skills/how-to-test.md's zero/origin-value fixture pitfall).
+func TestWorkloadProfile_NormalizeToOrderRate_PackageWithNonIdentityFactor(t *testing.T) {
+	profile := mustWorkloadProfile(t, nil, f64ptr(3))
+	got, err := profile.NormalizeToOrderRate(mustRate(t, 1800, UnitPackage, time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Quantity() != 600 || got.Unit() != UnitOrder || got.Period() != time.Hour {
+		t.Fatalf("expected 600 ORDER/HOUR, got %v %v/%v", got.Quantity(), got.Unit(), got.Period())
+	}
+}
+
 func TestWorkloadProfile_NormalizeToOrderRate_MissingUnitsFactor(t *testing.T) {
 	profile := mustWorkloadProfile(t, nil, f64ptr(1))
 	_, err := profile.NormalizeToOrderRate(mustRate(t, 4000, UnitUnit, time.Hour))
