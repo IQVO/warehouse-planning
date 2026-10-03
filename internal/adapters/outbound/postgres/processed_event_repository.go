@@ -17,10 +17,14 @@ func NewProcessedEventRepo(pool *pgxpool.Pool) *ProcessedEventRepo {
 	return &ProcessedEventRepo{pool: pool}
 }
 
-// Claim atomically records (consumer, eventID) as processed, returning
-// false if it was already recorded by an earlier call.
+// Claim records (consumer, eventID) as processed, returning false if it
+// was already recorded by an earlier call. Called inside a
+// ports.UnitOfWork (the consumers' case) the INSERT is part of the SAME
+// transaction as the event's side effects, so a rollback un-claims it and
+// a redelivery is processed, not skipped. A concurrent claim of the same
+// key blocks on the unique index until the other transaction ends.
 func (r *ProcessedEventRepo) Claim(ctx context.Context, consumer, eventID string) (bool, error) {
-	tag, err := r.pool.Exec(ctx, `
+	tag, err := queryFor(ctx, r.pool).Exec(ctx, `
 		INSERT INTO processed_events (consumer, event_id)
 		VALUES ($1, $2)
 		ON CONFLICT (consumer, event_id) DO NOTHING

@@ -23,16 +23,24 @@ func NewStorageTallyRepo(pool *pgxpool.Pool) *StorageTallyRepo {
 
 // RegisterSlot increments by 1 every tally bucket named by tallyKeys
 // under (zoneID, tallyType) and remembers locationCode's contribution,
-// all inside one transaction. A locationCode already registered is a
+// all inside one transaction (the ctx's, when inside a
+// ports.UnitOfWork; its own otherwise). A locationCode already registered is a
 // no-op (returns nil, nil, nothing incremented).
 func (r *StorageTallyRepo) RegisterSlot(ctx context.Context, locationCode, zoneID, tallyType string, tallyKeys []string) ([]tally.Update, error) {
-	tx, err := r.pool.Begin(ctx)
+	var updates []tally.Update
+	err := inTx(ctx, r.pool, func(q querier) error {
+		var err error
+		updates, err = registerSlot(ctx, q, locationCode, zoneID, tallyType, tallyKeys)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	return updates, nil
+}
 
-	tag, err := tx.Exec(ctx, `
+func registerSlot(ctx context.Context, q querier, locationCode, zoneID, tallyType string, tallyKeys []string) ([]tally.Update, error) {
+	tag, err := q.Exec(ctx, `
 		INSERT INTO location_slot_registration (location_code, zone_id, tally_type, tally_keys)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (location_code) DO NOTHING
@@ -49,7 +57,7 @@ func (r *StorageTallyRepo) RegisterSlot(ctx context.Context, locationCode, zoneI
 	updates := make([]tally.Update, 0, len(tallyKeys))
 	for _, key := range tallyKeys {
 		var count int
-		err := tx.QueryRow(ctx, `
+		err := q.QueryRow(ctx, `
 			INSERT INTO location_slot_tally (zone_id, tally_type, tally_key, count)
 			VALUES ($1, $2, $3, 1)
 			ON CONFLICT (zone_id, tally_type, tally_key)
@@ -61,30 +69,36 @@ func (r *StorageTallyRepo) RegisterSlot(ctx context.Context, locationCode, zoneI
 		}
 		updates = append(updates, tally.Update{ZoneID: zoneID, TallyType: tallyType, TallyKey: key, Count: count})
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
 	return updates, nil
 }
 
 // DecommissionSlot decrements (floored at 0) every tally bucket
 // locationCode previously registered against and forgets the
-// registration, all inside one transaction. found=false means
-// locationCode was never registered.
+// registration, all inside one transaction (the ctx's, when inside a
+// ports.UnitOfWork). found=false means locationCode was never registered.
 func (r *StorageTallyRepo) DecommissionSlot(ctx context.Context, locationCode string) ([]tally.Update, bool, error) {
-	tx, err := r.pool.Begin(ctx)
+	var (
+		updates []tally.Update
+		found   bool
+	)
+	err := inTx(ctx, r.pool, func(q querier) error {
+		var err error
+		updates, found, err = decommissionSlot(ctx, q, locationCode)
+		return err
+	})
 	if err != nil {
 		return nil, false, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	return updates, found, nil
+}
 
+func decommissionSlot(ctx context.Context, q querier, locationCode string) ([]tally.Update, bool, error) {
 	var (
 		zoneID    string
 		tallyType string
 		tallyKeys []string
 	)
-	err = tx.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		DELETE FROM location_slot_registration
 		WHERE location_code = $1
 		RETURNING zone_id, tally_type, tally_keys
@@ -99,7 +113,7 @@ func (r *StorageTallyRepo) DecommissionSlot(ctx context.Context, locationCode st
 	updates := make([]tally.Update, 0, len(tallyKeys))
 	for _, key := range tallyKeys {
 		var count int
-		err := tx.QueryRow(ctx, `
+		err := q.QueryRow(ctx, `
 			UPDATE location_slot_tally
 			SET count = GREATEST(count - 1, 0)
 			WHERE zone_id = $1 AND tally_type = $2 AND tally_key = $3
@@ -117,10 +131,6 @@ func (r *StorageTallyRepo) DecommissionSlot(ctx context.Context, locationCode st
 			}
 		}
 		updates = append(updates, tally.Update{ZoneID: zoneID, TallyType: tallyType, TallyKey: key, Count: count})
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, false, err
 	}
 	return updates, true, nil
 }

@@ -84,3 +84,32 @@ func (r *StorageTallyRepo) DecommissionSlot(_ context.Context, locationCode stri
 	}
 	return updates, true, nil
 }
+
+// Snapshot implements Snapshotter.
+func (r *StorageTallyRepo) Snapshot() func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	regs := make(map[string]slotRegistration, len(r.registrations))
+	for k, v := range r.registrations {
+		v.tallyKeys = append([]string(nil), v.tallyKeys...)
+		regs[k] = v
+	}
+	counts := make(map[string]int, len(r.counts))
+	for k, v := range r.counts {
+		counts[k] = v
+	}
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.registrations = regs
+		r.counts = counts
+	}
+}
+
+// Count returns the current tally for (zoneID, tallyType, tallyKey) --
+// a test inspection helper.
+func (r *StorageTallyRepo) Count(zoneID, tallyType, tallyKey string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.counts[tallyMapKey(zoneID, tallyType, tallyKey)]
+}

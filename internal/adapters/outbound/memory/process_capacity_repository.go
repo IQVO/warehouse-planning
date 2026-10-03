@@ -42,8 +42,36 @@ func (r *ProcessCapacityRepo) Save(_ context.Context, pc *processcapacity.Proces
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	k := keyFor(pc.ProcessType(), pc.Location(), pc.Window().Start().UnixNano(), pc.Window().End().UnixNano())
-	r.store[k] = pc
+	r.store[k] = clonePC(pc)
 	return nil
+}
+
+// clonePC deep-copies pc by replaying its constraints, the same way the
+// Postgres adapter rebuilds an aggregate from rows. Storing and returning
+// copies (never the caller's pointer) makes this double behave like a real
+// store: mutating an aggregate after Find has no effect until Save.
+func clonePC(pc *processcapacity.ProcessCapacity) *processcapacity.ProcessCapacity {
+	cp := processcapacity.NewProcessCapacity(pc.ProcessType(), pc.Location(), pc.Window())
+	for _, entry := range pc.Constraints() {
+		// Cannot fail: pc's constraints already share one native unit.
+		_ = cp.AddConstraint(entry.Type, entry.Rate)
+	}
+	return cp
+}
+
+// Snapshot implements Snapshotter.
+func (r *ProcessCapacityRepo) Snapshot() func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	saved := make(map[processCapacityKey]*processcapacity.ProcessCapacity, len(r.store))
+	for k, pc := range r.store {
+		saved[k] = clonePC(pc)
+	}
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.store = saved
+	}
 }
 
 // FindByProcessLocationWindow returns the stored ProcessCapacity for the
@@ -61,5 +89,5 @@ func (r *ProcessCapacityRepo) FindByProcessLocationWindow(
 	if !ok {
 		return nil, nil
 	}
-	return pc, nil
+	return clonePC(pc), nil
 }

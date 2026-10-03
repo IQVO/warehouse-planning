@@ -23,20 +23,22 @@ func NewProcessCapacityRepo(pool *pgxpool.Pool) *ProcessCapacityRepo {
 }
 
 // Save upserts pc's identity row and replaces its full set of constraint
-// rows, all inside one transaction -- the aggregate's in-memory constraint
+// rows, all inside one transaction -- the one carried by ctx when the call
+// runs inside a ports.UnitOfWork (it then neither begins nor commits its
+// own), otherwise its own. The aggregate's in-memory constraint
 // map is always the single source of truth for what should be persisted,
 // so deleting and reinserting every constraint row is simpler and just as
 // correct as a per-row diff/upsert.
 func (r *ProcessCapacityRepo) Save(ctx context.Context, pc *processcapacity.ProcessCapacity) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	return inTx(ctx, r.pool, func(q querier) error {
+		return savePC(ctx, q, pc)
+	})
+}
 
+func savePC(ctx context.Context, q querier, pc *processcapacity.ProcessCapacity) error {
 	start, end := pc.Window().Start(), pc.Window().End()
 
-	_, err = tx.Exec(ctx, `
+	_, err := q.Exec(ctx, `
 		INSERT INTO process_capacity (process_type, location, window_start, window_end, native_unit)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (process_type, location, window_start, window_end)
@@ -46,7 +48,7 @@ func (r *ProcessCapacityRepo) Save(ctx context.Context, pc *processcapacity.Proc
 		return err
 	}
 
-	_, err = tx.Exec(ctx, `
+	_, err = q.Exec(ctx, `
 		DELETE FROM process_capacity_constraint
 		WHERE process_type = $1 AND location = $2 AND window_start = $3 AND window_end = $4
 	`, string(pc.ProcessType()), pc.Location(), start, end)
@@ -55,7 +57,7 @@ func (r *ProcessCapacityRepo) Save(ctx context.Context, pc *processcapacity.Proc
 	}
 
 	for i, entry := range pc.Constraints() {
-		_, err = tx.Exec(ctx, `
+		_, err = q.Exec(ctx, `
 			INSERT INTO process_capacity_constraint
 				(process_type, location, window_start, window_end, constraint_type, quantity, period_seconds, ordinal)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -64,8 +66,7 @@ func (r *ProcessCapacityRepo) Save(ctx context.Context, pc *processcapacity.Proc
 			return err
 		}
 	}
-
-	return tx.Commit(ctx)
+	return nil
 }
 
 // FindByProcessLocationWindow returns the ProcessCapacity for the given
@@ -76,7 +77,8 @@ func (r *ProcessCapacityRepo) FindByProcessLocationWindow(
 	location string,
 	windowStart, windowEnd time.Time,
 ) (*processcapacity.ProcessCapacity, error) {
-	row := r.pool.QueryRow(ctx, `
+	q := queryFor(ctx, r.pool)
+	row := q.QueryRow(ctx, `
 		SELECT native_unit FROM process_capacity
 		WHERE process_type = $1 AND location = $2 AND window_start = $3 AND window_end = $4
 	`, string(processType), location, windowStart, windowEnd)
@@ -95,7 +97,7 @@ func (r *ProcessCapacityRepo) FindByProcessLocationWindow(
 	}
 	pc := processcapacity.NewProcessCapacity(processType, location, window)
 
-	rows, err := r.pool.Query(ctx, `
+	rows, err := q.Query(ctx, `
 		SELECT constraint_type, quantity, period_seconds
 		FROM process_capacity_constraint
 		WHERE process_type = $1 AND location = $2 AND window_start = $3 AND window_end = $4
