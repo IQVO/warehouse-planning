@@ -88,6 +88,56 @@ Confirmed 2026-10-03 against each producer's own `apis/asyncapi.yaml` on
 carries `path_id`/`required_capabilities`/`eligibility`, never an ordered
 step sequence, so there is nothing structural to sync.
 
+### Keying decisions Phase 3 actually made
+
+The table above states WHAT is tallied; this section states how each
+tally is mapped onto `ProcessCapacity`'s `(ProcessType, Location,
+CapacityWindow)` identity, since the Addendum left the exact keying to
+the implementation:
+
+- **LABOR** (ShiftPlanCommitted): a clean fit -- `ProcessType` =
+  uppercase(`path_id`), `Location` = `building_id`, `CapacityWindow` =
+  `[event.time, event.time + planned_hours)`. Rate =
+  `planned_heads * planned_rate` registered as `UNIT/HOUR` (documented
+  default -- `planned_rate`'s native unit is not specified upstream).
+- **STATION** (WorkCenter activity): a clean fit -- `ProcessType` = the
+  uppercased activity itself (e.g. `PACK`), `Location` = `zoneId`. One
+  `ProcessCapacity` per (zone, activity).
+- **LOCATION** (role=Storage, tallied per `(zoneId, locationType)`): NOT
+  a clean fit. A bare position count has no naturally implied
+  `ProcessType` the way a WorkCenter activity does, and `ConstraintType`
+  is a single fixed vocabulary entry (`LOCATION`), not parameterized per
+  `locationType` -- so two distinct `locationType`s in the same zone
+  would overwrite each other's constraint on one aggregate if keyed by
+  zone alone. Phase 3's pragmatic choice: a sentinel
+  `ProcessType="STORAGE"`, with `locationType` folded into a composite
+  `Location = "<zoneId>:<locationType>"`. This is a workaround, not a
+  clean domain fit -- a future ADR might introduce a dedicated
+  `StorageCapacity` concept keyed by `(Location, LocationType, Window)`
+  instead of forcing it onto `ProcessCapacity`'s identity.
+- Both LOCATION and STATION tallies are a standing structural count, not
+  a time-sliced rate, so they are registered under a fixed, deterministic
+  `CapacityWindow` (`[epoch, epoch+100y)`,
+  `internal/adapters/inbound/kafka.StandingWindowStart/End`) rather than
+  a window derived from the triggering event's time -- repeated
+  registrations for the same (zone, key) then land on the SAME aggregate.
+  The quantity is registered as `CapacityUnit=LINE` (the nearest fit of
+  the domain's four units to "a count of positions/stations", paired
+  with a 1-hour period purely to satisfy `CapacityRate`'s required
+  period, not because this is an actual per-hour throughput figure).
+
+### Idempotency (processed_events)
+
+Every inbound Kafka consumer claims (consumer name, CloudEvents `id`) in
+a shared `processed_events` table BEFORE applying any side effect
+(`ports.ProcessedEventRepository.Claim`, an `INSERT ... ON CONFLICT DO
+NOTHING` whose affected-row-count tells the caller whether this exact
+event was already handled). This matters most for the storage/station
+tally: it is an INCREMENT/DECREMENT, not a plain upsert, so "redelivery
+is naturally idempotent" does not hold the way it does for LABOR's
+overwrite-style `AddConstraint` -- a redelivered `LocationSlotRegistered`
+without this guard would double-count a real physical slot.
+
 ## Consumer group id
 
 Every Kafka consumer group id MUST come from an env var, never a hardcoded
