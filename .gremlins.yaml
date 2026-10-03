@@ -21,11 +21,14 @@ unleash:
   threshold:
     # gremlins fails when the measured value is <= the threshold
     # (internal/report/report.go in gremlins itself), so a threshold must
-    # sit strictly BELOW the number this repo can meet today. Measure
-    # first (`make mutation-full`), THEN set these -- don't guess/copy a
-    # sibling repo's numbers, every domain layer's mutant survivability
-    # differs. See HARNESS.md's mutation-testing section for the
-    # tagless-switch-under-reports pitfall before assuming a low number
-    # means missing tests.
-    efficacy: "{{MEASURED_EFFICACY_MINUS_1}}"
-    mutant-coverage: "{{MEASURED_MUTANT_COVERAGE_MINUS_1}}"
+    # sit strictly BELOW the number this repo can meet today. Measured on
+    # 2026-10-03 (local gremlins v0.6.0, matching CI's pin): efficacy
+    # 100.00% and mutant coverage 100.00% on ./internal/domain/processcapacity
+    # (9 mutants, all killed; see HARNESS.md's mutation-testing section for
+    # the tagless-switch-under-reports pitfall this package avoided by
+    # using an if/if/return chain in EffectiveRate rather than a switch).
+    # 99 locks in today's quality and fails CI the moment a single mutant
+    # survives, mirroring the 90% coverage gate's "just under what we
+    # already achieve" approach -- never copied from a sibling repo.
+    efficacy: 99
+    mutant-coverage: 99
