@@ -1,0 +1,94 @@
+package postgres
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+)
+
+// CapacityPlanRepo is a pgxpool-backed ports.CapacityPlanRepository. Inside
+// a ports.UnitOfWork it uses the transaction carried by ctx (pgtx), so its
+// Save commits together with the outbox insert.
+type CapacityPlanRepo struct {
+	pool *pgxpool.Pool
+}
+
+// NewCapacityPlanRepo constructs a CapacityPlanRepo over pool.
+func NewCapacityPlanRepo(pool *pgxpool.Pool) *CapacityPlanRepo {
+	return &CapacityPlanRepo{pool: pool}
+}
+
+// Save upserts the plan row. Only state is persisted; pending domain
+// events go through the outbox.
+func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPlan) error {
+	var publishedAt *time.Time
+	if !p.PublishedAt().IsZero() {
+		t := p.PublishedAt()
+		publishedAt = &t
+	}
+	_, err := queryFor(ctx, r.pool).Exec(ctx, `
+		INSERT INTO capacity_plans (
+			id, warehouse_id, location, window_start, window_end, process_path_id,
+			assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
+			status, created_at, published_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		ON CONFLICT (id) DO UPDATE SET
+			status = EXCLUDED.status,
+			published_at = EXCLUDED.published_at
+	`, p.ID(), p.WarehouseID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
+		p.AssignedDemand(), p.PathCapacity(), string(p.BottleneckStep()), p.CapacityOverWindow(), p.Shortage(),
+		string(p.Status()), p.CreatedAt(), publishedAt)
+	return err
+}
+
+// FindByID loads the plan, or (nil, nil) if there is none. Inside a
+// UnitOfWork the row is locked (FOR UPDATE) until the transaction ends, so
+// two concurrent publishes of the same DRAFT plan serialize and the second
+// observes PUBLISHED.
+func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacityplan.CapacityPlan, error) {
+	query := `
+		SELECT warehouse_id, location, window_start, window_end, process_path_id,
+		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
+		       status, created_at, published_at
+		FROM capacity_plans WHERE id = $1`
+	q := queryFor(ctx, r.pool)
+	if _, inTx := q.(pgx.Tx); inTx {
+		query += " FOR UPDATE"
+	}
+
+	var (
+		p                      capacityplan.RehydrateParams
+		windowStart, windowEnd time.Time
+		bottleneck, status     string
+		publishedAt            *time.Time
+	)
+	p.ID = id
+	err := q.QueryRow(ctx, query, id).Scan(
+		&p.WarehouseID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
+		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
+		&status, &p.CreatedAt, &publishedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	p.Window, err = processcapacity.NewCapacityWindow(windowStart.UTC(), windowEnd.UTC())
+	if err != nil {
+		return nil, err
+	}
+	p.BottleneckStep = processcapacity.ProcessType(bottleneck)
+	p.Status = capacityplan.Status(status)
+	p.CreatedAt = p.CreatedAt.UTC()
+	if publishedAt != nil {
+		p.PublishedAt = publishedAt.UTC()
+	}
+	return capacityplan.Rehydrate(p), nil
+}
