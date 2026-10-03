@@ -104,11 +104,10 @@ func shiftPlanCommittedWireEvent(t *testing.T, id string, occurredAt time.Time, 
 // ProcessedEventRepo pair backed by it (mirrors
 // internal/adapters/outbound/postgres/process_capacity_repository_integration_test.go's
 // recipe).
-func startPostgresForKafkaTests(t *testing.T) (*postgres.ProcessCapacityRepo, *postgres.ProcessedEventRepo, *postgres.StorageTallyRepo) {
+func startPostgresForKafkaTests(t *testing.T) (*postgres.ProcessCapacityRepo, *postgres.ProcessedEventRepo, *postgres.StorageTallyRepo, *postgres.UnitOfWork) {
 	t.Helper()
-	databaseURL, pool := startPostgresPool(t)
-	_ = databaseURL
-	return postgres.NewProcessCapacityRepo(pool), postgres.NewProcessedEventRepo(pool), postgres.NewStorageTallyRepo(pool)
+	fx := startPgFixture(t)
+	return fx.pcs, fx.processed, fx.tally, fx.uow
 }
 
 // TestLaborCapacityConsumer_Integration_RealKafkaAndPostgres proves a
@@ -120,7 +119,7 @@ func TestLaborCapacityConsumer_Integration_RealKafkaAndPostgres(t *testing.T) {
 	topic := uniqueTopic("warehouse.workforce.events")
 	createTopic(t, brokers, topic)
 
-	pcRepo, processedRepo, _ := startPostgresForKafkaTests(t)
+	pcRepo, processedRepo, _, uow := startPostgresForKafkaTests(t)
 	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
 
 	occurredAt := time.Date(2026, 10, 5, 6, 0, 0, 0, time.UTC)
@@ -140,6 +139,7 @@ func TestLaborCapacityConsumer_Integration_RealKafkaAndPostgres(t *testing.T) {
 		Reader:          kafkago.NewReader(kafkago.ReaderConfig{Brokers: brokers, Topic: topic, GroupID: uniqueGroupID("labor-capacity")}),
 		Register:        register,
 		ProcessedEvents: processedRepo,
+		UoW:             uow,
 		Logger:          testLogger(),
 	}
 	defer func() { _ = c.Close() }()

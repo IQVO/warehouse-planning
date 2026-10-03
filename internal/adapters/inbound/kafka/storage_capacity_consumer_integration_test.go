@@ -58,7 +58,7 @@ func TestStorageCapacityConsumer_Integration_RealKafkaAndPostgres(t *testing.T) 
 	topic := uniqueTopic("warehouse.facility.events")
 	createTopic(t, brokers, topic)
 
-	pcRepo, processedRepo, tallyRepo := startPostgresForKafkaTests(t)
+	pcRepo, processedRepo, tallyRepo, uow := startPostgresForKafkaTests(t)
 	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
 
 	c := &kafkaconsumer.StorageCapacityConsumer{
@@ -66,6 +66,7 @@ func TestStorageCapacityConsumer_Integration_RealKafkaAndPostgres(t *testing.T) 
 		Register:        register,
 		Tally:           tallyRepo,
 		ProcessedEvents: processedRepo,
+		UoW:             uow,
 		Logger:          testLogger(),
 	}
 	defer func() { _ = c.Close() }()
