@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
@@ -134,17 +135,9 @@ func TestHandler_CapacityPlan_WorkedExample(t *testing.T) {
 		t.Errorf("Content-Type = %q", ct)
 	}
 	plan := decodePlan(t, body)
-	want := planJSON{
-		WarehouseID: "WH-1", Location: "PATH-ZONE-A", WindowStart: planStart, WindowEnd: planEnd, PathID: "pick-rebin-pack",
-		AssignedDemand: 12000, Status: "DRAFT", PathCapacity: 1000, BottleneckStep: "REBIN", CapacityOverWindow: 8000, Shortage: 4000,
-	}
-	if plan.ID == "" || plan.CreatedAt == "" || plan.PublishedAt != nil {
-		t.Errorf("id/created/published = %q/%q/%v", plan.ID, plan.CreatedAt, plan.PublishedAt)
-	}
-	got := plan
-	got.ID, got.CreatedAt = "", ""
-	if got != want {
-		t.Errorf("plan = %+v\nwant %+v", got, want)
+	assertWorkedExamplePlan(t, plan, "DRAFT")
+	if plan.PublishedAt != nil {
+		t.Errorf("DRAFT plan has published_at %v", *plan.PublishedAt)
 	}
 
 	// GET returns the same plan.
@@ -162,32 +155,55 @@ func TestHandler_CapacityPlan_WorkedExample(t *testing.T) {
 		t.Fatalf("publish = %d: %s", status, body)
 	}
 	published := decodePlan(t, body)
-	if published.Status != "PUBLISHED" || published.PublishedAt == nil || published.Shortage != 4000 {
-		t.Errorf("published = %+v", published)
+	assertWorkedExamplePlan(t, published, "PUBLISHED")
+	if published.PublishedAt == nil {
+		t.Error("published plan has no published_at")
 	}
-	var types []string
-	for _, m := range srv.outbox.Messages() {
-		types = append(types, m.EventType)
-	}
-	prefix := "com.warehouse.wes.warehouse-planning.capacityplan."
-	wantTypes := []string{prefix + "CapacityPlanCreated", prefix + "CapacityPlanPublished", prefix + "CapacityShortageDetected", prefix + "BottleneckDetected"}
-	if len(types) != 4 || types[0] != wantTypes[0] || types[1] != wantTypes[1] || types[2] != wantTypes[2] || types[3] != wantTypes[3] {
-		t.Errorf("outbox types = %v, want %v", types, wantTypes)
-	}
+	assertOutboxTypes(t, srv.outbox, "CapacityPlanCreated", "CapacityPlanPublished", "CapacityShortageDetected", "BottleneckDetected")
 
 	// Second publish -> 409 and nothing new queued.
 	status, headers, body = postJSON(t, srv.Server, "/capacity-plans/"+plan.ID+"/publish", nil)
 	if status != http.StatusConflict || headers.Get("Content-Type") != "application/problem+json" || problemType(t, body) != "capacity-plan-already-published" {
 		t.Errorf("second publish = %d %s %s", status, headers.Get("Content-Type"), body)
 	}
-	if n := len(srv.outbox.Messages()); n != 4 {
-		t.Errorf("outbox grew to %d on a rejected publish", n)
-	}
+	assertOutboxTypes(t, srv.outbox, "CapacityPlanCreated", "CapacityPlanPublished", "CapacityShortageDetected", "BottleneckDetected")
 
 	// GET after publish reflects the new state.
 	_, _, body = getPath(t, srv.Server, "/capacity-plans/"+plan.ID)
 	if decodePlan(t, body).Status != "PUBLISHED" {
 		t.Errorf("GET after publish = %s", body)
+	}
+}
+
+// assertWorkedExamplePlan checks every field of the section-43 plan
+// (12000 orders, 8h, 1000 ORDER/h, REBIN) except the generated ones.
+func assertWorkedExamplePlan(t *testing.T, plan planJSON, status string) {
+	t.Helper()
+	want := planJSON{
+		WarehouseID: "WH-1", Location: "PATH-ZONE-A", WindowStart: planStart, WindowEnd: planEnd, PathID: "pick-rebin-pack",
+		AssignedDemand: 12000, Status: status, PathCapacity: 1000, BottleneckStep: "REBIN", CapacityOverWindow: 8000, Shortage: 4000,
+	}
+	if plan.ID == "" || plan.CreatedAt == "" {
+		t.Errorf("id/created_at = %q/%q", plan.ID, plan.CreatedAt)
+	}
+	got := plan
+	got.ID, got.CreatedAt, got.PublishedAt = "", "", nil
+	if got != want {
+		t.Errorf("plan = %+v\nwant %+v", got, want)
+	}
+}
+
+func assertOutboxTypes(t *testing.T, ob *memory.OutboxRepo, names ...string) {
+	t.Helper()
+	var got, want []string
+	for _, m := range ob.Messages() {
+		got = append(got, m.EventType)
+	}
+	for _, n := range names {
+		want = append(want, "com.warehouse.wes.warehouse-planning.capacityplan."+n)
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("outbox types = %v, want %v", got, want)
 	}
 }
 

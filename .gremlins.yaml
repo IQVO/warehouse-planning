@@ -31,6 +31,16 @@ unleash:
     # (99) still holds -- not lowered, just re-confirmed against the
     # larger mutant set so a future reader knows this comment reflects
     # the package's current contents, not just Phase 1's.
+    #
+    # Re-measured 2026-10-03 (Phase 4, local gremlins v0.6.0) after adding
+    # ./internal/domain/capacityplan: `gremlins unleash ./internal/domain
+    # --workers 1 --timeout-coefficient 30` -> 36 mutants, 36 killed, 0
+    # lived, 0 not covered; efficacy 100.00% and mutant coverage 100.00%
+    # (capacityplan alone: 14 mutants, all killed). The shortage guard uses
+    # math.Max(0, demand-capacity) rather than an `if demand > capacity`,
+    # which would leave an equivalent `>` -> `>=` mutant (both yield 0 at
+    # the boundary); the `shortage > 0` event gate is pinned by the exact
+    # 8000 boundary test. The threshold (99) is unchanged -- not lowered.
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we
     # already achieve" approach -- never copied from a sibling repo.

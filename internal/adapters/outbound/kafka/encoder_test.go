@@ -1,12 +1,12 @@
 package kafka
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/claudioed/warehouse-planning/internal/adapters/kafka/cloudevents"
+	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 )
 
@@ -76,43 +76,45 @@ func TestGolden_PublishedTypes(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			msgs, err := goldenEncoder().Encode(tc.event)
-			if err != nil || len(msgs) != 1 {
-				t.Fatalf("Encode = %d msgs, %v", len(msgs), err)
-			}
-			m := msgs[0]
-			if string(m.Value) != tc.want {
-				t.Errorf("value =\n%s\nwant\n%s", m.Value, tc.want)
-			}
-			if m.Topic != "warehouse.warehouse-planning.events" {
-				t.Errorf("Topic = %q", m.Topic)
-			}
-			if wantType := "com.warehouse.wes.warehouse-planning.capacityplan." + tc.name; m.EventType != wantType {
-				t.Errorf("EventType = %q, want %q (full CloudEvents type)", m.EventType, wantType)
-			}
-			if m.EventID != goldenEvtID || m.Subject != goldenPlanID || string(m.Key) != goldenPlanID {
-				t.Errorf("id/subject/key = %q/%q/%q", m.EventID, m.Subject, m.Key)
-			}
-			if want := "urn:warehouse:warehouse-planning:events:" + tc.name + ":v1"; m.DataSchema != want {
-				t.Errorf("DataSchema = %q, want %q", m.DataSchema, want)
-			}
-			if len(m.Headers) != 1 || m.Headers[0].Key != "content-type" || m.Headers[0].Value != wantCT {
-				t.Errorf("Headers = %+v, want exactly the content-type header", m.Headers)
-			}
-			// The persisted header is the helper's header, byte for byte.
-			if ct := cloudevents.ContentTypeHeader(); m.Headers[0].Key != ct.Key || m.Headers[0].Value != string(ct.Value) {
-				t.Errorf("header differs from cloudevents.ContentTypeHeader()")
-			}
-			// Round-trips through the validating decoder, and stays valid JSON.
-			ev, err := cloudevents.Decode(m.Value)
-			if err != nil || ev.ID() != goldenEvtID || ev.Type() != m.EventType {
-				t.Errorf("Decode = %v, %v", ev, err)
-			}
-			if !json.Valid(m.Value) {
-				t.Error("value is not valid JSON")
-			}
-		})
+		t.Run(tc.name, func(t *testing.T) { assertGolden(t, tc.name, tc.event, tc.want) })
+	}
+}
+
+func assertGolden(t *testing.T, name string, event capacityplan.Event, want string) {
+	t.Helper()
+	msgs, err := goldenEncoder().Encode(event)
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("Encode = %d msgs, %v", len(msgs), err)
+	}
+	m := msgs[0]
+	if string(m.Value) != want {
+		t.Errorf("value =\n%s\nwant\n%s", m.Value, want)
+	}
+	if m.Topic != "warehouse.warehouse-planning.events" {
+		t.Errorf("Topic = %q", m.Topic)
+	}
+	if wantType := "com.warehouse.wes.warehouse-planning.capacityplan." + name; m.EventType != wantType {
+		t.Errorf("EventType = %q, want %q (full CloudEvents type)", m.EventType, wantType)
+	}
+	if m.EventID != goldenEvtID || m.Subject != goldenPlanID || string(m.Key) != goldenPlanID {
+		t.Errorf("id/subject/key = %q/%q/%q", m.EventID, m.Subject, m.Key)
+	}
+	if wantSchema := "urn:warehouse:warehouse-planning:events:" + name + ":v1"; m.DataSchema != wantSchema {
+		t.Errorf("DataSchema = %q, want %q", m.DataSchema, wantSchema)
+	}
+	assertGoldenHeaderAndDecode(t, m)
+}
+
+func assertGoldenHeaderAndDecode(t *testing.T, m outbox.Message) {
+	t.Helper()
+	ct := cloudevents.ContentTypeHeader()
+	if len(m.Headers) != 1 || m.Headers[0].Key != "content-type" || m.Headers[0].Value != wantCT ||
+		m.Headers[0].Key != ct.Key || m.Headers[0].Value != string(ct.Value) {
+		t.Errorf("Headers = %+v, want exactly the content-type header from cloudevents.ContentTypeHeader()", m.Headers)
+	}
+	// Round-trips through the validating decoder.
+	if ev, err := cloudevents.Decode(m.Value); err != nil || ev.ID() != goldenEvtID || ev.Type() != m.EventType {
+		t.Errorf("Decode = %v, %v", ev, err)
 	}
 }
 
