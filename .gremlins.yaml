@@ -21,12 +21,16 @@ unleash:
   threshold:
     # gremlins fails when the measured value is <= the threshold
     # (internal/report/report.go in gremlins itself), so a threshold must
-    # sit strictly BELOW the number this repo can meet today. Measured on
-    # 2026-10-03 (local gremlins v0.6.0, matching CI's pin): efficacy
-    # 100.00% and mutant coverage 100.00% on ./internal/domain/processcapacity
-    # (9 mutants, all killed; see HARNESS.md's mutation-testing section for
-    # the tagless-switch-under-reports pitfall this package avoided by
-    # using an if/if/return chain in EffectiveRate rather than a switch).
+    # sit strictly BELOW the number this repo can meet today.
+    #
+    # Re-measured 2026-10-03 (Phase 2, local gremlins v0.6.0, matching
+    # CI's pin) after adding WorkloadProfile, ComputeProcessPathCapacity
+    # and ProcessPath to ./internal/domain/processcapacity: efficacy
+    # 100.00% and mutant coverage 100.00% across 21 mutants (up from the
+    # original 9 at Phase 1), all killed. The threshold value itself
+    # (99) still holds -- not lowered, just re-confirmed against the
+    # larger mutant set so a future reader knows this comment reflects
+    # the package's current contents, not just Phase 1's.
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we
     # already achieve" approach -- never copied from a sibling repo.
