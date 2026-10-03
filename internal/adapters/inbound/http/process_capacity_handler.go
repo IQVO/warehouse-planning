@@ -28,6 +28,13 @@ type Server struct {
 	// GetProcessPathCapacity computes a ProcessPath's normalized,
 	// end-to-end capacity and bottleneck step.
 	GetProcessPathCapacity *usecases.GetProcessPathCapacity
+
+	// CreateCapacityPlan and PublishCapacityPlan back the Phase 4
+	// /capacity-plans endpoints; CapacityPlans is the read port behind
+	// GET /capacity-plans/{id}.
+	CreateCapacityPlan  *usecases.CreateCapacityPlan
+	PublishCapacityPlan *usecases.PublishCapacityPlan
+	CapacityPlans       ports.CapacityPlanRepository
 }
 
 // DefaultServiceName labels this service for logs/telemetry when the
@@ -57,6 +64,9 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/process-capacities", s.handleGetEffectiveProcessCapacity)
 	r.Post("/process-paths", s.handleRegisterProcessPath)
 	r.Get("/process-paths/{id}/capacity", s.handleGetProcessPathCapacity)
+	r.Post("/capacity-plans", s.handleCreateCapacityPlan)
+	r.Post("/capacity-plans/{id}/publish", s.handlePublishCapacityPlan)
+	r.Get("/capacity-plans/{id}", s.handleGetCapacityPlan)
 
 	return r
 }
