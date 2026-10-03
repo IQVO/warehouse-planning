@@ -1,7 +1,9 @@
 # Cross-service integration events (Kafka)
 
-This service both PUBLISHES and CONSUMES. Publishes capacity-plan/shortage
-events to `warehouse.warehouse-planning.events` (Phase 1+4). Consumes
+This service both PUBLISHES and CONSUMES. Publishes the four CapacityPlan
+events to `warehouse.warehouse-planning.events` (Phase 4, through a
+transactional outbox -- see "Publishing: the transactional outbox" below).
+Consumes
 labor and storage/station events from `workforce-management` and
 `facility-layout` (Phase 3) to keep local read models current without ever
 making a live cross-context call. Does NOT consume from
@@ -40,7 +42,9 @@ there is nothing to "choose" here:
   No custom extension attributes without an ADR.
 - `type` = `com.warehouse.wes.warehouse-planning.<entity>.<EventName>`
   (this context is `wes`-tier; `wms` is reserved for
-  `facility-layout`/`inventory-storage` only). The SAME `type` names the
+  `facility-layout`/`inventory-storage` only). `<entity>` is the AGGREGATE
+  that raised the event, lowercase, no separators -- `capacityplan`, never
+  `capacity-plan`. The SAME `type` names the
   occurrence on both the integration and the analytics topic; `dataschema`
   names the payload shape. Breaking payload change => new `.v2` type + new
   dataschema version, never mutate an existing one.
@@ -61,17 +65,67 @@ context never makes a live cross-context REST/MCP call instead.
 
 ### Published types
 
-| `type` | topic(s) | `subject` | `dataschema` |
-| --- | --- | --- | --- |
-| `com.warehouse.wes.warehouse-planning.process-capacity.ProcessCapacityRegistered` | `warehouse.warehouse-planning.events` | `<processType>:<location>:<windowStart>` | `urn:warehouse:warehouse-planning:events:ProcessCapacityRegistered:v1` |
-| `com.warehouse.wes.warehouse-planning.process-capacity.ProcessCapacityChanged` | `warehouse.warehouse-planning.events` | `<processType>:<location>:<windowStart>` | `urn:warehouse:warehouse-planning:events:ProcessCapacityChanged:v1` |
-| `com.warehouse.wes.warehouse-planning.capacity-plan.CapacityPlanCreated` | `warehouse.warehouse-planning.events` | capacity plan id | `urn:warehouse:warehouse-planning:events:CapacityPlanCreated:v1` |
-| `com.warehouse.wes.warehouse-planning.capacity-plan.CapacityPlanPublished` | `warehouse.warehouse-planning.events` | capacity plan id | `urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1` |
-| `com.warehouse.wes.warehouse-planning.capacity-plan.CapacityShortageDetected` | `warehouse.warehouse-planning.events` | capacity plan id | `urn:warehouse:warehouse-planning:events:CapacityShortageDetected:v1` |
-| `com.warehouse.wes.warehouse-planning.capacity-plan.BottleneckDetected` | `warehouse.warehouse-planning.events` | capacity plan id | `urn:warehouse:warehouse-planning:events:BottleneckDetected:v1` |
+Implemented in Phase 4 (encoded by `internal/adapters/outbound/kafka/encoder.go`
+through the `cloudevents` helper; golden exact-JSON tests in
+`encoder_test.go`). Topic `warehouse.warehouse-planning.events`, Kafka key =
+`subject` = the capacity plan id, source `/warehouse/warehouse-planning`.
 
-(Rows above are Phase 1/4 design intent, not yet implemented — remove this
-parenthetical once each event actually ships, in the same PR.)
+| `type` | raised | `dataschema` |
+| --- | --- | --- |
+| `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated` | `POST /capacity-plans` | `urn:warehouse:warehouse-planning:events:CapacityPlanCreated:v1` |
+| `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | publish | `urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1` |
+| `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:CapacityShortageDetected:v1` |
+| `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:BottleneckDetected:v1` |
+
+Payloads (snake_case; quantities are orders; `path_capacity` is ORDER/HOUR;
+times RFC 3339 UTC) are documented field by field in `apis/asyncapi.yaml`.
+`CapacityShortageDetected.data` = `plan_id`, `warehouse_id`, `location`,
+`path_id`, `window_start`, `window_end`, `assigned_demand`,
+`capacity_over_window`, `shortage`, `bottleneck_step`.
+
+NOT implemented (do not list them as published): `ProcessCapacityRegistered`
+and `ProcessCapacityChanged` exist as domain-model vocabulary only -- nothing
+raises or publishes them yet. No analytics-topic stream
+(`warehouse.warehouse-planning.analytics`) exists yet either.
+
+### Publishing: the transactional outbox
+
+There is no dual write. `CreateCapacityPlan` and `PublishCapacityPlan` each
+run ONE `ports.UnitOfWork.Do` that saves the aggregate AND inserts the
+already-encoded CloudEvents into `outbox_events` (`ports.OutboxRepository`,
+joining the ctx transaction exactly like the other repos). The shape mirrors
+`workforce-management` (ADR 0016) -- do not invent a second outbox design:
+
+- **Encoding happens once, inside the use case** (`ports.EventEncoder`,
+  implemented by `internal/adapters/outbound/kafka.Encoder`): the CloudEvents
+  `id` is minted there and persisted, so a relay retry republishes the SAME
+  bytes and id. `outbox_events.event_type` stores the FULL `type` (filter
+  SQL on the full string). Other columns: `event_id` (unique), `topic`,
+  `subject`, `key`, `dataschema`, `value` (the encoded bytes), `headers`
+  (JSONB, always incl. `content-type`), `created_at`, `published_at`,
+  `attempts`, `last_error`.
+- **Relay** (`internal/adapters/outbound/outbox`, started in `cmd/api` next to
+  the consumers): drains every `OUTBOX_RELAY_INTERVAL` (default `1s`; a full
+  batch of 100 is followed immediately by another pass), claims rows
+  `FOR UPDATE SKIP LOCKED` in id order, sends ONE AT A TIME, marks each row
+  published, stops at the first failure (a later event for a plan never
+  overtakes an earlier one) and records `last_error`. Delivery is
+  at-least-once: a crash between the broker ack and the UPDATE republishes
+  the row, same id -- consumers dedupe on `id`.
+- **`EVENT_PUBLISHER=kafka|log`** (default `log`): `kafka` writes to
+  `KAFKA_BROKERS` (required in that mode); `log` logs each message and marks
+  it published, so tests and local dev need no broker (and, in `log` mode,
+  nothing reaches Kafka). Unknown values refuse to boot. With no
+  `DATABASE_URL` the outbox is the in-memory one (same relay, same modes).
+- **Kafka writer** (`RelaySink`): topic-less writer routing by
+  `Message.Topic`, `RequiredAcks: RequireAll`, `BatchTimeout: 10ms`,
+  `kafkago.Hash{}` balancer on the plan id key, `AllowAutoTopicCreation`
+  (kafka-go retries a not-ready leader inside `WriteMessages`). Kafka is
+  dialled LAZILY by the relay's first send, never at boot: a broker outage
+  cannot crash the process.
+- Atomicity, retry-same-id and delivery are proven in
+  `postgres/capacity_plan_outbox_integration_test.go` and
+  `outbox/relay_integration_test.go` (testcontainers Postgres + Kafka).
 
 ### Consumed types
 

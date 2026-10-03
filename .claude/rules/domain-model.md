@@ -33,8 +33,8 @@
   (`internal/domain/processcapacity/process_path_capacity.go`), a domain
   SERVICE, not a stored aggregate.
 - **CapacityPlan** — the aggregate that ties assigned demand for a
-  warehouse + planning window to the ProcessPathCapacity available to
-  serve it, and the resulting shortage (if any).
+  warehouse location + planning window to the ProcessPathCapacity available to
+  serve it, and the resulting shortage (if any). Implemented in Phase 4.
 - **Bottleneck** — the constraint or process-path step currently limiting
   end-to-end flow.
 
@@ -46,19 +46,40 @@
   (never silently force-compare UNIT against PACKAGE). `EffectiveRate()`
   is the minimum across constraints plus which constraint type is
   binding.
-- **CapacityPlan** (`internal/domain/capacityplan`, Phase 4): identity
-  `(WarehouseID, PlanningWindow)`. Invariant: cannot be published twice;
-  shortage is always `max(0, demand - capacity*duration)`, never negative.
+- **CapacityPlan** (`internal/domain/capacityplan`, Phase 4, implemented): id =
+  a UUID string (natural key `(WarehouseID, PlanningWindow)`). Fields:
+  `WarehouseID`, `Location` (the ProcessCapacity location evaluated),
+  `PlanningWindow` (a `processcapacity.CapacityWindow`), `ProcessPathID`,
+  `AssignedDemand` (orders, `>= 0`), and computed-at-creation `PathCapacity`
+  (ORDER/HOUR, from `ComputeProcessPathCapacity`), `BottleneckStep`,
+  `CapacityOverWindow` (= `PathCapacity` x window hours) and `Shortage`
+  (= `max(0, demand - capacityOverWindow)`, never negative; demand exactly
+  equal to the capacity is NOT a shortage), `Status` DRAFT | PUBLISHED.
+  The aggregate does no I/O: `Create` takes the already-computed path rate and
+  bottleneck plus an explicit id and time. `Publish` moves DRAFT -> PUBLISHED
+  and returns `ErrAlreadyPublished` on a second call (never a silent double
+  publish). Events are plain structs it accumulates; `PullEvents()` hands each
+  over exactly once. `Rehydrate` rebuilds a stored plan for repositories
+  without events.
 
 ## Domain events
 
-- `ProcessCapacityRegistered` — a native constraint was registered for a
-  process+location+window.
-- `ProcessCapacityChanged` — the effective rate changed because a
-  constraint changed.
-- `CapacityPlanCreated` / `CapacityPlanPublished` (Phase 4).
-- `CapacityShortageDetected` — shortage > 0 at publish time (Phase 4).
-- `BottleneckDetected` — names the limiting process step (Phase 4).
+Raised by CapacityPlan (published on `warehouse.warehouse-planning.events`,
+see `integration-events.md`):
+
+- `CapacityPlanCreated` -- recorded by `Create`.
+- `CapacityPlanPublished` -- recorded by `Publish`, always.
+- `CapacityShortageDetected` -- recorded by `Publish`, only when
+  `Shortage > 0`.
+- `BottleneckDetected` -- names the limiting process step; recorded by
+  `Publish`, only when `Shortage > 0`.
+
+Order on a shortage plan: Created (at creation), then Published,
+ShortageDetected, BottleneckDetected (at publish).
+
+Vocabulary only, NOT implemented or published yet (nothing raises them):
+`ProcessCapacityRegistered` (a native constraint was registered) and
+`ProcessCapacityChanged` (the effective rate changed).
 
 ## Key use cases (`internal/application/usecases`)
 
@@ -69,8 +90,18 @@
 - `GetProcessPathCapacity` (Phase 2) — resolves a ProcessPath's steps'
   ProcessCapacity + the warehouse WorkloadProfile, returns normalized path
   capacity and bottleneck step.
-- `CreateCapacityPlan` / `PublishCapacityPlan` (Phase 4) — demand in,
-  shortage/bottleneck out, publishes the capacity-plan events.
+- `CreateCapacityPlan` (Phase 4) — resolves the path capacity through
+  `GetProcessPathCapacity` (the Phase 2 path; each step's ProcessCapacity must
+  be registered for EXACTLY the plan's window), builds the aggregate, saves it
+  and queues `CapacityPlanCreated` in the outbox -- one `ports.UnitOfWork.Do`.
+  Assigned demand and the WorkloadProfile factors arrive in the request body
+  (documented simplification: the final demand-ingestion shape from
+  order-management/network-fulfillment is a later decision, and this context
+  makes no live cross-context lookup).
+- `PublishCapacityPlan` (Phase 4) — loads the plan, `Publish()`, saves it and
+  queues every recorded event in the outbox, in one `UnitOfWork.Do`. The
+  Postgres `FindByID` locks the row inside the unit of work, so concurrent
+  publishes serialize.
 
 Full phased delivery plan, worked examples (reproduced here as test
 fixtures) and acceptance criteria: see the maintainer's
