@@ -2,9 +2,12 @@
 
 This service both PUBLISHES and CONSUMES. Publishes capacity-plan/shortage
 events to `warehouse.warehouse-planning.events` (Phase 1+4). Consumes
-labor/storage/path-topology events from `workforce-management`,
-`facility-layout` and `process-path-management` (Phase 3) to keep local
-read models current without ever making a live cross-context call.
+labor and storage/station events from `workforce-management` and
+`facility-layout` (Phase 3) to keep local read models current without ever
+making a live cross-context call. Does NOT consume from
+`process-path-management` — see `docs/adr/0001-...` Addendum (2026-10-03):
+its `ProcessPath` carries no physical step sequence, so this context's own
+`ProcessPath` is locally declared instead of Conformist-copied.
 
 ## Events: CloudEvents 1.0 is MANDATORY
 
@@ -72,15 +75,18 @@ parenthetical once each event actually ships, in the same PR.)
 
 ### Consumed types
 
-FILL IN once Phase 3's upstream-contract spike confirms the EXACT `type`
-strings published by `workforce-management` and `facility-layout`. Do not
-guess a payload shape here before that spike runs.
+Confirmed 2026-10-03 against each producer's own `apis/asyncapi.yaml` on
+`origin/develop` (never guessed — see `docs/adr/0001-...` Addendum).
 
-| `type` | topic | producer |
-| --- | --- | --- |
-| TBD (labor capacity by pool/window) | `warehouse.workforce-management.events` | workforce-management |
-| TBD (structural location/zone capacity) | `warehouse.facility-layout.events` | facility-layout |
-| TBD (process path defined/activated) | `warehouse.process-path-management.events` | process-path-management |
+| `type` | topic | producer | fields used |
+| --- | --- | --- | --- |
+| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (fan-out: one message per PathPlan line) -> LABOR `CapacityConstraint` = `planned_heads * planned_rate`; window = `[event.time, event.time + planned_hours]` (documented assumption, no real shift-start field exists yet) |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `zoneId`, `locationType`, `role` (default `Storage`), `activities` (present only when `role=WorkCenter`) -> tallied per `(zoneId, locationType)` for a LOCATION constraint (role=Storage), or per zone+activity for a STATION constraint (role=WorkCenter) |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `locationCode` -> decrements the same tally |
+
+`process-path-management` is deliberately NOT consumed — its `ProcessPath`
+carries `path_id`/`required_capabilities`/`eligibility`, never an ordered
+step sequence, so there is nothing structural to sync.
 
 ## Consumer group id
 
