@@ -17,12 +17,21 @@
   per order, packages per order) used to normalize different processes'
   native rates into one comparable flow unit.
 - **ProcessPath** — an ordered sequence of ProcessTypes a given workload
-  must flow through (e.g. Pick -> Rebin -> Pack). Owned by
-  `process-path-management`; this context holds a read-only, Conformist
-  copy.
+  must flow through (e.g. Pick -> Rebin -> Pack). **Locally owned by this
+  context** (operator-declared via `POST /process-paths`) — NOT a
+  Conformist copy of `process-path-management`'s aggregate.
+  `process-path-management`'s `ProcessPath` is routing/capability metadata
+  (`path_id`, `required_capabilities`, `eligibility`...), it carries no
+  physical step sequence; the two contexts share `path_id` only as a loose
+  human cross-reference. See `docs/adr/0001-...` Addendum (2026-10-03).
+- **WorkloadProfile** — see above; `NormalizeToOrderRate` converts a
+  UNIT or PACKAGE `CapacityRate` into an ORDER rate for the same period.
 - **ProcessPathCapacity** — the normalized, end-to-end throughput of a
   ProcessPath: the minimum of its steps' effective capacities after
   WorkloadProfile normalization, plus which step is the bottleneck.
+  Computed by `ComputeProcessPathCapacity`
+  (`internal/domain/processcapacity/process_path_capacity.go`), a domain
+  SERVICE, not a stored aggregate.
 - **CapacityPlan** — the aggregate that ties assigned demand for a
   warehouse + planning window to the ProcessPathCapacity available to
   serve it, and the resulting shortage (if any).
