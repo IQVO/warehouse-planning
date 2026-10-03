@@ -94,6 +94,9 @@ type Encoder struct {
 	// NewID mints a CloudEvents id (a UUID v4 string); uuid.NewString when
 	// nil. Pinned in golden tests.
 	NewID func() string
+	// Topic overrides the destination topic (Topic when empty). Production
+	// leaves it empty; integration tests give each run a unique topic.
+	Topic string
 }
 
 // NewEncoder returns an Encoder minting random UUID v4 ids.
@@ -127,7 +130,7 @@ func (e *Encoder) Encode(events ...capacityplan.Event) ([]outbox.Message, error)
 		ct := cloudevents.ContentTypeHeader()
 		out = append(out, outbox.Message{
 			EventID:    id,
-			Topic:      Topic,
+			Topic:      e.topic(),
 			EventType:  cloudevents.Type(Entity, ev.EventName()),
 			Subject:    ev.AggregateID(),
 			Key:        []byte(ev.AggregateID()),
@@ -137,6 +140,13 @@ func (e *Encoder) Encode(events ...capacityplan.Event) ([]outbox.Message, error)
 		})
 	}
 	return out, nil
+}
+
+func (e *Encoder) topic() string {
+	if e.Topic != "" {
+		return e.Topic
+	}
+	return Topic
 }
 
 func payloadFor(ev capacityplan.Event) (any, error) {

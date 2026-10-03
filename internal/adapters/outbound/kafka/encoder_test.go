@@ -165,3 +165,11 @@ func TestEncode_PropagatesCloudEventsValidationFailure(t *testing.T) {
 		t.Fatalf("unexpected decode error %v", err)
 	}
 }
+
+func TestEncode_TopicOverride(t *testing.T) {
+	e := &Encoder{NewID: func() string { return goldenEvtID }, Topic: "some.other.topic"}
+	msgs, err := e.Encode(capacityplan.BottleneckDetected{Header: capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
+	if err != nil || msgs[0].Topic != "some.other.topic" {
+		t.Fatalf("Encode = %+v, %v; want the overridden topic", msgs, err)
+	}
+}
