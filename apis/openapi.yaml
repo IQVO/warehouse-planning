@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: warehouse-planning
+  description: >
+    Can this warehouse process the demand assigned to it, given its
+    current labor, location, equipment, station, conveyor and buffer
+    constraints? Phase 1 exposes native ProcessCapacity registration and
+    the computed effective rate.
+  version: "0.1.0"
+  contact:
+    name: warehouse-planning maintainers
+    url: https://github.com/IQVO/warehouse-planning
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: process-capacities
+    description: Native and effective ProcessCapacity registration (Phase 1).
+paths:
+  /process-capacities:
+    post:
+      operationId: registerProcessCapacityConstraint
+      summary: Register (or upsert) one capacity constraint
+      tags: [process-capacities]
+      description: >
+        Upserts one named constraint (LABOR, LOCATION, EQUIPMENT, STATION,
+        CONVEYOR, BUFFER or REPLENISHMENT) on the ProcessCapacity identified
+        by (process_type, location, window_start, window_end), creating the
+        aggregate on first registration. Returns the recomputed effective
+        rate (the minimum across every registered constraint) and which
+        constraint is binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterConstraintRequest"
+      responses:
+        "201":
+          description: Constraint registered; effective capacity recomputed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectiveCapacityResponse"
+        "400":
+          description: Malformed request body or window.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Constraint rate unit does not match the aggregate's established native unit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: Negative quantity or non-positive period.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+    get:
+      operationId: getEffectiveProcessCapacity
+      summary: Get the effective capacity for a process, location and window
+      tags: [process-capacities]
+      description: >
+        Returns the effective rate (the minimum across every registered
+        constraint), which constraint is binding, and the full list of
+        registered constraints for the ProcessCapacity identified by
+        (process_type, location, window_start, window_end). 404 if nothing
+        has been registered for that identity yet.
+      parameters:
+        - name: process_type
+          in: query
+          required: true
+          schema:
+            type: string
+          example: PICK
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: PICK-ZONE-A
+        - name: window_start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: window_end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Effective capacity for this process, location and window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectiveCapacityResponse"
+        "400":
+          description: Malformed window_start/window_end.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: No ProcessCapacity registered for this process, location and window.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+components:
+  schemas:
+    RegisterConstraintRequest:
+      type: object
+      required:
+        - process_type
+        - location
+        - window_start
+        - window_end
+        - constraint_type
+        - quantity
+        - unit
+        - period_seconds
+      properties:
+        process_type:
+          type: string
+          example: PICK
+        location:
+          type: string
+          example: PICK-ZONE-A
+        window_start:
+          type: string
+          format: date-time
+          example: "2026-10-05T08:00:00Z"
+        window_end:
+          type: string
+          format: date-time
+          example: "2026-10-05T09:00:00Z"
+        constraint_type:
+          type: string
+          enum: [LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT]
+        quantity:
+          type: number
+          format: double
+          minimum: 0
+          example: 3500
+        unit:
+          type: string
+          enum: [UNIT, LINE, ORDER, PACKAGE]
+        period_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          example: 3600
+    EffectiveCapacityResponse:
+      type: object
+      properties:
+        effective_rate:
+          type: number
+          format: double
+          example: 3500
+        effective_unit:
+          type: string
+          example: UNIT
+        binding_constraint:
+          type: string
+          example: LOCATION
+        constraints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConstraintEntry"
+    ConstraintEntry:
+      type: object
+      properties:
+        constraint_type:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit:
+          type: string
+        period_seconds:
+          type: number
+          format: double
+    ProblemDetail:
+      type: object
+      description: RFC 7807 problem detail.
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
