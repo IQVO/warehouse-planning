@@ -53,7 +53,7 @@ type CreateCapacityPlan struct {
 	UnitOfWork   ports.UnitOfWork
 
 	// NewID mints the plan id (uuid.NewString when nil) and Now supplies
-	// the creation time (time.Now().UTC() when nil); both are injectable
+	// the creation time (utcNow when nil); both are injectable
 	// for tests.
 	NewID func() string
 	Now   func() time.Time
@@ -88,7 +88,7 @@ func (uc *CreateCapacityPlan) Handle(ctx context.Context, cmd CreateCapacityPlan
 		newID = uuid.NewString
 	}
 	if now == nil {
-		now = func() time.Time { return time.Now().UTC() }
+		now = utcNow
 	}
 
 	plan, err := capacityplan.Create(capacityplan.CreateParams{
@@ -116,6 +116,12 @@ func (uc *CreateCapacityPlan) Handle(ctx context.Context, cmd CreateCapacityPlan
 	}
 	return plan, nil
 }
+
+// utcNow is the default clock of the plan use cases: the current time in
+// UTC, truncated to microseconds -- Postgres TIMESTAMPTZ's precision -- so a
+// plan reloaded from the database carries exactly the timestamps the
+// request and the published events saw.
+func utcNow() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
 // enqueue encodes events and inserts them into the outbox through ctx (the
 // caller's UnitOfWork transaction).

@@ -224,7 +224,7 @@ func TestCreateCapacityPlan_DefaultsIDAndClock(t *testing.T) {
 	if len(plan.ID()) != 36 {
 		t.Errorf("default id %q is not a UUID", plan.ID())
 	}
-	if plan.CreatedAt().Before(before) || plan.CreatedAt().Location() != time.UTC {
+	if plan.CreatedAt().Before(before) || plan.CreatedAt().Location() != time.UTC || plan.CreatedAt().Nanosecond()%1000 != 0 {
 		t.Errorf("CreatedAt = %v, want a recent UTC time", plan.CreatedAt())
 	}
 }
@@ -335,7 +335,7 @@ func TestPublishCapacityPlan_DefaultsClock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if plan.PublishedAt().Before(before) || plan.PublishedAt().Location() != time.UTC {
+	if plan.PublishedAt().Before(before) || plan.PublishedAt().Location() != time.UTC || plan.PublishedAt().Nanosecond()%1000 != 0 {
 		t.Errorf("PublishedAt = %v, want a recent UTC time", plan.PublishedAt())
 	}
 }

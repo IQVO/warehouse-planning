@@ -26,7 +26,7 @@ type PublishCapacityPlan struct {
 	Encoder    ports.EventEncoder
 	UnitOfWork ports.UnitOfWork
 
-	// Now supplies the publish time (time.Now().UTC() when nil).
+	// Now supplies the publish time (utcNow when nil).
 	Now func() time.Time
 }
 
@@ -34,7 +34,7 @@ type PublishCapacityPlan struct {
 func (uc *PublishCapacityPlan) Handle(ctx context.Context, id string) (*capacityplan.CapacityPlan, error) {
 	now := uc.Now
 	if now == nil {
-		now = func() time.Time { return time.Now().UTC() }
+		now = utcNow
 	}
 
 	var plan *capacityplan.CapacityPlan
