@@ -1,0 +1,42 @@
+asyncapi: 2.6.0
+
+info:
+  title: warehouse-planning Domain Events
+  version: "0.1.0"
+  contact:
+    name: warehouse-planning maintainers
+    url: https://github.com/IQVO/warehouse-planning
+    email: warehouse-planning@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: >
+    Domain-event catalog for the **warehouse-planning** bounded context.
+    Phase 1 ships ProcessCapacity registration over REST only -- no Kafka
+    producer or consumer exists yet, so this document currently has no
+    channels. It exists so the fleet-wide AsyncAPI lint/docs tooling has a
+    valid document to process from day one, and so this phase's
+    requirement to add NO Kafka code (see CLAUDE.md's CloudEvents section)
+    is visible in the spec itself, not just in prose.
+
+
+    See CLAUDE.md's "Events: CloudEvents 1.0 is MANDATORY" section for the
+    envelope every future channel here MUST use once Phase 3 adds a
+    producer/consumer: structured-mode CloudEvents 1.0, built only through
+    internal/adapters/kafka/cloudevents, content-type
+    `application/cloudevents+json; charset=UTF-8`.
+
+servers:
+  production:
+    url: "{brokers}"
+    protocol: kafka
+    description: Fleet-shared Kafka broker (host supplied by the deployment environment).
+    variables:
+      brokers:
+        default: "kafka.warehouse-systems.internal:9092"
+
+channels: {}
+
+tags:
+  - name: process-capacity
+    description: Events raised by the ProcessCapacity aggregate (none published yet -- Phase 1 is REST-only).
+
