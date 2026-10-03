@@ -9,20 +9,25 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
 	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
+	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
+	outboxrelay "github.com/claudioed/warehouse-planning/internal/adapters/outbound/outbox"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/bootretry"
 )
 
 // shutdownTimeout bounds the HTTP server's graceful drain.
@@ -62,11 +67,29 @@ func run() error {
 	pcRepo, pathRepo := ad.processCapacities, ad.processPaths
 
 	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: pcRepo}
+	encoder := outboundkafka.NewEncoder()
 	server := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
 		ProcessCapacities:                 pcRepo,
 		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
-		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: pcRepo},
+		GetProcessPathCapacity:            pathCapacity,
+		// Phase 4: every CapacityPlan write saves the aggregate and
+		// inserts its CloudEvents into the outbox in ONE UnitOfWork.
+		CreateCapacityPlan: &usecases.CreateCapacityPlan{
+			PathCapacity: pathCapacity,
+			Plans:        ad.capacityPlans,
+			Outbox:       ad.outbox,
+			Encoder:      encoder,
+			UnitOfWork:   ad.uow,
+		},
+		PublishCapacityPlan: &usecases.PublishCapacityPlan{
+			Plans:      ad.capacityPlans,
+			Outbox:     ad.outbox,
+			Encoder:    encoder,
+			UnitOfWork: ad.uow,
+		},
+		CapacityPlans: ad.capacityPlans,
 	}
 	httpServer := &http.Server{
 		Addr:              httpAddr,
@@ -76,7 +99,17 @@ func run() error {
 
 	consumers, closeConsumers := startKafkaConsumers(register, ad.processedEvents, ad.storageTally, ad.uow, logger)
 
-	return serveUntilSignal(logger, httpServer, consumers, closeConsumers)
+	// The outbox relay runs next to the consumers. It never dials Kafka at
+	// boot (the writer connects lazily on its first send), so a broker
+	// outage cannot crash the process.
+	relayRunner, closeRelay, err := startOutboxRelay(ad.outboxStore, logger)
+	if err != nil {
+		closeConsumers()
+		return err
+	}
+	consumers = append(consumers, relayRunner)
+
+	return serveUntilSignal(logger, httpServer, consumers, func() { closeConsumers(); closeRelay() })
 }
 
 // adapters is the set of outbound adapters the composition root wires.
@@ -88,6 +121,12 @@ type adapters struct {
 	// uow makes a Kafka message's claim + tally + constraint writes one
 	// atomic transaction; all three repositories above join it via ctx.
 	uow ports.UnitOfWork
+
+	// Phase 4: the CapacityPlan repository, the outbox write port and the
+	// same outbox as the relay's drain source.
+	capacityPlans ports.CapacityPlanRepository
+	outbox        ports.OutboxRepository
+	outboxStore   outboxrelay.Store
 }
 
 // buildAdapters wires the Postgres adapters when DATABASE_URL is set, or
@@ -108,28 +147,39 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not configured; using in-memory adapters")
 		pcRepo, processed, tallyRepo := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
+		planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 		return adapters{
 			processCapacities: pcRepo,
 			processPaths:      pathRepo,
 			processedEvents:   processed,
 			storageTally:      tallyRepo,
 			// Participants make the in-memory UoW roll back on error too.
-			uow: memory.NewUnitOfWork(pcRepo, processed, tallyRepo),
+			uow:           memory.NewUnitOfWork(pcRepo, processed, tallyRepo, planRepo, outboxRepo),
+			capacityPlans: planRepo,
+			outbox:        outboxRepo,
+			outboxStore:   outboxRepo,
 		}, noop, nil
 	}
 
-	if err := postgres.RunMigrations(databaseURL, migrationsPath); err != nil {
+	// The first outbound dial of an injected pod is reset ~10s after start
+	// (Istio native sidecars), so migrations and the first ping retry with
+	// backoff (~31s budget); on exhaustion the LAST error is returned and
+	// the process still refuses to boot.
+	if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
+		return postgres.RunMigrations(databaseURL, migrationsPath)
+	}); err != nil {
 		return adapters{}, noop, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
 		return adapters{}, noop, err
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := bootretry.Retry(ctx, logger, "ping postgres", func() error { return pool.Ping(ctx) }); err != nil {
 		pool.Close()
 		return adapters{}, noop, err
 	}
 	logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
+	outboxRepo := postgres.NewOutboxRepo(pool)
 
 	return adapters{
 		processCapacities: postgres.NewProcessCapacityRepo(pool),
@@ -137,6 +187,9 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		processedEvents:   postgres.NewProcessedEventRepo(pool),
 		storageTally:      postgres.NewStorageTallyRepo(pool),
 		uow:               postgres.NewUnitOfWork(pool),
+		capacityPlans:     postgres.NewCapacityPlanRepo(pool),
+		outbox:            outboxRepo,
+		outboxStore:       outboxRepo,
 	}, pool.Close, nil
 }
 
@@ -213,6 +266,90 @@ func startKafkaConsumers(
 		_ = storageConsumer.Close()
 	}
 	return consumers, closeFn
+}
+
+// Event publisher modes (EVENT_PUBLISHER).
+const (
+	publisherLog   = "log"
+	publisherKafka = "kafka"
+)
+
+// parsePublisherMode validates EVENT_PUBLISHER: "" and "log" select the
+// broker-free log sink (the default, so tests and local dev need no
+// Kafka), "kafka" the real relay sink; anything else is a config error.
+func parsePublisherMode(raw string) (string, error) {
+	switch raw {
+	case "", publisherLog:
+		return publisherLog, nil
+	case publisherKafka:
+		return publisherKafka, nil
+	default:
+		return "", fmt.Errorf("unknown EVENT_PUBLISHER %q (want kafka or log)", raw)
+	}
+}
+
+// parseRelayInterval reads OUTBOX_RELAY_INTERVAL (a Go duration such as
+// "500ms" or "2s", or plain seconds), defaulting to 1s when unset,
+// malformed or non-positive -- the interval is a tuning knob, never a
+// reason to refuse to boot.
+func parseRelayInterval(raw string, logger *slog.Logger) time.Duration {
+	if raw == "" {
+		return outboxrelay.DefaultInterval
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		if secs, serr := strconv.ParseFloat(raw, 64); serr == nil {
+			d, err = time.Duration(secs*float64(time.Second)), nil
+		}
+	}
+	if err != nil || d <= 0 {
+		logger.Warn("invalid OUTBOX_RELAY_INTERVAL; using the default", "value", raw, "default", outboxrelay.DefaultInterval)
+		return outboxrelay.DefaultInterval
+	}
+	return d
+}
+
+// startOutboxRelay starts the outbox relay goroutine. EVENT_PUBLISHER
+// picks the sink: kafka (needs KAFKA_BROKERS) or log (default). Kafka is
+// dialled lazily inside the relay loop on the first send, never here.
+func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (runningConsumer, func(), error) {
+	mode, err := parsePublisherMode(os.Getenv("EVENT_PUBLISHER"))
+	if err != nil {
+		return runningConsumer{}, nil, err
+	}
+
+	var (
+		sink      outboxrelay.Sink = outboxrelay.LogSink{Logger: logger}
+		closeSink                  = func() {}
+	)
+	if mode == publisherKafka {
+		raw := os.Getenv("KAFKA_BROKERS")
+		if raw == "" {
+			return runningConsumer{}, nil, errors.New("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS")
+		}
+		kafkaSink := outboundkafka.NewRelaySink(strings.Split(raw, ","))
+		sink = kafkaSink
+		closeSink = func() {
+			if err := kafkaSink.Close(); err != nil {
+				logger.Error("kafka relay sink close failed", "error", err)
+			}
+		}
+	}
+
+	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
+	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval))
+
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer closeSink()
+		logger.Info("outbox relay running", "publisher", mode, "interval", interval, "topic", outboundkafka.Topic)
+		if err := relay.Run(ctx); !errors.Is(err, context.Canceled) {
+			logger.Error("outbox relay stopped", "error", err)
+		}
+	}()
+	return runningConsumer{name: "outbox-relay", done: done}, stop, nil
 }
 
 // serveUntilSignal runs httpServer until SIGINT/SIGTERM (or a listen
