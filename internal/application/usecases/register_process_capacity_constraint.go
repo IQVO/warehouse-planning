@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
@@ -73,4 +74,33 @@ func (uc *RegisterProcessCapacityConstraint) Handle(ctx context.Context, cmd Reg
 	}
 
 	return RegisterProcessCapacityConstraintResult{EffectiveRate: effective, BindingConstraint: binding}, nil
+}
+
+// commandValidationErrors are the typed domain errors Handle can return
+// because the COMMAND itself is unacceptable (bad window, negative
+// quantity, non-positive period, unit differing from the aggregate's native
+// unit). They are deterministic: retrying the same command can never
+// succeed. Everything else Handle returns originates in the repository
+// (Find/Save) and is infrastructure.
+var commandValidationErrors = []error{
+	processcapacity.ErrInvalidWindow,
+	processcapacity.ErrNegativeQuantity,
+	processcapacity.ErrNonPositivePeriod,
+	processcapacity.ErrUnitMismatch,
+}
+
+// IsDomainValidationError reports whether err (as returned by Handle) is a
+// deterministic domain rejection of the command, as opposed to a
+// transient infrastructure failure from the repository. Inbound adapters
+// use it to decide between "skip this message, retrying is pointless" and
+// "fail so the whole unit of work rolls back and the message is retried".
+// It is an allow-list on purpose: an error it does not recognise is treated
+// as infrastructure, so the safe failure mode is retry, never data loss.
+func IsDomainValidationError(err error) bool {
+	for _, target := range commandValidationErrors {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
 }

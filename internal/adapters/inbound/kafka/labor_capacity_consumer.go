@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -64,11 +65,19 @@ type shiftPlanCommittedData struct {
 // path_id, Location=building_id, window=[event time, event time +
 // planned_hours)) for every ShiftPlanCommitted fan-out message it
 // receives.
+//
+// UoW is REQUIRED: the processed-event claim and the constraint upsert run
+// inside one UoW.Do, so they commit or roll back together. Retry tunes the
+// run loop's backoff (zero value = defaults).
 type LaborCapacityConsumer struct {
 	Reader          Reader
 	Register        *usecases.RegisterProcessCapacityConstraint
 	ProcessedEvents ports.ProcessedEventRepository
+	UoW             ports.UnitOfWork
 	Logger          *slog.Logger
+	Retry           RetryPolicy
+
+	sleep sleepFunc // test hook; nil => real, ctx-cancellable sleep
 }
 
 // NewLaborCapacityConsumer constructs a LaborCapacityConsumer reading
@@ -80,37 +89,44 @@ func NewLaborCapacityConsumer(
 	groupID string,
 	register *usecases.RegisterProcessCapacityConstraint,
 	processedEvents ports.ProcessedEventRepository,
+	uow ports.UnitOfWork,
 	logger *slog.Logger,
 ) *LaborCapacityConsumer {
 	return &LaborCapacityConsumer{
 		Reader:          kafkago.NewReader(readerConfig(brokers, LaborTopic, groupID)),
 		Register:        register,
 		ProcessedEvents: processedEvents,
+		UoW:             uow,
 		Logger:          defaultLogger(logger),
 	}
 }
 
-// Run consumes LaborTopic until ctx is cancelled or the reader fails. A
-// message HandleMessage cannot apply is logged and skipped -- it never
-// stops the loop or blocks the partition.
+// Run consumes LaborTopic until ctx is cancelled or the reader fails. It is
+// at-least-once: a message's offset is committed only after HandleMessage
+// returned nil, and a transient failure retries the SAME message with
+// capped exponential backoff (see consumeLoop) -- it is never skipped.
 func (c *LaborCapacityConsumer) Run(ctx context.Context) error {
-	for {
-		msg, err := c.Reader.ReadMessage(ctx)
-		if err != nil {
-			return err
-		}
-		if err := c.HandleMessage(ctx, msg.Value); err != nil {
-			c.Logger.ErrorContext(ctx, "labor capacity event handling failed",
-				"error", err, "partition", msg.Partition, "offset", msg.Offset)
-		}
+	loop := consumeLoop{
+		reader: c.Reader,
+		handle: func(ctx context.Context, msg kafkago.Message) error { return c.HandleMessage(ctx, msg.Value) },
+		logger: defaultLogger(c.Logger),
+		name:   "labor capacity consumer",
+		retry:  c.Retry,
+		sleep:  c.sleep,
 	}
+	return loop.run(ctx)
 }
 
 // HandleMessage decodes one CloudEvents 1.0 message and, if it is a
 // ShiftPlanCommitted, upserts the matching LABOR CapacityConstraint.
-// Anything that fails CloudEvents validation, carries an unrecognized
-// `type`, or has a malformed/empty-required-field payload is logged and
-// skipped -- never an error that would stop the consumer.
+//
+// It returns nil for anything deterministic -- failed CloudEvents
+// validation, an unrecognized `type`, a malformed/empty-required-field
+// payload, a duplicate event id, or a domain-validation rejection (all
+// logged) -- because retrying those can never succeed. It returns a
+// non-nil error ONLY for transient/infrastructure failures (claim, find,
+// save, begin/commit), after the unit of work has rolled back, so the
+// caller may retry the same message safely.
 func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte) error {
 	e, err := cloudevents.Decode(value)
 	if err != nil {
@@ -118,15 +134,6 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 		return nil
 	}
 	if e.Type() != typeShiftPlanCommitted {
-		return nil
-	}
-
-	claimed, err := c.ProcessedEvents.Claim(ctx, laborConsumerName, e.ID())
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		c.Logger.InfoContext(ctx, "skipping already-processed ShiftPlanCommitted event", "event_id", e.ID())
 		return nil
 	}
 
@@ -141,24 +148,38 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 	}
 
 	windowStart := e.Time()
-	windowEnd := windowStart.Add(durationFromHours(data.PlannedHours))
-	rate := float64(data.PlannedHeads) * data.PlannedRate
-
-	_, err = c.Register.Handle(ctx, usecases.RegisterProcessCapacityConstraintCommand{
+	cmd := usecases.RegisterProcessCapacityConstraintCommand{
 		ProcessType:    processcapacity.ProcessType(strings.ToUpper(data.PathID)),
 		Location:       data.BuildingID,
 		WindowStart:    windowStart,
-		WindowEnd:      windowEnd,
+		WindowEnd:      windowStart.Add(durationFromHours(data.PlannedHours)),
 		ConstraintType: processcapacity.ConstraintLabor,
-		Quantity:       rate,
+		Quantity:       float64(data.PlannedHeads) * data.PlannedRate,
 		Unit:           laborRateUnit,
 		Period:         laborRatePeriod,
-	})
-	if err != nil {
-		c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted that failed domain validation", "error", err, "event_id", e.ID())
-		return nil
 	}
-	return nil
+
+	// Claim + upsert are ONE transaction: if the upsert fails the claim
+	// rolls back with it, so the retry is processed instead of skipped.
+	return c.UoW.Do(ctx, func(ctx context.Context) error {
+		claimed, err := c.ProcessedEvents.Claim(ctx, laborConsumerName, e.ID())
+		if err != nil {
+			return fmt.Errorf("claim processed event: %w", err)
+		}
+		if !claimed {
+			c.Logger.InfoContext(ctx, "skipping already-processed ShiftPlanCommitted event", "event_id", e.ID())
+			return nil
+		}
+
+		if _, err := c.Register.Handle(ctx, cmd); err != nil {
+			if usecases.IsDomainValidationError(err) {
+				c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted that failed domain validation", "error", err, "event_id", e.ID())
+				return nil
+			}
+			return fmt.Errorf("register labor constraint: %w", err)
+		}
+		return nil
+	})
 }
 
 // Close releases the underlying Kafka reader.

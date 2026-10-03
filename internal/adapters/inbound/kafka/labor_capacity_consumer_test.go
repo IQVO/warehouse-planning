@@ -11,7 +11,6 @@ import (
 
 	kafkaconsumer "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
-	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
@@ -53,14 +52,8 @@ func defaultShiftPlanData() map[string]any {
 }
 
 func newLaborConsumer() (*kafkaconsumer.LaborCapacityConsumer, *memory.ProcessCapacityRepo) {
-	pcRepo := memory.NewProcessCapacityRepo()
-	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
-	processed := memory.NewProcessedEventRepo()
-	return &kafkaconsumer.LaborCapacityConsumer{
-		Register:        register,
-		ProcessedEvents: processed,
-		Logger:          testLogger(),
-	}, pcRepo
+	h := newLaborHarness()
+	return h.consumer, h.pcs
 }
 
 // TestLaborCapacityConsumer_ShiftPlanCommitted_RegistersLaborConstraint

@@ -33,3 +33,27 @@ func (r *ProcessedEventRepo) Claim(_ context.Context, consumer, eventID string) 
 	r.seen[key] = struct{}{}
 	return true, nil
 }
+
+// Snapshot implements Snapshotter.
+func (r *ProcessedEventRepo) Snapshot() func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	saved := make(map[string]struct{}, len(r.seen))
+	for k := range r.seen {
+		saved[k] = struct{}{}
+	}
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.seen = saved
+	}
+}
+
+// Has reports whether (consumer, eventID) is currently recorded as
+// processed -- a test inspection helper.
+func (r *ProcessedEventRepo) Has(consumer, eventID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.seen[processedEventKey(consumer, eventID)]
+	return ok
+}

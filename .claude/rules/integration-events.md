@@ -126,17 +126,75 @@ the implementation:
   with a 1-hour period purely to satisfy `CapacityRate`'s required
   period, not because this is an actual per-hour throughput figure).
 
-### Idempotency (processed_events)
+### Delivery guarantee and idempotency (processed_events)
 
-Every inbound Kafka consumer claims (consumer name, CloudEvents `id`) in
-a shared `processed_events` table BEFORE applying any side effect
-(`ports.ProcessedEventRepository.Claim`, an `INSERT ... ON CONFLICT DO
-NOTHING` whose affected-row-count tells the caller whether this exact
-event was already handled). This matters most for the storage/station
-tally: it is an INCREMENT/DECREMENT, not a plain upsert, so "redelivery
-is naturally idempotent" does not hold the way it does for LABOR's
-overwrite-style `AddConstraint` -- a redelivered `LocationSlotRegistered`
-without this guard would double-count a real physical slot.
+Inbound consumers are **at-least-once with an atomic effect**. Three pieces
+make that true; none of them works without the other two:
+
+1. **Offsets are committed only after success.** The run loops use
+   kafka-go's `FetchMessage` + `CommitMessages` (never `ReadMessage`, which
+   with a `GroupID` auto-commits the offset before the message is handled).
+   `CommitInterval` stays unset so the commit is synchronous. The loop
+   commits a message's offset only after `HandleMessage` returned `nil`;
+   on a non-nil error it does NOT commit and retries the SAME message with
+   capped exponential backoff (200ms doubling to 5s, ctx-cancellable). It
+   never skips a message on a transient error. If the process dies first
+   the offset is uncommitted and Kafka redelivers.
+2. **The processed-mark is atomic with the work.** Per message,
+   `HandleMessage` runs ONE `ports.UnitOfWork.Do`: the
+   `ProcessedEventRepository.Claim(consumer, CloudEvents id)` (an
+   `INSERT ... ON CONFLICT DO NOTHING` whose affected-row count says
+   whether this event was already handled) and every side effect (the
+   storage tally mutation AND the `ProcessCapacity` constraint upsert)
+   commit or roll back together. The Postgres `UnitOfWork` carries a pgx
+   transaction in the `ctx` (`postgres/pgtx`); every repo
+   (`ProcessCapacityRepo`, `ProcessedEventRepo`, `StorageTallyRepo`) uses
+   it when present and begins its own only when there is none (REST
+   paths). `Claim` therefore keeps its semantics but is safe: a rolled-back
+   handling un-claims, so the redelivery is processed instead of skipped.
+   NEVER claim in its own statement/autocommit before the work -- a failure
+   after that claim would make every redelivery a silent "already
+   processed" (data loss). A concurrent duplicate blocks on the unique
+   index until the other transaction ends, then skips.
+3. **Errors are classified.** `HandleMessage` returns non-nil ONLY for
+   transient/infrastructure failures (begin/commit, claim, tally, repo
+   Find/Save). It returns `nil` for deterministic problems -- not a
+   CloudEvent, unknown `type`, malformed payload, missing fields, duplicate
+   id, untracked decommission, and domain-validation rejections -- because
+   retrying cannot help. Domain rejections are recognised by
+   `usecases.IsDomainValidationError` (an allow-list of
+   `ErrInvalidWindow`/`ErrNegativeQuantity`/`ErrNonPositivePeriod`/
+   `ErrUnitMismatch`); anything NOT on that list is treated as
+   infrastructure (retry, never data loss). A skipped domain rejection does
+   not roll back the rest of the message, and its claim is committed so the
+   event is not redelivered forever. Pure payload validation runs before
+   the transaction opens, so a bad message never touches the database. Add
+   any new domain sentinel `RegisterProcessCapacityConstraint` can return
+   to that list.
+
+Why it matters most for the storage/station tally: it is an
+INCREMENT/DECREMENT, not an overwrite, so "redelivery is naturally
+idempotent" does not hold the way it does for LABOR's overwrite-style
+`AddConstraint` -- a redelivered `LocationSlotRegistered` without the claim
+would double-count a real slot. The tally's own "locationCode already
+registered" no-op (`RegisterSlot` returns nil updates) is only a second
+line of defence against a producer re-emitting a slot under a NEW event id;
+it is safe under redelivery BECAUSE the tally and the constraint commit
+together (an attempt that failed between the two rolled the registration
+back too, so the retry registers for real and cannot hit the no-op while
+the constraint is stale).
+
+Known trade-off: a message that fails with a non-recognised, actually
+deterministic error blocks its partition (retried forever with an ERROR
+log per attempt, 5s cap) instead of being dropped -- by design, since a
+silent drop is unrecoverable data loss. There is no DLQ yet.
+
+Tests that pin this: `internal/adapters/inbound/kafka/atomic_*_test.go`
+(rollback of tally + constraint + claim on a second-step failure, error
+classification), `consume_loop_test.go` / `run_loop_test.go` (commit
+ordering and backoff), `atomic_consumers_integration_test.go` (real
+Postgres + Kafka: rollback, retry, redelivery) and
+`postgres/unit_of_work_integration_test.go`.
 
 ## Consumer group id
 
