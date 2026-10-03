@@ -4,7 +4,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 // problemBaseURI is the namespace for this service's RFC 7807 "type" URIs.
@@ -27,10 +29,17 @@ func statusFor(err error) int {
 	case errors.Is(err, processcapacity.ErrInvalidWindow):
 		return http.StatusBadRequest
 	case errors.Is(err, processcapacity.ErrNegativeQuantity),
-		errors.Is(err, processcapacity.ErrNonPositivePeriod):
+		errors.Is(err, processcapacity.ErrNonPositivePeriod),
+		errors.Is(err, processcapacity.ErrNonPositiveConversionFactor),
+		errors.Is(err, processcapacity.ErrMissingConversionFactor),
+		errors.Is(err, processcapacity.ErrUnsupportedNormalizationUnit),
+		errors.Is(err, processcapacity.ErrMissingStepCapacity),
+		errors.Is(err, processpath.ErrEmptySteps):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, processcapacity.ErrUnitMismatch):
 		return http.StatusConflict
+	case errors.Is(err, usecases.ErrProcessPathNotFound):
+		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
 	}
@@ -51,6 +60,12 @@ func problemCatalog() []struct {
 		{processcapacity.ErrNegativeQuantity, problemInfo{"negative-quantity", "Capacity rate quantity must not be negative"}},
 		{processcapacity.ErrNonPositivePeriod, problemInfo{"non-positive-period", "Capacity rate period must be positive"}},
 		{processcapacity.ErrUnitMismatch, problemInfo{"unit-mismatch", "Constraint rate unit does not match this ProcessCapacity's native unit"}},
+		{processpath.ErrEmptySteps, problemInfo{"empty-process-path-steps", "A ProcessPath must have at least one step"}},
+		{processcapacity.ErrNonPositiveConversionFactor, problemInfo{"non-positive-conversion-factor", "A WorkloadProfile conversion factor must be positive"}},
+		{processcapacity.ErrMissingConversionFactor, problemInfo{"missing-conversion-factor", "The WorkloadProfile has no conversion factor for one of the path's steps' units"}},
+		{processcapacity.ErrUnsupportedNormalizationUnit, problemInfo{"unsupported-normalization-unit", "This step's native unit cannot be normalized to ORDER"}},
+		{processcapacity.ErrMissingStepCapacity, problemInfo{"missing-step-capacity", "No ProcessCapacity is registered for one of the path's steps at this location and window"}},
+		{usecases.ErrProcessPathNotFound, problemInfo{"process-path-not-found", "No ProcessPath is registered under this id"}},
 	}
 }
 

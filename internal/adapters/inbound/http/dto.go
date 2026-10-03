@@ -32,3 +32,28 @@ type constraintResponse struct {
 	Unit           string  `json:"unit"`
 	PeriodSeconds  float64 `json:"period_seconds"`
 }
+
+// registerProcessPathRequest is POST /process-paths' request body:
+// id/name/an ordered, non-empty list of step process types.
+type registerProcessPathRequest struct {
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Steps []string `json:"steps"`
+}
+
+// processPathResponse is POST /process-paths' response body, echoing back
+// the registered path.
+type processPathResponse struct {
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Steps []string `json:"steps"`
+}
+
+// processPathCapacityResponse is GET /process-paths/{id}/capacity's
+// response body: the WorkloadProfile-normalized rate (always ORDER) and
+// which step is the bottleneck.
+type processPathCapacityResponse struct {
+	NormalizedRate float64 `json:"normalized_rate"`
+	NormalizedUnit string  `json:"normalized_unit"`
+	BottleneckStep string  `json:"bottleneck_step"`
+}

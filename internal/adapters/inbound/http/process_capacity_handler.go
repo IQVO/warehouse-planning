@@ -21,6 +21,13 @@ type Server struct {
 	// read is a direct, no-invariant repo lookup (matching
 	// inventory-storage's GetUsable/Classifications convention).
 	ProcessCapacities ports.ProcessCapacityRepository
+
+	// RegisterProcessPath seeds a ProcessPath read model (Phase 2: no
+	// event-driven sync from process-path-management yet).
+	RegisterProcessPath *usecases.RegisterProcessPath
+	// GetProcessPathCapacity computes a ProcessPath's normalized,
+	// end-to-end capacity and bottleneck step.
+	GetProcessPathCapacity *usecases.GetProcessPathCapacity
 }
 
 // DefaultServiceName labels this service for logs/telemetry when the
@@ -48,6 +55,8 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/healthz", s.handleHealthz)
 	r.Post("/process-capacities", s.handleRegisterProcessCapacityConstraint)
 	r.Get("/process-capacities", s.handleGetEffectiveProcessCapacity)
+	r.Post("/process-paths", s.handleRegisterProcessPath)
+	r.Get("/process-paths/{id}/capacity", s.handleGetProcessPathCapacity)
 
 	return r
 }

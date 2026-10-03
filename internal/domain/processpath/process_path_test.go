@@ -1,7 +1,9 @@
 package processpath
 
-import "errors"
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestNewProcessPath_RejectsNilSteps(t *testing.T) {
 	_, err := NewProcessPath("path-1", "Pick-Rebin-Pack", nil)

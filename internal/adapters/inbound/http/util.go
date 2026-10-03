@@ -2,6 +2,7 @@ package http
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,4 +26,18 @@ func splitAndTrim(raw string) []string {
 // into a time.Duration.
 func secondsToDuration(seconds float64) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
+}
+
+// parseOptionalFloatQueryParam parses a query parameter as *float64,
+// returning (nil, nil) when the parameter is absent/empty -- the caller
+// distinguishes "not provided" from "provided but malformed".
+func parseOptionalFloatQueryParam(raw string) (*float64, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
