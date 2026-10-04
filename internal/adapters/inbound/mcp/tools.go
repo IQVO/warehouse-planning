@@ -331,9 +331,6 @@ func (d Deps) createCapacityPlan(ctx context.Context, in createPlanInput) (capac
 	if err != nil {
 		return capacityPlanOutput{}, err
 	}
-	if in.AssignedDemand == nil {
-		return capacityPlanOutput{}, toolError("missing-assigned-demand", "assigned_demand (orders) must be provided")
-	}
 
 	// The use case saves the plan and inserts its CloudEvents into the
 	// transactional outbox in one UnitOfWork; the relay in cmd/api drains it.
