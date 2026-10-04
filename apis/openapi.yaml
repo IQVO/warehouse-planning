@@ -649,7 +649,7 @@ paths:
   /reports/bottleneck-frequency:
     servers:
       - url: http://localhost:8092
-        description: planning-reports (cluster-internal Service <release>-analytics-reports)
+        description: planning-reports (cluster-internal Service <release>-reports)
     get:
       operationId: getBottleneckFrequencyReport
       summary: How often each bottleneck step (and binding constraint) bound a PUBLISHED plan, by site
@@ -689,7 +689,7 @@ paths:
   /reports/shortage-trend:
     servers:
       - url: http://localhost:8092
-        description: planning-reports (cluster-internal Service <release>-analytics-reports)
+        description: planning-reports (cluster-internal Service <release>-reports)
     get:
       operationId: getShortageTrendReport
       summary: Published plans with shortage and total shortage by site per day
@@ -726,7 +726,7 @@ paths:
   /reports/plan-throughput:
     servers:
       - url: http://localhost:8092
-        description: planning-reports (cluster-internal Service <release>-analytics-reports)
+        description: planning-reports (cluster-internal Service <release>-reports)
     get:
       operationId: getPlanThroughputReport
       summary: Plans created vs published per day, and create-to-publish latency by site

@@ -10,8 +10,9 @@ and its pod labels, and every Service selects on it, so each Service selects
 EXACTLY ONE Deployment. This test fails if that ever stops being true.
 
 It mirrors process-path-management's charts/.../tests/test_service_selectors.py
-(and warehouse-infra's scripts/check-chart-selectors.py), minus the analytics
-components this chart does not ship. The optional frontend (the nginx pod that
+(and warehouse-infra's scripts/check-chart-selectors.py), including the optional
+analytics components (analytics-projector, analytics-reports; ADR 0005). The
+optional frontend (the nginx pod that
 serves the capacity_mfe remote) is checked too: it is its own workload,
 component=frontend, a ClusterIP Service, never routed by this chart.
 
@@ -35,10 +36,14 @@ ENABLE_EVERYTHING = BASE + [
     "--set", "frontend.enabled=true",
     "--set", "autoscaling.api.enabled=true",
     "--set", "autoscaling.frontend.enabled=true",
+    "--set", "autoscaling.projector.enabled=true",
+    "--set", "autoscaling.reports.enabled=true",
     "--set", "config.eventPublisher=kafka",
     "--set", "kafka.enabled=true",
     "--set", "gatewayApi.enabled=true",
     "--set", "ingress.enabled=true",
+    "--set", "analytics.enabled=true",
+    "--set", "analytics.database.projectorUrl=postgres://p@example.invalid:5432/analytics",
 ]
 
 
@@ -96,6 +101,34 @@ def main() -> int:
     if frontend_svc not in deployments:
         failures.append("the frontend Deployment was not rendered with frontend.enabled=true")
 
+    # The analytics reports Service pins component=analytics-reports, is
+    # ClusterIP, and the projector/reports Deployments carry their own components.
+    reports_svc = f"{RELEASE}-reports"
+    if reports_svc not in services:
+        failures.append("the analytics reports Service was not rendered with analytics.enabled=true")
+    else:
+        if selector_of(services[reports_svc]).get("app.kubernetes.io/component") != "analytics-reports":
+            failures.append("the reports Service selector must pin component=analytics-reports")
+        if services[reports_svc]["spec"].get("type") != "ClusterIP":
+            failures.append("the reports Service must be ClusterIP")
+    for dep_name, component in ((f"{RELEASE}-projector", "analytics-projector"), (reports_svc, "analytics-reports")):
+        dep = deployments.get(dep_name)
+        if dep is None:
+            failures.append(f"Deployment {dep_name} was not rendered with analytics.enabled=true")
+        elif (dep["spec"]["selector"].get("matchLabels") or {}).get("app.kubernetes.io/component") != component \
+                or pod_labels_of(dep).get("app.kubernetes.io/component") != component:
+            failures.append(f"Deployment {dep_name} must carry component={component} in selector.matchLabels and its pod labels")
+    if f"{RELEASE}-projector" in services:
+        failures.append("the projector exposes no Service: it serves only its admin port to the kubelet")
+    for hpa_name in (f"{RELEASE}-projector", reports_svc):
+        hpa = next((d for d in docs if d.get("kind") == "HorizontalPodAutoscaler" and d["metadata"]["name"] == hpa_name), None)
+        if hpa is None:
+            failures.append(f"the {hpa_name} HPA was not rendered")
+        elif hpa["spec"]["scaleTargetRef"]["name"] != hpa_name:
+            failures.append(f"the {hpa_name} HPA must scale its own Deployment")
+        elif "replicas" in deployments[hpa_name]["spec"]:
+            failures.append(f"Deployment {hpa_name} must omit replicas when its HPA owns them")
+
     # Frontend routing belongs to warehouse-infra's Nginx web gateway, not this chart.
     for d in docs:
         if d.get("kind") in {"Ingress", "HTTPRoute"} and "frontend" in d["metadata"]["name"]:
@@ -128,14 +161,25 @@ def main() -> int:
                 f"Service {svc_name} selects {len(hit)} Deployments {sorted(hit)}; expected exactly 1"
             )
 
-    # Default values must not deploy the MCP or frontend components at all.
+    # Default values must not deploy the MCP, frontend or analytics components at all.
     stray = [
         d["metadata"]["name"]
         for d in render(BASE)
-        if d.get("metadata", {}).get("name", "").endswith(("-mcp", "-frontend"))
+        if d.get("metadata", {}).get("name", "").endswith(("-mcp", "-frontend", "-projector", "-reports", "-analytics"))
     ]
     if stray:
         failures.append(f"optional components rendered with default values: {stray}")
+
+    # analytics.enabled needs a DSN source and kafka: refuse to render otherwise.
+    for label, args, needle in (
+        ("without an analytical DSN", BASE + ["--set", "analytics.enabled=true", "--set", "kafka.enabled=true"], "analytics.database.projectorUrl"),
+        ("without kafka", BASE + ["--set", "analytics.enabled=true", "--set", "analytics.database.existingSecret=x"], "kafka.enabled is false"),
+    ):
+        refused_analytics = subprocess.run(
+            ["helm", "template", RELEASE, str(CHART_DIR), *args], capture_output=True, text=True
+        )
+        if refused_analytics.returncode == 0 or needle not in refused_analytics.stderr:
+            failures.append(f"analytics.enabled rendered (or failed for another reason) {label}")
 
     # The chart must refuse to render without a database source.
     refused = subprocess.run(
@@ -150,7 +194,8 @@ def main() -> int:
         return 1
 
     print(f"PASS: {len(services)} Services each select exactly one Deployment; "
-          "mcp and frontend are off by default; chart refuses to render without a database source")
+          "mcp, frontend and analytics are off by default; chart refuses to render without a database source "
+          "and refuses analytics without a DSN or kafka")
     return 0
 
 

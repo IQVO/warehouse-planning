@@ -29,3 +29,9 @@ mcp:
   enabled: true
 frontend:
   enabled: true
+analytics:
+  enabled: true
+  database:
+    # Dummy DSN, no password (a real one comes from a Secret in the cluster).
+    projectorUrl: "postgres://projector@example.invalid:5432/warehouse_planning_analytics"
+    reportsUrl: "postgres://reports@example.invalid:5432/warehouse_planning_analytics"
