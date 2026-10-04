@@ -121,10 +121,7 @@ func TestStorageConsumer_Run_CancelledWhileFailing_DoesNotCommit(t *testing.T) {
 	go func() { done <- h.consumer.Run(ctx) }()
 
 	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if h.flaky.callCount() >= 3 {
-			break
-		}
+	for h.flaky.callCount() < 3 {
 		if time.Now().After(deadline) {
 			t.Fatal("handler was not retried")
 		}

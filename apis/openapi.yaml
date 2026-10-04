@@ -8,7 +8,11 @@ info:
     the computed effective rate; Phase 2 the normalized ProcessPath
     capacity; Phase 4 CapacityPlans (assigned demand vs. path capacity,
     shortage, bottleneck) whose lifecycle events leave through a
-    transactional outbox (see asyncapi.yaml).
+    transactional outbox (see asyncapi.yaml). Station capacity: stations
+    tallied from facility-layout have no throughput of their own; an
+    operator-declared StationStandard (throughput per station) is composed
+    with LABOR and the other constraints AT READ TIME (docs/adr/0002), and
+    the storage positions / station counts of a site are a read model.
   version: "0.1.0"
   contact:
     name: warehouse-planning maintainers
@@ -24,6 +28,8 @@ tags:
     description: ProcessPath registration and normalized ProcessPathCapacity (Phase 2).
   - name: capacity-plans
     description: CapacityPlan creation, publication and lookup (Phase 4).
+  - name: station-capacity
+    description: Operator-declared station standards and the storage/station read model of a site (ADR 0002).
 paths:
   /process-capacities:
     post:
@@ -169,6 +175,16 @@ paths:
         factors supplied on the request (Phase 2 simplification: there is
         no dedicated WorkloadProfile persistence yet), and returns the
         minimum normalized rate plus which step is the bottleneck.
+
+        Each step's candidate constraints are (a) the ProcessCapacity
+        constraints registered at exactly (process, location, window) and (b)
+        a DERIVED STATION constraint = the stations facility-layout tallied
+        across the zones of the site (zone ids starting with `<location>-`) x
+        the declared StationStandard, when both a station count above zero
+        and a standard exist. EVERY candidate is normalized to ORDER/hour
+        before the minimum is taken. With stations but no declared standard
+        the step uses (a) only and `warnings` says so. `step_breakdown` and
+        `warnings` are additive fields.
       parameters:
         - name: id
           in: path
@@ -233,8 +249,8 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
         "422":
           description: >
-            A path step has no registered ProcessCapacity for this
-            location/window, or the WorkloadProfile is missing a needed
+            A path step has neither a registered ProcessCapacity for this
+            location/window nor a derived STATION constraint, or the WorkloadProfile is missing a needed
             conversion factor / has an invalid one / cannot normalize a
             step's native unit.
           content:
@@ -306,7 +322,10 @@ paths:
       operationId: getCapacityPlan
       summary: Get a CapacityPlan
       tags: [capacity-plans]
-      description: Returns the stored plan, including its computed shortage and status.
+      description: >
+        Returns the stored plan, including its computed shortage, status, the
+        constraint type binding the bottleneck step and the composition
+        warnings.
       parameters:
         - name: id
           in: path
@@ -365,8 +384,210 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+  /station-standards/{location}/{process_type}:
+    put:
+      operationId: declareStationStandard
+      summary: Declare the throughput of ONE station of a process at a site
+      tags: [station-capacity]
+      description: >
+        Upserts the StationStandard keyed by (location, process_type): the
+        throughput of a single station in the process's natural unit, e.g.
+        180 PACKAGE per 3600 s for PACK at SIM1. The count of stations comes
+        from facility-layout; count x standard is composed with the step's
+        registered constraints when a path capacity or capacity plan is
+        computed (nothing derived is stored, so a late declaration applies on
+        the next read). `location` is the site (building) code, the first
+        dash-separated segment of the facility zone ids.
+      parameters:
+        - name: location
+          in: path
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: process_type
+          in: path
+          required: true
+          schema:
+            type: string
+          example: PACK
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeclareStationStandardRequest"
+      responses:
+        "200":
+          description: An existing standard was replaced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationStandardResponse"
+        "201":
+          description: A new standard was declared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationStandardResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            Invalid declaration: non-positive or negative quantity, non-positive
+            period, or a unit that cannot be normalized to ORDER (only UNIT,
+            PACKAGE and ORDER are accepted).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /station-standards:
+    get:
+      operationId: listStationStandards
+      summary: List the declared station standards
+      tags: [station-capacity]
+      description: The standards of one site, or every standard when `location` is omitted, ordered by location then process type.
+      parameters:
+        - name: location
+          in: query
+          required: false
+          schema:
+            type: string
+          example: SIM1
+      responses:
+        "200":
+          description: The declared standards (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StationStandardsResponse"
+  /storage-capacity:
+    get:
+      operationId: getStorageCapacity
+      summary: Storage positions and stations of a site (read model)
+      tags: [station-capacity]
+      description: >
+        The facility-layout tally of one site: storage positions per zone and
+        locationType and work-center station counts per zone and activity,
+        over the zones whose id starts with `<location>-`. It is a READ MODEL,
+        not a throughput (storage positions are not process capacity), and it
+        has no "consumed" figure: stock is never read from inventory-storage.
+        200 with empty lists when nothing is tallied for the site.
+      parameters:
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: SIM1
+      responses:
+        "200":
+          description: The site's storage positions and station counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageCapacityResponse"
+        "400":
+          description: location is missing.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 components:
   schemas:
+    DeclareStationStandardRequest:
+      type: object
+      required:
+        - quantity
+        - unit
+        - period_seconds
+      properties:
+        quantity:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Throughput of ONE station per period.
+          example: 180
+        unit:
+          type: string
+          enum: [UNIT, PACKAGE, ORDER]
+          example: PACKAGE
+        period_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: The period the quantity is measured over, in seconds (3600 = per hour).
+          example: 3600
+    StationStandardResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          example: SIM1
+        process_type:
+          type: string
+          example: PACK
+        quantity:
+          type: number
+          format: double
+          example: 180
+        unit:
+          type: string
+          example: PACKAGE
+        period_seconds:
+          type: number
+          format: double
+          example: 3600
+    StationStandardsResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          description: The location filter, when one was given.
+        standards:
+          type: array
+          items:
+            $ref: "#/components/schemas/StationStandardResponse"
+    StorageCapacityResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          example: SIM1
+        storage_positions:
+          type: array
+          items:
+            type: object
+            properties:
+              zone_id:
+                type: string
+                example: SIM1-STOR-AMB
+              location_type:
+                type: string
+                example: SimShelf
+              positions:
+                type: integer
+                example: 24
+        stations:
+          type: array
+          items:
+            type: object
+            properties:
+              zone_id:
+                type: string
+                example: SIM1-OPS-WC
+              activity:
+                type: string
+                example: PACK
+              stations:
+                type: integer
+                example: 11
     RegisterConstraintRequest:
       type: object
       required:
@@ -498,6 +719,29 @@ components:
         bottleneck_step:
           type: string
           example: REBIN
+        step_breakdown:
+          type: array
+          description: Additive. Each step's composed capacity in path order.
+          items:
+            type: object
+            properties:
+              step:
+                type: string
+                example: PACK
+              normalized_rate:
+                type: number
+                format: double
+                description: The step's effective rate, ORDER per HOUR.
+                example: 1800
+              binding_constraint:
+                type: string
+                enum: [LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT]
+                example: STATION
+        warnings:
+          type: array
+          description: Additive. Composition warnings (never null), e.g. stations tallied but no station standard declared.
+          items:
+            type: string
     CreateCapacityPlanRequest:
       type: object
       required:
@@ -597,3 +841,14 @@ components:
           type: string
           format: date-time
           description: Present only once PUBLISHED.
+        bottleneck_constraint:
+          type: string
+          description: >
+            Additive. The constraint type binding the bottleneck step (e.g.
+            LABOR or STATION); empty for plans created before it was recorded.
+          example: STATION
+        warnings:
+          type: array
+          description: Additive. Composition warnings raised when the plan was created (never null).
+          items:
+            type: string

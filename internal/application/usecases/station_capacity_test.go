@@ -284,10 +284,11 @@ func TestGetProcessPathCapacity_InfrastructureErrorsAreReturned(t *testing.T) {
 	}
 }
 
-// CapacityPlan creation uses the same composition: shortage and bottleneck can
-// now be bound by STATION, and the warnings of a plan computed without a
-// standard are stored with it.
-func TestCreateCapacityPlan_UsesCompositionAndStoresItsOutcome(t *testing.T) {
+// planFixture builds the pick-rebin-pack world of the plan tests at SIM1 over
+// the 8h plan window: Pick 8000 UNIT/h, Rebin 6000 UNIT/h, Pack LABOR 2500
+// PACKAGE/h and 10 PACK stations tallied; the standard is NOT declared yet.
+func newStationPlanFixture(t *testing.T) (*compositionFixture, *CreateCapacityPlan, *memory.CapacityPlanRepo, CreateCapacityPlanCommand) {
+	t.Helper()
 	f := newCompositionFixture(t)
 	f.start, f.end = planWindowStart, planWindowEnd
 	f.labor(t, "PICK", 8000, processcapacity.UnitUnit)
@@ -299,26 +300,42 @@ func TestCreateCapacityPlan_UsesCompositionAndStoresItsOutcome(t *testing.T) {
 	plans, ob := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	create := &CreateCapacityPlan{
 		PathCapacity: f.uc, Plans: plans, Outbox: ob, Encoder: fakeEncoder{}, UnitOfWork: memory.NewUnitOfWork(plans, ob),
-		NewID: func() string { return "plan-c" }, Now: func() time.Time { return planCreatedAt },
+		Now: func() time.Time { return planCreatedAt },
 	}
 	cmd := CreateCapacityPlanCommand{
 		WarehouseID: "WH-1", Location: "SIM1", WindowStart: planWindowStart, WindowEnd: planWindowEnd,
 		ProcessPathID: "pick-rebin-pack", AssignedDemand: 20000, UnitsPerOrder: f64ptr(2.5), PackagesPerOrder: f64ptr(1),
 	}
+	return f, create, plans, cmd
+}
 
-	// FIXTURE C: stations but no standard -> labor only (REBIN 2400, PACK 2500), warning stored.
-	withoutStandard, err := create.Handle(context.Background(), cmd)
+// FIXTURE C in a plan: stations but no standard -> labor only (REBIN 2400,
+// PACK 2500), and the warning is stored with the plan.
+func TestCreateCapacityPlan_NoStandard_StoresTheWarning(t *testing.T) {
+	_, create, plans, cmd := newStationPlanFixture(t)
+	create.NewID = func() string { return "plan-c" }
+
+	plan, err := create.Handle(context.Background(), cmd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withoutStandard.PathCapacity() != 2400 || withoutStandard.BottleneckStep() != "REBIN" || len(withoutStandard.Warnings()) != 1 {
-		t.Fatalf("no standard: %v %s warnings %v", withoutStandard.PathCapacity(), withoutStandard.BottleneckStep(), withoutStandard.Warnings())
+	if plan.PathCapacity() != 2400 || plan.BottleneckStep() != "REBIN" || len(plan.Warnings()) != 1 {
+		t.Fatalf("no standard: %v %s warnings %v", plan.PathCapacity(), plan.BottleneckStep(), plan.Warnings())
 	}
+	stored, _ := plans.FindByID(context.Background(), "plan-c")
+	if stored == nil || len(stored.Warnings()) != 1 {
+		t.Fatalf("stored fixture C plan lost its warning: %v", stored)
+	}
+}
 
-	f.declare(t, "SIM1", "PACK", 180, processcapacity.UnitPackage)
-	cmd2 := cmd
+// CapacityPlan creation uses the same composition: shortage and bottleneck can
+// now be bound by STATION, and the binding constraint is stored with the plan.
+func TestCreateCapacityPlan_StationBindsShortageAndBottleneck(t *testing.T) {
+	f, create, plans, cmd := newStationPlanFixture(t)
 	create.NewID = func() string { return "plan-b" }
-	plan, err := create.Handle(context.Background(), cmd2)
+	f.declare(t, "SIM1", "PACK", 180, processcapacity.UnitPackage)
+
+	plan, err := create.Handle(context.Background(), cmd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,10 +348,6 @@ func TestCreateCapacityPlan_UsesCompositionAndStoresItsOutcome(t *testing.T) {
 	stored, err := plans.FindByID(context.Background(), "plan-b")
 	if err != nil || stored == nil || stored.BottleneckConstraint() != processcapacity.ConstraintStation {
 		t.Fatalf("stored plan = %v err %v, want STATION bottleneck constraint kept", stored, err)
-	}
-	storedC, _ := plans.FindByID(context.Background(), "plan-c")
-	if storedC == nil || len(storedC.Warnings()) != 1 {
-		t.Fatalf("stored fixture C plan lost its warning: %v", storedC)
 	}
 }
 

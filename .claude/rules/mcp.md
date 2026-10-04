@@ -24,7 +24,7 @@ One MCP server for this bounded context, an additive inbound adapter
   insert their CloudEvents into the outbox inside the UnitOfWork (same as
   REST); the relay in `cmd/api` drains them.
 
-## Tools (7; budget is 8)
+## Tools (10; budget is 10)
 
 All argument names are snake_case, matching the REST bodies. Timestamps are
 RFC3339; a window must equal the registered window EXACTLY (no overlap
@@ -39,16 +39,29 @@ infrastructure errors are logged and reported as a generic `internal-error`.
 | `register_process_capacity_constraint` | write | `RegisterProcessCapacityConstraint` | `process_type`, `location`, `window_start`, `window_end`, `constraint_type` (LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT), `quantity`, `unit` (UNIT, LINE, ORDER, PACKAGE), `period_seconds` (> 0) | `effective_rate`, `effective_unit`, `binding_constraint` |
 | `get_effective_process_capacity` | read | `ProcessCapacityRepository` port (no use case, as REST) | `process_type`, `location`, `window_start`, `window_end` | `effective_rate`, `effective_unit`, `binding_constraint`, `constraints[]` (`constraint_type`, `quantity`, `unit`, `period_seconds`); `process-capacity-not-found` if none |
 | `register_process_path` | write | `RegisterProcessPath` | `id`, `name`, `steps` (ordered, non-empty) | `id`, `name`, `steps` |
-| `get_process_path_capacity` | read | `GetProcessPathCapacity` | `id`, `location`, `window_start`, `window_end`, optional `units_per_order`, `packages_per_order` | `normalized_rate` (ORDER/hour), `normalized_unit` (`ORDER`), `bottleneck_step` |
+| `get_process_path_capacity` | read | `GetProcessPathCapacity` | `id`, `location`, `window_start`, `window_end`, optional `units_per_order`, `packages_per_order` | `normalized_rate` (ORDER/hour), `normalized_unit` (`ORDER`), `bottleneck_step`, `step_breakdown[]` (`step`, `normalized_rate` ORDER/hour, `binding_constraint`), `warnings[]` (never null) |
 | `create_capacity_plan` | write | `CreateCapacityPlan` | `warehouse_id`, `location`, `window_start`, `window_end`, `path_id`, `assigned_demand` (orders; required, never silently 0), optional `units_per_order`, `packages_per_order` | the plan (below), `status: DRAFT` |
 | `publish_capacity_plan` | write | `PublishCapacityPlan` | `id` | the plan, `status: PUBLISHED`, `published_at`; second call -> `capacity-plan-already-published` |
 | `get_capacity_plan` | read | `CapacityPlanRepository` port (no use case, as REST) | `id` | the plan |
+| `declare_station_standard` | write (idempotent: same key replaces) | `DeclareStationStandard` | `location` (site code, e.g. `SIM1`), `process_type`, `quantity` (> 0, per ONE station), `unit` (UNIT, PACKAGE, ORDER), `period_seconds` (> 0) | `location`, `process_type`, `quantity`, `unit`, `period_seconds`, `created` |
+| `list_station_standards` | read | `StationStandardRepository` port (no use case, as REST) | optional `location` | `location` (when filtered), `standards[]` (same fields) |
+| `get_storage_capacity` | read | `GetStorageCapacity` | `location` | `location`, `storage_positions[]` (`zone_id`, `location_type`, `positions`), `stations[]` (`zone_id`, `activity`, `stations`); empty arrays when nothing is tallied |
 
 Plan body (same as REST `capacityPlanResponse`): `id`, `warehouse_id`,
 `location`, `window_start`, `window_end`, `path_id`, `assigned_demand`,
 `status`, `path_capacity` (ORDER/hour), `bottleneck_step`,
 `capacity_over_window`, `shortage`, `created_at`, `published_at` (omitted
-while DRAFT).
+while DRAFT), `bottleneck_constraint` (e.g. LABOR, STATION; additive) and
+`warnings` (additive, never null).
+
+Station capacity (docs/adr/0002): `get_process_path_capacity`,
+`create_capacity_plan` and `get_capacity_plan` surface the read-time
+composition (`step_breakdown`, `bottleneck_constraint`, `warnings`);
+`declare_station_standard` / `list_station_standards` /
+`get_storage_capacity` mirror the REST `PUT/GET /station-standards` and
+`GET /storage-capacity` (errors `non-positive-station-standard`,
+`negative-quantity`, `non-positive-period`, `unsupported-normalization-unit`,
+`missing-station-standard-field`, `missing-location`).
 
 Annotations (charter §4): read tools `ReadOnlyHint`; write tools destructive
 and, where a repeat call creates or adds state, non-idempotent
@@ -73,4 +86,6 @@ Add a typed input struct (snake_case `json` tags + `jsonschema:"..."`
 description on every field), a `Deps` method calling an existing use case
 (or a repository port for a plain read), register it in `registerTools` with
 annotations, map errors through `mapError`, and extend `wantTools` in
-`TestToolSurface`. Keep the surface at <= 8 tools.
+`TestToolSurface`. Keep the surface at <= 10 tools: the budget was 8 and was raised to 10, in one
+reviewed change, by the three station-capacity tools (`TestToolSurface`'s
+`maxTools` pins it and the exact curated set).

@@ -135,50 +135,58 @@ Confirmed 2026-10-03 against each producer's own `apis/asyncapi.yaml` on
 | `type` | topic | producer | fields used |
 | --- | --- | --- | --- |
 | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (fan-out: one message per PathPlan line) -> LABOR `CapacityConstraint` = `planned_heads * planned_rate`; window = `[event.time, event.time + planned_hours]` (documented assumption, no real shift-start field exists yet) |
-| `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `zoneId`, `locationType`, `role` (default `Storage`), `activities` (present only when `role=WorkCenter`) -> tallied per `(zoneId, locationType)` for a LOCATION constraint (role=Storage), or per zone+activity for a STATION constraint (role=WorkCenter) |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `zoneId`, `locationType`, `role` (default `Storage`), `activities` (present only when `role=WorkCenter`) -> tallied per `(zoneId, locationType)` as storage positions (role=Storage), or per zone+activity as stations (role=WorkCenter). Tally only: no ProcessCapacity constraint is registered |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `locationCode` -> decrements the same tally |
 
 `process-path-management` is deliberately NOT consumed — its `ProcessPath`
 carries `path_id`/`required_capabilities`/`eligibility`, never an ordered
 step sequence, so there is nothing structural to sync.
 
-### Keying decisions Phase 3 actually made
+### Keying decisions
 
-The table above states WHAT is tallied; this section states how each
-tally is mapped onto `ProcessCapacity`'s `(ProcessType, Location,
-CapacityWindow)` identity, since the Addendum left the exact keying to
-the implementation:
+The two consumers feed this context differently, and since ADR 0002
+(`docs/adr/0002-station-capacity-composition.md`) neither derives anything it
+cannot derive honestly.
 
-- **LABOR** (ShiftPlanCommitted): a clean fit -- `ProcessType` =
-  uppercase(`path_id`), `Location` = `building_id`, `CapacityWindow` =
-  `[event.time, event.time + planned_hours)`. Rate =
-  `planned_heads * planned_rate` registered as `UNIT/HOUR` (documented
-  default -- `planned_rate`'s native unit is not specified upstream).
-- **STATION** (WorkCenter activity): a clean fit -- `ProcessType` = the
-  uppercased activity itself (e.g. `PACK`), `Location` = `zoneId`. One
-  `ProcessCapacity` per (zone, activity).
-- **LOCATION** (role=Storage, tallied per `(zoneId, locationType)`): NOT
-  a clean fit. A bare position count has no naturally implied
-  `ProcessType` the way a WorkCenter activity does, and `ConstraintType`
-  is a single fixed vocabulary entry (`LOCATION`), not parameterized per
-  `locationType` -- so two distinct `locationType`s in the same zone
-  would overwrite each other's constraint on one aggregate if keyed by
-  zone alone. Phase 3's pragmatic choice: a sentinel
-  `ProcessType="STORAGE"`, with `locationType` folded into a composite
-  `Location = "<zoneId>:<locationType>"`. This is a workaround, not a
-  clean domain fit -- a future ADR might introduce a dedicated
-  `StorageCapacity` concept keyed by `(Location, LocationType, Window)`
-  instead of forcing it onto `ProcessCapacity`'s identity.
-- Both LOCATION and STATION tallies are a standing structural count, not
-  a time-sliced rate, so they are registered under a fixed, deterministic
-  `CapacityWindow` (`[epoch, epoch+100y)`,
-  `internal/adapters/inbound/kafka.StandingWindowStart/End`) rather than
-  a window derived from the triggering event's time -- repeated
-  registrations for the same (zone, key) then land on the SAME aggregate.
-  The quantity is registered as `CapacityUnit=LINE` (the nearest fit of
-  the domain's four units to "a count of positions/stations", paired
-  with a 1-hour period purely to satisfy `CapacityRate`'s required
-  period, not because this is an actual per-hour throughput figure).
+- **LABOR** (`ShiftPlanCommitted`, the labor consumer -- unchanged): a clean
+  fit onto `ProcessCapacity`'s `(ProcessType, Location, CapacityWindow)`
+  identity. `ProcessType` = uppercase(`path_id`), `Location` = `building_id`
+  (the SITE code, e.g. `SIM1`), `CapacityWindow` = `[event.time, event.time +
+  planned_hours)`. Rate = `planned_heads * planned_rate` registered as
+  `UNIT/HOUR` (documented default -- `planned_rate`'s native unit is not
+  specified upstream). This is the ONLY thing the consumers register as a
+  `ProcessCapacity` constraint.
+- **Stations and storage positions** (`LocationSlotRegistered` /
+  `Decommissioned`, the facility consumer): a **pure tally maintainer**. It
+  claims the event and mutates `location_slot_tally` /
+  `location_slot_registration` inside ONE unit of work and does nothing else:
+  no `ProcessCapacity` is registered, there is no sentinel `ProcessType`, no
+  standing window and no fake unit. A count of positions or stations is not a
+  throughput. (The old Phase 3 design -- a `STORAGE` sentinel process type with
+  `Location = <zoneId>:<locationType>`, and STATION constraints in unit `LINE`
+  on a `[1970, 2070)` "standing window" keyed by zone -- never combined with
+  LABOR and is retired; migration `0005` deletes the rows it left behind.)
+  - **Stations -> capacity, at read time.** A planning `location` is a
+    site/building code (the labor consumer's `building_id`), and the zones of
+    a site are the tally zones whose `zoneId` starts with `<location>-`
+    (facility-layout's `LocationCode` grammar is `Site-Area-Zone-...` and its
+    `SiteCode` is upper-case alphanumeric with no dashes, so the first segment
+    of a zone id IS the site code; a zone whose id has no matching site simply
+    does not contribute). For a path step with process `P` at location `L`,
+    `GetProcessPathCapacity` / `CreateCapacityPlan` add a derived STATION
+    candidate `stationCount(L, activity=P) x StationStandard(L, P)` to the
+    constraints registered at `(P, L, window)`, normalize every candidate to
+    ORDER/hour and take the minimum (the binding constraint type is
+    reported). The standard -- throughput of ONE station, e.g. 180
+    PACKAGE/hour -- is an operator-declared planning parameter of THIS context
+    (`PUT /station-standards/{location}/{process_type}`); no upstream
+    publishes it. Stations tallied with no standard declared produce a warning
+    and no invented throughput.
+  - **Storage positions -> read model.** Positions per `(zoneId,
+    locationType)` and stations per `(zoneId, activity)` are exposed by
+    `GET /storage-capacity?location=` / `get_storage_capacity`. They are not
+    process throughput and have no "consumed" figure (stock is never read from
+    inventory-storage).
 
 ### Delivery guarantee and idempotency (processed_events)
 
@@ -199,8 +207,8 @@ make that true; none of them works without the other two:
    `ProcessedEventRepository.Claim(consumer, CloudEvents id)` (an
    `INSERT ... ON CONFLICT DO NOTHING` whose affected-row count says
    whether this event was already handled) and every side effect (the
-   storage tally mutation AND the `ProcessCapacity` constraint upsert)
-   commit or roll back together. The Postgres `UnitOfWork` carries a pgx
+   facility consumer's tally mutation; the labor consumer's
+   `ProcessCapacity` constraint upsert) commit or roll back together. The Postgres `UnitOfWork` carries a pgx
    transaction in the `ctx` (`postgres/pgtx`); every repo
    (`ProcessCapacityRepo`, `ProcessedEventRepo`, `StorageTallyRepo`) uses
    it when present and begins its own only when there is none (REST
@@ -214,8 +222,8 @@ make that true; none of them works without the other two:
    transient/infrastructure failures (begin/commit, claim, tally, repo
    Find/Save). It returns `nil` for deterministic problems -- not a
    CloudEvent, unknown `type`, malformed payload, missing fields, duplicate
-   id, untracked decommission, and domain-validation rejections -- because
-   retrying cannot help. Domain rejections are recognised by
+   id, untracked decommission, and (labor consumer) domain-validation
+   rejections -- because retrying cannot help. Domain rejections are recognised by
    `usecases.IsDomainValidationError` (an allow-list of
    `ErrInvalidWindow`/`ErrNegativeQuantity`/`ErrNonPositivePeriod`/
    `ErrUnitMismatch`); anything NOT on that list is treated as
@@ -224,7 +232,8 @@ make that true; none of them works without the other two:
    event is not redelivered forever. Pure payload validation runs before
    the transaction opens, so a bad message never touches the database. Add
    any new domain sentinel `RegisterProcessCapacityConstraint` can return
-   to that list.
+   to that list. (The facility consumer registers no constraint, so it has
+   no domain rejections at all.)
 
 Why it matters most for the storage/station tally: it is an
 INCREMENT/DECREMENT, not an overwrite, so "redelivery is naturally
@@ -233,10 +242,9 @@ idempotent" does not hold the way it does for LABOR's overwrite-style
 would double-count a real slot. The tally's own "locationCode already
 registered" no-op (`RegisterSlot` returns nil updates) is only a second
 line of defence against a producer re-emitting a slot under a NEW event id;
-it is safe under redelivery BECAUSE the tally and the constraint commit
-together (an attempt that failed between the two rolled the registration
-back too, so the retry registers for real and cannot hit the no-op while
-the constraint is stale).
+it is safe under redelivery BECAUSE the claim and the tally commit together
+(an attempt that failed after the tally step rolled the registration back
+too, so the retry registers for real and cannot hit the no-op).
 
 Known trade-off: a message that fails with a non-recognised, actually
 deterministic error blocks its partition (retried forever with an ERROR
@@ -244,8 +252,9 @@ log per attempt, 5s cap) instead of being dropped -- by design, since a
 silent drop is unrecoverable data loss. There is no DLQ yet.
 
 Tests that pin this: `internal/adapters/inbound/kafka/atomic_*_test.go`
-(rollback of tally + constraint + claim on a second-step failure, error
-classification), `consume_loop_test.go` / `run_loop_test.go` (commit
+(rollback of the tally mutation + claim when a failure is injected AFTER
+the mutation was applied, error classification; the labor consumer's
+constraint + claim), `consume_loop_test.go` / `run_loop_test.go` (commit
 ordering and backoff), `atomic_consumers_integration_test.go` (real
 Postgres + Kafka: rollback, retry, redelivery) and
 `postgres/unit_of_work_integration_test.go`.

@@ -100,33 +100,43 @@ func TestGetStorageCapacity(t *testing.T) {
 	}
 }
 
-// Fixtures A and B through MCP: 10 PACK stations, 180 PACKAGE/h each, LABOR
-// 2500 PACKAGE/h -> PACK 1800; with Rebin raised to 6000 UNIT/h the path is
-// 1800 ORDER/h, bottleneck PACK bound by STATION, in the path capacity AND in
-// the stored plan (shortage 20000 - 1800*8 = 5600).
-func TestStationCompositionThroughMCPTools(t *testing.T) {
-	h := newHarness(t)
+func (h *harness) seedFixtureB(t *testing.T) map[string]any {
+	t.Helper()
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PICK", "SIM1", 8000, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("REBIN", "SIM1", 2500, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PACK", "SIM1", 2500, "PACKAGE"))
 	h.ok(t, "register_process_path", map[string]any{"id": "tote-path", "name": "Tote path", "steps": []string{"PICK", "REBIN", "PACK"}})
 	h.seedStations(t, "SIM1-OPS-WC", "PACK", 10)
-	pathArgs := map[string]any{
+	return map[string]any{
 		"id": "tote-path", "location": "SIM1", "window_start": winStart, "window_end": winEnd,
 		"units_per_order": 2.5, "packages_per_order": 1,
 	}
+}
 
-	// Fixture C first: stations tallied, no standard -> labor only + warning.
+// FIXTURE C through MCP: stations tallied, no standard -> labor only (REBIN
+// still bottlenecks at 1000) and exactly one warning.
+func TestStationComposition_FixtureC_ThroughMCP(t *testing.T) {
+	h := newHarness(t)
+	pathArgs := h.seedFixtureB(t)
 	c := h.ok(t, "get_process_path_capacity", pathArgs)
 	if c["bottleneck_step"] != "REBIN" || c["normalized_rate"] != 1000.0 {
 		t.Fatalf("no standard: %v, want REBIN 1000", c)
 	}
-	warnings, _ := c["warnings"].([]any)
-	if len(warnings) != 1 || warnings[0] == "" {
+	assertBreakdown(t, c, []stepWant{{"PICK", 3200, "LABOR"}, {"REBIN", 1000, "LABOR"}, {"PACK", 2500, "LABOR"}})
+	if warnings, _ := c["warnings"].([]any); len(warnings) != 1 || warnings[0] == "" {
 		t.Fatalf("no standard: warnings = %v, want exactly one", c["warnings"])
 	}
+}
 
+// Fixtures A and B through MCP: 10 PACK stations, 180 PACKAGE/h each, LABOR
+// 2500 PACKAGE/h -> PACK 1800; with Rebin raised to 6000 UNIT/h the path is
+// 1800 ORDER/h, bottleneck PACK bound by STATION, in the path capacity AND in
+// the stored plan (shortage 20000 - 1800*8 = 5600).
+func TestStationComposition_FixturesAB_ThroughMCP(t *testing.T) {
+	h := newHarness(t)
+	pathArgs := h.seedFixtureB(t)
 	h.ok(t, "declare_station_standard", standardArgs("SIM1", "PACK", 180, "PACKAGE"))
+
 	b := h.ok(t, "get_process_path_capacity", pathArgs)
 	assertBreakdown(t, b, []stepWant{{"PICK", 3200, "LABOR"}, {"REBIN", 1000, "LABOR"}, {"PACK", 1800, "STATION"}})
 	if b["bottleneck_step"] != "REBIN" || b["normalized_rate"] != 1000.0 || !reflect.DeepEqual(b["warnings"], []any{}) {

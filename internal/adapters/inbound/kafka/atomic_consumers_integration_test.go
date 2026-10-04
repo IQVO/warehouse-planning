@@ -28,6 +28,7 @@ import (
 	kafkaconsumer "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
+	"github.com/claudioed/warehouse-planning/internal/application/tally"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,21 +85,10 @@ func (f pgFixture) registrations(t *testing.T) int {
 	return f.count(t, "SELECT count(*) FROM location_slot_registration")
 }
 
-func (f pgFixture) constraintQty(t *testing.T, processType, location string) float64 {
-	t.Helper()
-	pc, err := f.pcs.FindByProcessLocationWindow(context.Background(), processcapacity.ProcessType(processType), location,
-		kafkaconsumer.StandingWindowStart, kafkaconsumer.StandingWindowEnd)
-	if err != nil {
-		t.Fatalf("find: %v", err)
-	}
-	if pc == nil {
-		return -1
-	}
-	rate, _, err := pc.EffectiveRate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rate.Quantity()
+// processCapacityRows counts every ProcessCapacity aggregate in Postgres. The
+// facility consumer is a pure tally maintainer now: it must never create one.
+func (f pgFixture) processCapacityRows(t *testing.T) int {
+	return f.count(t, "SELECT count(*) FROM process_capacity")
 }
 
 // failingSaveRepo wraps the REAL Postgres ProcessCapacityRepository and
@@ -127,6 +117,41 @@ func (r *failingSaveRepo) Save(ctx context.Context, pc *processcapacity.ProcessC
 }
 
 func (r *failingSaveRepo) saveCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// failingTallyRepo wraps the REAL Postgres tally and, for the first
+// `remaining` RegisterSlot calls, APPLIES the real mutation inside the unit of
+// work's transaction and then fails with an injected error: a genuine
+// mid-handling failure after the tally step already ran.
+type failingTallyRepo struct {
+	ports.StorageTallyRepository
+	mu        sync.Mutex
+	remaining int
+	calls     int
+}
+
+func (r *failingTallyRepo) RegisterSlot(ctx context.Context, code, zone, typ string, keys []string) ([]tally.Update, error) {
+	updates, err := r.StorageTallyRepository.RegisterSlot(ctx, code, zone, typ, keys)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	r.calls++
+	fail := r.remaining > 0
+	if fail {
+		r.remaining--
+	}
+	r.mu.Unlock()
+	if fail {
+		return nil, errInjected
+	}
+	return updates, nil
+}
+
+func (r *failingTallyRepo) registerCalls() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.calls
@@ -162,13 +187,12 @@ func committedOffset(brokers []string, groupID, topic string) int64 {
 	return -1
 }
 
-func newStorageConsumerOnTopic(brokers []string, topic, groupID string, pcs ports.ProcessCapacityRepository, fx pgFixture) *kafkaconsumer.StorageCapacityConsumer {
+func newStorageConsumerOnTopic(brokers []string, topic, groupID string, tallyRepo ports.StorageTallyRepository, fx pgFixture) *kafkaconsumer.StorageCapacityConsumer {
 	return &kafkaconsumer.StorageCapacityConsumer{
 		// Same reader configuration as production's readerConfig: GroupID,
 		// and CommitInterval left unset (explicit commits only).
 		Reader:          kafkago.NewReader(kafkago.ReaderConfig{Brokers: brokers, Topic: topic, GroupID: groupID}),
-		Register:        &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
-		Tally:           fx.tally,
+		Tally:           tallyRepo,
 		ProcessedEvents: fx.processed,
 		UoW:             fx.uow,
 		Logger:          testLogger(),
@@ -207,15 +231,15 @@ func storageRegisteredMsg(t *testing.T, id, code string) kafkago.Message {
 	}
 }
 
-// Postgres only: the mid-handling failure rolls back REAL rows, the retry
-// heals them, and the processed_events row ends up exactly once. Mirrors
-// the unit proof against the real transaction implementation.
+// Postgres only: the mid-handling failure rolls back REAL rows (tally,
+// registration AND the processed_events claim), the retry heals them, the
+// processed_events row ends up exactly once -- and no ProcessCapacity row is
+// ever written: the facility consumer only mutates the tally.
 func TestStorageConsumer_Integration_MidHandlingFailureRollsBackRealRows_RetryHeals(t *testing.T) {
 	fx := startPgFixture(t)
-	failing := &failingSaveRepo{ProcessCapacityRepository: fx.pcs, remaining: 1}
+	failing := &failingTallyRepo{StorageTallyRepository: fx.tally, remaining: 1}
 	c := &kafkaconsumer.StorageCapacityConsumer{ // no Reader: HandleMessage only
-		Register:        &usecases.RegisterProcessCapacityConstraint{Repo: failing},
-		Tally:           fx.tally,
+		Tally:           failing,
 		ProcessedEvents: fx.processed,
 		UoW:             fx.uow,
 		Logger:          testLogger(),
@@ -234,9 +258,6 @@ func TestStorageConsumer_Integration_MidHandlingFailureRollsBackRealRows_RetryHe
 	if n := fx.registrations(t); n != 0 {
 		t.Errorf("location_slot_registration rows = %d, want 0 (otherwise the retry hits 'already registered' and never heals)", n)
 	}
-	if q := fx.constraintQty(t, "STORAGE", "ZONE-A:BULK"); q != -1 {
-		t.Errorf("constraint = %v, want none", q)
-	}
 	if n := fx.processedRows(t, "storage-capacity-consumer", "itest-evt-1"); n != 0 {
 		t.Errorf("processed_events rows = %d after failure, want 0 (un-claimed)", n)
 	}
@@ -247,11 +268,11 @@ func TestStorageConsumer_Integration_MidHandlingFailureRollsBackRealRows_RetryHe
 	if n := fx.tallyCount(t, "ZONE-A", "LOCATION", "BULK"); n != 1 {
 		t.Errorf("tally = %d after retry, want 1", n)
 	}
-	if q := fx.constraintQty(t, "STORAGE", "ZONE-A:BULK"); q != 1 {
-		t.Errorf("constraint = %v after retry, want 1 (consistent with the tally)", q)
-	}
 	if n := fx.processedRows(t, "storage-capacity-consumer", "itest-evt-1"); n != 1 {
 		t.Errorf("processed_events rows = %d after retry, want exactly 1", n)
+	}
+	if n := fx.processCapacityRows(t); n != 0 {
+		t.Errorf("process_capacity rows = %d, want 0: the facility consumer must only mutate the tally", n)
 	}
 	// Redelivery after success is a no-op.
 	if err := c.HandleMessage(ctx, msg); err != nil {
@@ -271,24 +292,24 @@ func TestStorageConsumer_Integration_TransientFailure_RetriedAndCommittedAfterSu
 	createTopic(t, brokers, topic)
 	groupID := uniqueGroupID("storage-capacity")
 	fx := startPgFixture(t)
-	failing := &failingSaveRepo{ProcessCapacityRepository: fx.pcs, remaining: 1}
+	failing := &failingTallyRepo{StorageTallyRepository: fx.tally, remaining: 1}
 
 	c := newStorageConsumerOnTopic(brokers, topic, groupID, failing, fx)
 	defer func() { _ = c.Close() }()
 	publishMessages(t, brokers, topic, storageRegisteredMsg(t, "itest-evt-retry", "WH1-A-01"))
 	startRun(t, c.Run)
 
-	eventually(t, 60*time.Second, "constraint registered after the retry", func() bool {
-		return fx.constraintQty(t, "STORAGE", "ZONE-A:BULK") == 1
+	eventually(t, 60*time.Second, "tally incremented after the retry", func() bool {
+		return fx.tallyCount(t, "ZONE-A", "LOCATION", "BULK") == 1
 	})
-	if calls := failing.saveCalls(); calls != 2 {
-		t.Errorf("Save called %d times, want 2 (the message was handled, failed, then handled again)", calls)
-	}
-	if n := fx.tallyCount(t, "ZONE-A", "LOCATION", "BULK"); n != 1 {
-		t.Errorf("tally = %d, want 1 (consistent with the constraint, not double-counted)", n)
+	if calls := failing.registerCalls(); calls != 2 {
+		t.Errorf("RegisterSlot called %d times, want 2 (the message was handled, failed, then handled again)", calls)
 	}
 	if n := fx.processedRows(t, "storage-capacity-consumer", "itest-evt-retry"); n != 1 {
 		t.Errorf("processed_events rows = %d, want exactly 1", n)
+	}
+	if n := fx.processCapacityRows(t); n != 0 {
+		t.Errorf("process_capacity rows = %d, want 0", n)
 	}
 	eventually(t, 30*time.Second, "offset committed past the message", func() bool {
 		return committedOffset(brokers, groupID, topic) == 1
@@ -311,11 +332,11 @@ func TestStorageConsumer_Integration_UncommittedOnFailure_RedeliveredToNextConsu
 	publishMessages(t, brokers, topic, storageRegisteredMsg(t, "itest-evt-redeliver", "WH1-A-01"))
 
 	// Consumer 1: always fails after the tally step.
-	broken := &failingSaveRepo{ProcessCapacityRepository: fx.pcs, remaining: 1 << 30}
+	broken := &failingTallyRepo{StorageTallyRepository: fx.tally, remaining: 1 << 30}
 	c1 := newStorageConsumerOnTopic(brokers, topic, groupID, broken, fx)
 	stop1 := startRun(t, c1.Run)
 	eventually(t, 60*time.Second, "consumer 1 to retry the same message at least 3 times", func() bool {
-		return broken.saveCalls() >= 3
+		return broken.registerCalls() >= 3
 	})
 	if off := committedOffset(brokers, groupID, topic); off > 0 {
 		t.Fatalf("offset %d committed although the message never succeeded (it would be lost)", off)
@@ -330,15 +351,12 @@ func TestStorageConsumer_Integration_UncommittedOnFailure_RedeliveredToNextConsu
 	}
 
 	// Consumer 2, same group, healthy: Kafka redelivers the message.
-	c2 := newStorageConsumerOnTopic(brokers, topic, groupID, fx.pcs, fx)
+	c2 := newStorageConsumerOnTopic(brokers, topic, groupID, fx.tally, fx)
 	defer func() { _ = c2.Close() }()
 	startRun(t, c2.Run)
 	eventually(t, 90*time.Second, "consumer 2 to be redelivered and apply the message", func() bool {
-		return fx.constraintQty(t, "STORAGE", "ZONE-A:BULK") == 1
+		return fx.tallyCount(t, "ZONE-A", "LOCATION", "BULK") == 1
 	})
-	if n := fx.tallyCount(t, "ZONE-A", "LOCATION", "BULK"); n != 1 {
-		t.Errorf("tally = %d, want 1", n)
-	}
 	if n := fx.processedRows(t, "storage-capacity-consumer", "itest-evt-redeliver"); n != 1 {
 		t.Errorf("processed_events rows = %d, want exactly 1", n)
 	}

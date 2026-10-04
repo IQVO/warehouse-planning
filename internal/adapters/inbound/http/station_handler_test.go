@@ -191,61 +191,77 @@ func TestHandler_GetStorageCapacity(t *testing.T) {
 	}
 }
 
-// Fixtures A+B through the REST surface: path capacity reports step_breakdown
-// (3200/1000/1800 then 3200/2400/1800) and warnings, and a plan carries the
-// binding constraint -- also when read back with GET.
-func TestHandler_StationCompositionInPathCapacityAndPlan(t *testing.T) {
-	srv := newStationServer(t)
+// stepItem is one expected step_breakdown entry.
+func stepItem(rate float64, step, binding string) any {
+	return map[string]any{"step": step, "normalized_rate": rate, "binding_constraint": binding}
+}
+
+// expectPath asserts a path capacity body: rate/unit/bottleneck, the exact
+// step_breakdown and the number of warnings (as a JSON array, never null).
+func expectPath(t *testing.T, got map[string]any, rate float64, bottleneck string, breakdown []any, warnings int) {
+	t.Helper()
+	w, isArray := got["warnings"].([]any)
+	if got["normalized_rate"] != rate || got["normalized_unit"] != "ORDER" || got["bottleneck_step"] != bottleneck ||
+		!reflect.DeepEqual(got["step_breakdown"], breakdown) || !isArray || len(w) != warnings {
+		t.Fatalf("path capacity = %v, want %v ORDER bound by %s, breakdown %v, %d warnings", got, rate, bottleneck, breakdown, warnings)
+	}
+}
+
+func (s *stationServer) seedFixtureB(t *testing.T) {
+	t.Helper()
 	for _, reg := range []struct {
 		process string
 		qty     float64
 		unit    string
 	}{{"PICK", 8000, "UNIT"}, {"REBIN", 2500, "UNIT"}, {"PACK", 2500, "PACKAGE"}} {
-		if status, _, body := postJSON(t, srv.Server, "/process-capacities", map[string]any{
-			"process_type": reg.process, "location": "SIM1", "window_start": planStart, "window_end": planEnd,
-			"constraint_type": "LABOR", "quantity": reg.qty, "unit": reg.unit, "period_seconds": 3600,
-		}); status != http.StatusCreated {
-			t.Fatalf("register %s: %d %s", reg.process, status, body)
-		}
+		s.setLabor(t, reg.process, reg.qty, reg.unit)
 	}
-	registerProcessPath(t, srv.Server, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
-	srv.seed(t, "SIM1-OPS-WC", tally.TypeStation, "PACK", 10)
+	registerProcessPath(t, s.Server, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
+	s.seed(t, "SIM1-OPS-WC", tally.TypeStation, "PACK", 10)
+}
+
+func (s *stationServer) setLabor(t *testing.T, process string, qty float64, unit string) {
+	t.Helper()
+	if status, _, body := postJSON(t, s.Server, "/process-capacities", map[string]any{
+		"process_type": process, "location": "SIM1", "window_start": planStart, "window_end": planEnd,
+		"constraint_type": "LABOR", "quantity": qty, "unit": unit, "period_seconds": 3600,
+	}); status != http.StatusCreated {
+		t.Fatalf("register %s: %d %s", process, status, body)
+	}
+}
+
+func (s *stationServer) pathCapacity(t *testing.T) map[string]any {
+	t.Helper()
 	upo, ppo := 2.5, 1.0
-	capacity := func() map[string]any {
-		status, _, body := getProcessPathCapacity(t, srv.Server, "pick-rebin-pack", "SIM1", planStart, planEnd, &upo, &ppo)
-		if status != http.StatusOK {
-			t.Fatalf("path capacity = %d %s", status, body)
-		}
-		return decodeMap(t, body)
+	status, _, body := getProcessPathCapacity(t, s.Server, "pick-rebin-pack", "SIM1", planStart, planEnd, &upo, &ppo)
+	if status != http.StatusOK {
+		t.Fatalf("path capacity = %d %s", status, body)
 	}
-	breakdown := func(m map[string]any) []any { return m["step_breakdown"].([]any) }
-	step := func(rate float64, step, binding string) any {
-		return map[string]any{"step": step, "normalized_rate": rate, "binding_constraint": binding}
-	}
+	return decodeMap(t, body)
+}
 
-	// FIXTURE C: no standard -> labor only, with a warning.
-	c := capacity()
-	if c["normalized_rate"] != 1000.0 || c["bottleneck_step"] != "REBIN" || len(c["warnings"].([]any)) != 1 ||
-		!reflect.DeepEqual(breakdown(c)[2], step(2500, "PACK", "LABOR")) {
-		t.Fatalf("no standard: %v", c)
-	}
+// FIXTURE C over REST: stations tallied, no standard -> labor only + a warning.
+func TestHandler_StationComposition_FixtureC_NoStandardWarns(t *testing.T) {
+	srv := newStationServer(t)
+	srv.seedFixtureB(t)
+	expectPath(t, srv.pathCapacity(t), 1000, "REBIN",
+		[]any{stepItem(3200, "PICK", "LABOR"), stepItem(1000, "REBIN", "LABOR"), stepItem(2500, "PACK", "LABOR")}, 1)
+}
 
+// FIXTURES A+B over REST: path capacity reports step_breakdown (3200/1000/1800
+// then 3200/2400/1800) and a plan carries the binding constraint -- also when
+// read back with GET.
+func TestHandler_StationComposition_FixtureB_BreakdownAndPlan(t *testing.T) {
+	srv := newStationServer(t)
+	srv.seedFixtureB(t)
 	putJSON(t, srv.Server, "/station-standards/SIM1/PACK", standardBody(180, "PACKAGE"))
-	b := capacity()
-	if b["normalized_rate"] != 1000.0 || b["bottleneck_step"] != "REBIN" || !reflect.DeepEqual(b["warnings"], []any{}) ||
-		!reflect.DeepEqual(breakdown(b), []any{step(3200, "PICK", "LABOR"), step(1000, "REBIN", "LABOR"), step(1800, "PACK", "STATION")}) {
-		t.Fatalf("fixture B step 1: %v", b)
-	}
 
-	postJSON(t, srv.Server, "/process-capacities", map[string]any{
-		"process_type": "REBIN", "location": "SIM1", "window_start": planStart, "window_end": planEnd,
-		"constraint_type": "LABOR", "quantity": 6000, "unit": "UNIT", "period_seconds": 3600,
-	})
-	b = capacity()
-	if b["normalized_rate"] != 1800.0 || b["normalized_unit"] != "ORDER" || b["bottleneck_step"] != "PACK" ||
-		!reflect.DeepEqual(breakdown(b), []any{step(3200, "PICK", "LABOR"), step(2400, "REBIN", "LABOR"), step(1800, "PACK", "STATION")}) {
-		t.Fatalf("fixture B step 2: %v", b)
-	}
+	expectPath(t, srv.pathCapacity(t), 1000, "REBIN",
+		[]any{stepItem(3200, "PICK", "LABOR"), stepItem(1000, "REBIN", "LABOR"), stepItem(1800, "PACK", "STATION")}, 0)
+
+	srv.setLabor(t, "REBIN", 6000, "UNIT")
+	expectPath(t, srv.pathCapacity(t), 1800, "PACK",
+		[]any{stepItem(3200, "PICK", "LABOR"), stepItem(2400, "REBIN", "LABOR"), stepItem(1800, "PACK", "STATION")}, 0)
 
 	body := planBody(20000)
 	body["location"] = "SIM1"

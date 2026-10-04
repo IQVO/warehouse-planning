@@ -25,13 +25,50 @@
   physical step sequence; the two contexts share `path_id` only as a loose
   human cross-reference. See `docs/adr/0001-...` Addendum (2026-10-03).
 - **WorkloadProfile** — see above; `NormalizeToOrderRate` converts a
-  UNIT or PACKAGE `CapacityRate` into an ORDER rate for the same period.
+  UNIT or PACKAGE `CapacityRate` into an ORDER rate for the same period
+  (an ORDER rate passes through unchanged; LINE is rejected with
+  `ErrUnsupportedNormalizationUnit`).
+- **StationStandard** — the OPERATOR-DECLARED throughput of ONE station of a
+  process at a site: keyed `(location, process type)`, valued as a
+  `CapacityRate` in the process's natural unit (e.g. `180 PACKAGE / hour` for
+  PACK at SIM1). A planning parameter owned by this context -- no upstream
+  publishes it (`internal/domain/processcapacity/station_standard.go`).
+  Quantity must be positive; the unit must be UNIT, PACKAGE or ORDER.
+- **Station count** — how many work-center stations facility-layout tallied
+  for an activity across the zones of a site. A COUNT has no throughput of
+  its own: only `count x StationStandard` does (design doc section 19:
+  10 stations x 180 packages/hour/station = 1,800 packages/hour). Counts live
+  in the facility tally (`location_slot_tally`), never as a ProcessCapacity.
+- **Site / location** — a planning `location` is a site (building) code, e.g.
+  `SIM1`: the labor consumer's `building_id`, and the first dash-separated
+  segment of the facility zone ids of that site (`SIM1-OPS-WC`,
+  `SIM1-STOR-AMB`). The zones of a site are the tally zones whose id starts
+  with `<location>-`; a zone with no matching site contributes nothing.
 - **ProcessPathCapacity** — the normalized, end-to-end throughput of a
   ProcessPath: the minimum of its steps' effective capacities after
-  WorkloadProfile normalization, plus which step is the bottleneck.
-  Computed by `ComputeProcessPathCapacity`
+  WorkloadProfile normalization, plus which step is the bottleneck and which
+  constraint type binds it. Computed by `ComposeProcessPathCapacity`
   (`internal/domain/processcapacity/process_path_capacity.go`), a domain
-  SERVICE, not a stored aggregate.
+  SERVICE, not a stored aggregate; `ComputeProcessPathCapacity` is the same
+  computation over registered constraints alone (the section-31 worked
+  example).
+- **Step composition** — `ComposeStepCapacity`
+  (`internal/domain/processcapacity/step_capacity.go`): for a path step with
+  process P at location L and window W, the candidate constraints are
+  (a) the ProcessCapacity constraints registered at EXACTLY `(P, L, W)` and
+  (b) a DERIVED STATION constraint = `stationCount(L, activity=P) x
+  StationStandard(L, P)`, present only when BOTH a station count > 0 and a
+  standard exist. Every candidate is normalized to ORDER with the request's
+  WorkloadProfile BEFORE comparing (units/hour and packages/hour are not
+  comparable raw -- design doc rule 8); the step's effective rate is the
+  minimum and its binding constraint type (LABOR, STATION, ...) is reported.
+  Ties go to the earliest candidate (registered constraints in registration
+  order, then STATION). Stations tallied but no standard declared: the step
+  uses (a) only and a WARNING is carried -- a throughput is never invented. No
+  candidate at all: `ErrMissingStepCapacity`. Composition happens on
+  transient values at READ time (nothing derived is stored: it converges, has
+  no stale rows and handles late declarations); the stored ProcessCapacity
+  aggregate and its single-native-unit invariant are untouched.
 - **CapacityPlan** — the aggregate that ties assigned demand for a
   warehouse location + planning window to the ProcessPathCapacity available to
   serve it, and the resulting shortage (if any). Implemented in Phase 4.
@@ -54,7 +91,10 @@
   (ORDER/HOUR, from `ComputeProcessPathCapacity`), `BottleneckStep`,
   `CapacityOverWindow` (= `PathCapacity` x window hours) and `Shortage`
   (= `max(0, demand - capacityOverWindow)`, never negative; demand exactly
-  equal to the capacity is NOT a shortage), `Status` DRAFT | PUBLISHED.
+  equal to the capacity is NOT a shortage), `Status` DRAFT | PUBLISHED, plus
+  the informational composition outcome `BottleneckConstraint` (the
+  constraint type binding the bottleneck step, e.g. STATION) and `Warnings`
+  (no published event carries them).
   The aggregate does no I/O: `Create` takes the already-computed path rate and
   bottleneck plus an explicit id and time. `Publish` moves DRAFT -> PUBLISHED
   and returns `ErrAlreadyPublished` on a second call (never a silent double
@@ -87,12 +127,23 @@ Vocabulary only, NOT implemented or published yet (nothing raises them):
   ProcessCapacity aggregate, recomputes and persists the effective rate.
 - `GetEffectiveProcessCapacity` — query: effective rate + binding
   constraint for a process+location+window.
-- `GetProcessPathCapacity` (Phase 2) — resolves a ProcessPath's steps'
-  ProcessCapacity + the warehouse WorkloadProfile, returns normalized path
-  capacity and bottleneck step.
+- `GetProcessPathCapacity` (Phase 2, composition since ADR 0002) — resolves a
+  ProcessPath's steps' registered ProcessCapacity, the site's tallied station
+  counts (`ports.StorageTallyReader`) and the declared StationStandards, plus
+  the warehouse WorkloadProfile, and returns normalized path capacity, the
+  bottleneck step and its binding constraint, every step's composed result
+  (`step_breakdown`) and the warnings.
+- `DeclareStationStandard` — validates and upserts a StationStandard
+  (created vs replaced is reported).
+- `GetStorageCapacity` — query: the facility tally of a site as a READ MODEL
+  (storage positions per zone + locationType, stations per zone + activity).
+  Positions are NOT process throughput (they stay the StorageCapacityPool
+  idea of design doc sections 14-17) and there is no "consumed" figure --
+  stock must never be read from inventory-storage (design doc rule 1).
 - `CreateCapacityPlan` (Phase 4) — resolves the path capacity through
-  `GetProcessPathCapacity` (the Phase 2 path; each step's ProcessCapacity must
-  be registered for EXACTLY the plan's window), builds the aggregate, saves it
+  `GetProcessPathCapacity` (the same read-time composition; each step's
+  registered ProcessCapacity must be for EXACTLY the plan's window, and
+  stations can bind it), builds the aggregate, saves it
   and queues `CapacityPlanCreated` in the outbox -- one `ports.UnitOfWork.Do`.
   Assigned demand and the WorkloadProfile factors arrive in the request body
   (documented simplification: the final demand-ingestion shape from
