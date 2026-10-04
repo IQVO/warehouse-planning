@@ -2,7 +2,7 @@ asyncapi: 2.6.0
 
 info:
   title: warehouse-planning Domain Events
-  version: "0.4.0"
+  version: "0.5.0"
   contact:
     name: warehouse-planning maintainers
     url: https://github.com/IQVO/warehouse-planning
@@ -36,6 +36,22 @@ info:
     Each order is counted once, at its latest promise cutoff, and attributed to
     the ONE configured site (`DEMAND_SITE_ID`): order-management's events carry
     no fulfillment site. `OrderRepromised` and every other type are ignored.
+
+    **Analytics stream (ADR 0005).** The same four events are ALSO written to
+    `warehouse.warehouse-planning.analytics` in the SAME outbox transaction
+    (two outbox rows per event, one per topic), as CloudEvents 1.0 with the
+    SAME `type` and the SAME `id` per occurrence but
+    `dataschema=urn:warehouse:warehouse-planning:analytics:<EventName>:v1`.
+    The integration messages are byte-identical to what they were before the
+    stream existed. The analytics payloads are the integration payloads plus
+    additive, analytics-only fields: today `binding_constraint` on
+    `CapacityPlanPublished` (the constraint type -- LABOR, STATION, ... --
+    binding the bottleneck step; `""` for a plan created before it was
+    recorded). Only this service's own `planning-projector` consumes it (fixed
+    consumer group, at-least-once, offsets committed after the projection
+    committed), into a SEPARATE analytical database that
+    `planning-reports` serves read-only. Poison messages go to
+    `warehouse.warehouse-planning.analytics.dlq`.
 
     **Envelope (mandatory).** Every message is a CloudEvents 1.0 event in
     *structured content mode* (Kafka value = JSON event format) with the Kafka
@@ -71,6 +87,8 @@ tags:
     description: Events raised by the CapacityPlan aggregate (published, Phase 4).
   - name: consumed
     description: Events produced by sibling contexts that this service consumes (Phase 3).
+  - name: analytics
+    description: "The analytics stream (ADR 0005): the same capacity-plan events on this service's own analytics topic, consumed only by planning-projector."
 
 channels:
   warehouse.warehouse-planning.events:
@@ -94,6 +112,35 @@ channels:
           - $ref: "#/components/messages/CapacityPlanPublished"
           - $ref: "#/components/messages/CapacityShortageDetected"
           - $ref: "#/components/messages/BottleneckDetected"
+
+  warehouse.warehouse-planning.analytics:
+    description: |
+      This service's analytics topic (`AnalyticsTopic` in
+      `internal/adapters/outbound/kafka/analytics_encoder.go`; ADR 0005). Written by
+      the SAME outbox relay, from rows inserted in the same transaction as the
+      integration rows; key = capacity plan id. Consumed ONLY by this service's
+      `planning-projector` under a fixed consumer group read from env
+      `ANALYTICS_CONSUMER_GROUP` (at-least-once; the offset is committed after the
+      projection and the dedupe mark committed together in the analytical database).
+      The projector dedupes on `id`, ignores unknown types, skips (with a rate-limited
+      WARN) anything that is not CloudEvents 1.0, and dead-letters a known type with an
+      unusable payload to `warehouse.warehouse-planning.analytics.dlq` (raw bytes plus
+      `x-dlq-*` headers). Not an integration contract: other contexts consume the
+      integration topic.
+    subscribe:
+      operationId: receiveCapacityPlanAnalyticsEvents
+      summary: Receive the CapacityPlan analytics events.
+      description: |
+        Route on the full `type`; the payloads are the integration payloads plus
+        the additive analytics-only fields documented per message.
+      tags:
+        - name: analytics
+      message:
+        oneOf:
+          - $ref: "#/components/messages/CapacityPlanCreatedAnalytics"
+          - $ref: "#/components/messages/CapacityPlanPublishedAnalytics"
+          - $ref: "#/components/messages/CapacityShortageDetectedAnalytics"
+          - $ref: "#/components/messages/BottleneckDetectedAnalytics"
 
   warehouse.workforce.events:
     description: |
@@ -311,6 +358,156 @@ components:
             time: "2026-10-04T21:45:10Z"
             datacontenttype: "application/json"
             dataschema: "urn:warehouse:warehouse-planning:events:BottleneckDetected:v1"
+            data:
+              plan_id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+              warehouse_id: "WH-1"
+              location: "PATH-ZONE-A"
+              path_id: "pick-rebin-pack"
+              window_start: "2026-10-05T08:00:00Z"
+              window_end: "2026-10-05T16:00:00Z"
+              bottleneck_step: "REBIN"
+              path_capacity: 1000
+
+    CapacityPlanCreatedAnalytics:
+      name: CapacityPlanCreatedAnalytics
+      title: Capacity plan created (analytics stream)
+      summary: The analytics copy of CapacityPlanCreated.
+      description: |
+        Same `type`, same `id`, same payload as the integration CapacityPlanCreated;
+        only `dataschema` differs (`urn:warehouse:warehouse-planning:analytics:CapacityPlanCreated:v1`).
+        The projector uses the CloudEvents `time` as the plan's creation instant.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/CapacityPlanCreatedAnalyticsEvent"
+      examples:
+        - name: draftPlanWithShortage
+          summary: Same example as the integration message, analytics dataschema.
+          payload:
+            specversion: "1.0"
+            id: "6f1c2b7e-4c3a-4a1d-9f0b-6c2b8a7d1e33"
+            source: "/warehouse/warehouse-planning"
+            type: "com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated"
+            subject: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+            time: "2026-10-04T21:15:30Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:warehouse-planning:analytics:CapacityPlanCreated:v1"
+            data:
+              plan_id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+              warehouse_id: "WH-1"
+              location: "PATH-ZONE-A"
+              path_id: "pick-rebin-pack"
+              window_start: "2026-10-05T08:00:00Z"
+              window_end: "2026-10-05T16:00:00Z"
+              assigned_demand: 12000
+              path_capacity: 1000
+              capacity_over_window: 8000
+              shortage: 4000
+              bottleneck_step: "REBIN"
+              status: "DRAFT"
+
+    CapacityPlanPublishedAnalytics:
+      name: CapacityPlanPublishedAnalytics
+      title: Capacity plan published (analytics stream)
+      summary: The analytics copy of CapacityPlanPublished, plus binding_constraint.
+      description: |
+        Same `type` and `id` as the integration CapacityPlanPublished; the payload adds
+        `binding_constraint` (additive, analytics-only): the constraint type binding the
+        bottleneck step, which the bottleneck-frequency report groups by. The projector
+        uses the CloudEvents `time` as the plan's publication instant.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/CapacityPlanPublishedAnalyticsEvent"
+      examples:
+        - name: publishedPlan
+          summary: The published plan, bound by STATION at REBIN.
+          payload:
+            specversion: "1.0"
+            id: "9a8d7c6b-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+            source: "/warehouse/warehouse-planning"
+            type: "com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished"
+            subject: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+            time: "2026-10-04T21:45:10Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:warehouse-planning:analytics:CapacityPlanPublished:v1"
+            data:
+              plan_id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+              warehouse_id: "WH-1"
+              location: "PATH-ZONE-A"
+              path_id: "pick-rebin-pack"
+              window_start: "2026-10-05T08:00:00Z"
+              window_end: "2026-10-05T16:00:00Z"
+              assigned_demand: 12000
+              path_capacity: 1000
+              capacity_over_window: 8000
+              shortage: 4000
+              bottleneck_step: "REBIN"
+              published_at: "2026-10-04T21:45:10Z"
+              binding_constraint: "STATION"
+
+    CapacityShortageDetectedAnalytics:
+      name: CapacityShortageDetectedAnalytics
+      title: Capacity shortage detected (analytics stream)
+      summary: The analytics copy of CapacityShortageDetected.
+      description: |
+        Same `type`, `id` and payload as the integration CapacityShortageDetected; only
+        `dataschema` differs.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/CapacityShortageDetectedAnalyticsEvent"
+      examples:
+        - name: shortageOf4000
+          summary: Short by 4000, bound by REBIN.
+          payload:
+            specversion: "1.0"
+            id: "3b2a1c0d-9e8f-4d7c-b6a5-4f3e2d1c0b9a"
+            source: "/warehouse/warehouse-planning"
+            type: "com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected"
+            subject: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+            time: "2026-10-04T21:45:10Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:warehouse-planning:analytics:CapacityShortageDetected:v1"
+            data:
+              plan_id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+              warehouse_id: "WH-1"
+              location: "PATH-ZONE-A"
+              path_id: "pick-rebin-pack"
+              window_start: "2026-10-05T08:00:00Z"
+              window_end: "2026-10-05T16:00:00Z"
+              assigned_demand: 12000
+              capacity_over_window: 8000
+              shortage: 4000
+              bottleneck_step: "REBIN"
+
+    BottleneckDetectedAnalytics:
+      name: BottleneckDetectedAnalytics
+      title: Bottleneck detected (analytics stream)
+      summary: The analytics copy of BottleneckDetected.
+      description: |
+        Same `type`, `id` and payload as the integration BottleneckDetected; only
+        `dataschema` differs.
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/BottleneckDetectedAnalyticsEvent"
+      examples:
+        - name: rebinBottleneck
+          summary: REBIN limits the path to 1000 ORDER/h.
+          payload:
+            specversion: "1.0"
+            id: "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918"
+            source: "/warehouse/warehouse-planning"
+            type: "com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected"
+            subject: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
+            time: "2026-10-04T21:45:10Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:warehouse-planning:analytics:BottleneckDetected:v1"
             data:
               plan_id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
               warehouse_id: "WH-1"
@@ -792,6 +989,67 @@ components:
               const: "urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1"
             data:
               $ref: "#/components/schemas/CapacityPlanPublishedData"
+    CapacityPlanCreatedAnalyticsEvent:
+      description: CloudEvents 1.0 envelope of CapacityPlanCreated on the analytics topic.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated"
+            dataschema:
+              const: "urn:warehouse:warehouse-planning:analytics:CapacityPlanCreated:v1"
+            data:
+              $ref: "#/components/schemas/CapacityPlanCreatedData"
+    CapacityPlanPublishedAnalyticsData:
+      description: Payload of CapacityPlanPublished on the analytics topic -- the integration payload plus binding_constraint.
+      allOf:
+        - $ref: "#/components/schemas/CapacityPlanPublishedData"
+        - type: object
+          required: [binding_constraint]
+          properties:
+            binding_constraint:
+              type: string
+              description: >
+                Additive, analytics-only. The constraint type binding the bottleneck step
+                (LABOR, STATION, ...); empty for a plan created before it was recorded.
+              example: "STATION"
+    CapacityPlanPublishedAnalyticsEvent:
+      description: CloudEvents 1.0 envelope of CapacityPlanPublished on the analytics topic.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished"
+            dataschema:
+              const: "urn:warehouse:warehouse-planning:analytics:CapacityPlanPublished:v1"
+            data:
+              $ref: "#/components/schemas/CapacityPlanPublishedAnalyticsData"
+    CapacityShortageDetectedAnalyticsEvent:
+      description: CloudEvents 1.0 envelope of CapacityShortageDetected on the analytics topic.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected"
+            dataschema:
+              const: "urn:warehouse:warehouse-planning:analytics:CapacityShortageDetected:v1"
+            data:
+              $ref: "#/components/schemas/CapacityShortageDetectedData"
+    BottleneckDetectedAnalyticsEvent:
+      description: CloudEvents 1.0 envelope of BottleneckDetected on the analytics topic.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected"
+            dataschema:
+              const: "urn:warehouse:warehouse-planning:analytics:BottleneckDetected:v1"
+            data:
+              $ref: "#/components/schemas/BottleneckDetectedData"
     CapacityShortageDetectedEvent:
       description: CloudEvents 1.0 envelope of CapacityShortageDetected.
       allOf:
