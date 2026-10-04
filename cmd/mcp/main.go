@@ -134,7 +134,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		ProcessPaths: pathRepo, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tallyRead,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
-	encoder := outboundkafka.NewEncoder()
+	encoder := outboundkafka.NewFanoutEncoder()
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
 		ProcessCapacities:                 pcRepo,
