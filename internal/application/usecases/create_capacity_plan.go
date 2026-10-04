@@ -24,9 +24,9 @@ import (
 // WorkloadProfile persistence yet).
 //
 // The window is the plan's PlanningWindow AND the window every step's
-// ProcessCapacity is looked up under: as in Phase 2, a step's
-// ProcessCapacity is only found if it was registered for EXACTLY this
-// [WindowStart, WindowEnd) -- there is no overlap or sub-window matching.
+// ProcessCapacity is looked up for: a registered window applies when it
+// COVERS [WindowStart, WindowEnd) (docs/adr/0003), exactly as in
+// GetProcessPathCapacity. The plan stores this requested window as is.
 type CreateCapacityPlanCommand struct {
 	WarehouseID   string
 	Location      string
@@ -41,8 +41,7 @@ type CreateCapacityPlanCommand struct {
 }
 
 // CreateCapacityPlan computes the path capacity (reusing
-// GetProcessPathCapacity, i.e. the Phase 2 ComputeProcessPathCapacity
-// path), builds the CapacityPlan aggregate, saves it and stores its
+// GetProcessPathCapacity, i.e. the shared read-time composition), builds the CapacityPlan aggregate, saves it and stores its
 // CapacityPlanCreated event in the outbox -- the save and the outbox
 // insert are ONE ports.UnitOfWork.Do, so they commit or roll back together.
 type CreateCapacityPlan struct {

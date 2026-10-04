@@ -1,6 +1,9 @@
 package processcapacity
 
-import "errors"
+import (
+	"errors"
+	"slices"
+)
 
 // ProcessType names a warehouse process (e.g. "PICK", "PACK", "REBIN").
 // Kept as a thin string type rather than a closed enum -- the set of
@@ -136,4 +139,15 @@ func (p *ProcessCapacity) EffectiveRate() (CapacityRate, ConstraintType, error) 
 		}
 	}
 	return minRate, bindingType, nil
+}
+
+// SortNewestFirst sorts pcs in place by window, newest first: the LATER
+// window start first and, on equal starts, the narrower window (earlier end)
+// first. This is the precedence order of covering aggregates when a step's
+// constraints are composed (see ComposeStepCapacity and docs/adr/0003); the
+// ProcessCapacityRepository.FindCovering implementations return this order.
+func SortNewestFirst(pcs []*ProcessCapacity) {
+	slices.SortStableFunc(pcs, func(a, b *ProcessCapacity) int {
+		return compareNewestFirst(a.window, b.window)
+	})
 }
