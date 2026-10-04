@@ -112,8 +112,22 @@ func loadContract(t *testing.T, p report.Projection) []report.PlanEvent {
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
 
-func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projection, report.Reader)) {
-	t.Run("bottleneck counts: published plans only, grouped by site step constraint", func(t *testing.T) {
+type storeFactory func(t *testing.T) (report.Projection, report.Reader)
+
+// runStoreContract runs every contract case against fresh stores from
+// newStore. The cases live in a table (not nested closures) so each stays a
+// flat, readable scenario.
+func runStoreContract(t *testing.T, newStore storeFactory) {
+	for _, c := range contractCases {
+		t.Run(c.name, func(t *testing.T) { c.run(t, newStore) })
+	}
+}
+
+var contractCases = []struct {
+	name string
+	run  func(t *testing.T, newStore storeFactory)
+}{
+	{"bottleneck counts: published plans only, grouped by site step constraint", func(t *testing.T, newStore storeFactory) {
 		p, r := newStore(t)
 		loadContract(t, p)
 		got, err := r.BottleneckCounts(context.Background(), contractRange)
@@ -131,9 +145,9 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projecti
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got  %+v\nwant %+v", got, want)
 		}
-	})
+	}},
 
-	t.Run("shortage days: every published plan counted, UTC days", func(t *testing.T) {
+	{"shortage days: every published plan counted, UTC days", func(t *testing.T, newStore storeFactory) {
 		p, r := newStore(t)
 		loadContract(t, p)
 		got, err := r.ShortageDays(context.Background(), contractRange)
@@ -149,9 +163,9 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projecti
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got  %+v\nwant %+v", got, want)
 		}
-	})
+	}},
 
-	t.Run("throughput days: created by created_at, published by published_at", func(t *testing.T) {
+	{"throughput days: created by created_at, published by published_at", func(t *testing.T, newStore storeFactory) {
 		p, r := newStore(t)
 		loadContract(t, p)
 		got, err := r.ThroughputDays(context.Background(), contractRange)
@@ -168,9 +182,9 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projecti
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got  %+v\nwant %+v", got, want)
 		}
-	})
+	}},
 
-	t.Run("latency: median and p95 by site over plans with both instants", func(t *testing.T) {
+	{"latency: median and p95 by site over plans with both instants", func(t *testing.T, newStore storeFactory) {
 		p, r := newStore(t)
 		loadContract(t, p)
 		got, err := r.Latencies(context.Background(), contractRange)
@@ -191,9 +205,9 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projecti
 				t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
 			}
 		}
-	})
+	}},
 
-	t.Run("range bounds: from inclusive, to exclusive, to the instant", func(t *testing.T) {
+	{"range bounds: from inclusive, to exclusive, to the instant", func(t *testing.T, newStore storeFactory) {
 		p, r := newStore(t)
 		loadContract(t, p)
 		ctx := context.Background()
@@ -249,9 +263,9 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projecti
 		if got := created(report.Range{From: at(4, 23, 50, 0), To: at(5, 0, 0, 0)}); got != 1 {
 			t.Errorf("created with from == pFrom.created = %d, want 1 (from inclusive)", got)
 		}
-	})
+	}},
 
-	t.Run("replaying an applied id is a no-op", func(t *testing.T) {
+	{"replaying an applied id is a no-op", func(t *testing.T, newStore storeFactory) {
 		p, r := newStore(t)
 		events := loadContract(t, p)
 		before, err := r.ShortageDays(context.Background(), contractRange)
@@ -274,9 +288,9 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projecti
 		if !reflect.DeepEqual(before, after) {
 			t.Fatalf("replay changed the model:\nbefore %+v\nafter  %+v", before, after)
 		}
-	})
+	}},
 
-	t.Run("an empty store answers with empty non-nil slices", func(t *testing.T) {
+	{"an empty store answers with empty non-nil slices", func(t *testing.T, newStore storeFactory) {
 		_, r := newStore(t)
 		ctx := context.Background()
 		b, e1 := r.BottleneckCounts(ctx, contractRange)
@@ -289,5 +303,5 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) (report.Projecti
 		if b == nil || s == nil || th == nil || l == nil || len(b)+len(s)+len(th)+len(l) != 0 {
 			t.Fatalf("want empty non-nil slices, got %#v %#v %#v %#v", b, s, th, l)
 		}
-	})
+	}},
 }
