@@ -1,0 +1,71 @@
+---
+id: get-shortage-trend-report
+title: "Published plans with shortage and total shortage by site per day"
+description: "For the plans PUBLISHED in [from, to) (from inclusive, to exclusive), per site and UTC day of the publication: how many were published (ALL of them, with or without shortage, so the rate is meaningful), how many had a shortage (> 0), the total shortage in orders, and `shortage_rate` (plans_with_shortage / plans_published). Days without a published plan are omitted. Ordered by day, then site. `from` / `to` as in /reports/bottleneck-frequency. 200 with `days: []` when nothing matches."
+sidebar_label: "Published plans with shortage and total shortage by site per day"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Published plans with shortage and total shortage by site per day"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/reports/shortage-trend"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+For the plans PUBLISHED in [from, to) (from inclusive, to exclusive), per site and UTC day of the publication: how many were published (ALL of them, with or without shortage, so the rate is meaningful), how many had a shortage (&gt; 0), the total shortage in orders, and `shortage_rate` (plans_with_shortage / plans_published). Days without a published plan are omitted. Ordered by day, then site. `from` / `to` as in /reports/bottleneck-frequency. 200 with `days: []` when nothing matches.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-shortage-trend-report.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-shortage-trend-report.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-shortage-trend-report.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      
