@@ -22,3 +22,10 @@ This repo, like the rest of the `warehouse-systems` fleet, is a personal
 study project exploring Domain-Driven Design, hexagonal architecture, and
 AI-agent harness engineering. It is not production software and carries
 no support guarantee.
+
+## Deployment
+
+- **Image**: root `Dockerfile` builds every `cmd/*` directory (`api` today, `mcp` once it lands) into `/app/<name>`; `ENTRYPOINT` is `./api`. Migrations are copied to `/app/migrations`.
+- **Chart**: `charts/warehouse-planning` (OLTP `api` component; optional `mcp` component, off by default). It refuses to render without `database.url` or `database.existingSecret`. Run `helm lint charts/warehouse-planning --set database.url=postgres://u@example.invalid:5432/db` and `python3 charts/warehouse-planning/tests/test_service_selectors.py`.
+- **Kind cluster**: wired by `warehouse-infra` (`local.services`); ArgoCD deploys the chart from this repo's `develop`.
+- **Not deployed yet (tracked deferrals)**: analytics projector/reports (no analytics stream yet) and a frontend remote (no `web/` yet).

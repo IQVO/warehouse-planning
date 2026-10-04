@@ -1,0 +1,206 @@
+# Default values for warehouse-planning.
+
+replicaCount: 1
+
+# The image is NEVER pulled from a registry in the local kind cluster: it is
+# built from the local checkout and side-loaded with `kind load docker-image`
+# (warehouse-infra overrides repository and tag with a content-derived
+# local-<hash> tag). `pullPolicy: IfNotPresent` is required there, or the
+# kubelet tries to pull from Docker Hub and ImagePullBackOffs.
+image:
+  repository: warehouse/warehouse-planning
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: warehouse-planning.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Additive, disabled-by-default alternative to the ingress: block above.
+# Same shape as every other chart in this fleet (see workforce-management's
+# charts/workforce-management/templates/httproute.yaml). Routes only to this
+# chart's main REST API Service -- the same Service ingress.yaml targets.
+# warehouse-infra turns it on and supplies the Kong Gateway parentRef + path.
+gatewayApi:
+  enabled: false
+  parentRefs:
+    - name: ""
+      namespace: ""
+      sectionName: "http"
+  hosts:
+    - path: /
+      pathType: PathPrefix
+  stripPath: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# HorizontalPodAutoscaler (autoscaling/v2) for the OLTP Deployment, disabled by
+# default so nothing changes replica behaviour silently. When enabled, the
+# Deployment's replicaCount is omitted so the HPA is the sole owner of
+# .spec.replicas. N>1 is safe for the outbox relay (FOR UPDATE SKIP LOCKED) and
+# the two Kafka consumers (stable consumer groups, atomic UnitOfWork claims);
+# it has not been load-tested. mcp deliberately has no block here: the MCP
+# Streamable-HTTP handler keeps per-process session state (see mcp: below).
+autoscaling:
+  api:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+
+# Environment read by cmd/api/main.go. Every key maps 1:1 to one env var.
+config:
+  httpAddr: ":8080"                  # HTTP_ADDR
+  # Relative to the image WORKDIR (/app): the Dockerfile copies
+  # internal/adapters/outbound/postgres/migrations to /app/migrations.
+  migrationsPath: "migrations"       # MIGRATIONS_PATH
+  logLevel: "info"                   # LOG_LEVEL: debug | info | warn | error
+  # CORS_ALLOWED_ORIGINS (comma-separated). Empty = not rendered, so the
+  # binary's own local-dev default applies. In the kind cluster Kong's global
+  # CORS plugin handles browsers; set this only for a direct-to-pod caller.
+  corsAllowedOrigins: ""
+  # EVENT_PUBLISHER: "log" (default; the outbox drains to the log sink) or
+  # "kafka" (relay CapacityPlan events onto warehouse.warehouse-planning.events;
+  # requires kafka.enabled=true -- the chart refuses to render otherwise).
+  eventPublisher: "log"
+  # OUTBOX_RELAY_INTERVAL: Go duration ("500ms", "2s") or plain seconds.
+  # Empty = not rendered; the binary defaults to 1s.
+  outboxRelayInterval: ""
+  # Consumer-group ids of the two inbound Kafka consumers. Env-driven, never
+  # literals in the template: a STABLE id lets a rescheduled pod resume from
+  # its committed offsets. The values below equal the binary's own defaults.
+  # LABOR_CAPACITY_CONSUMER_GROUP (reads warehouse.workforce.events)
+  laborCapacityConsumerGroup: "warehouse-planning-labor-capacity"
+  # STORAGE_CAPACITY_CONSUMER_GROUP (reads warehouse.facility.events)
+  storageCapacityConsumerGroup: "warehouse-planning-storage-capacity"
+
+# The chart refuses to render unless database.url or database.existingSecret
+# is set (templates/_helpers.tpl: warehouse-planning.requireDatabase).
+database:
+  url: ""
+  existingSecret: ""
+  existingSecretKey: "DATABASE_URL"
+  # Key, in the same existingSecret, of a DIRECT (non-pooled, session-mode)
+  # Postgres connection string used ONLY for the golang-migrate startup step
+  # (cmd/api/main.go) -- never for the runtime pgxpool, which always uses
+  # existingSecretKey/DATABASE_URL. golang-migrate takes a session-scoped
+  # pg_advisory_lock that PgBouncer's transaction pooling cannot honour.
+  # `optional: true` on the rendered secretKeyRef so a secret without this key
+  # still starts the pod: the binary falls back to DATABASE_URL.
+  migrationsExistingSecretKey: "MIGRATIONS_DATABASE_URL"
+
+# KAFKA_BROKERS is only set in the container env when kafka.enabled is true.
+# Without it the two capacity consumers are DISABLED (logged, not fatal) and
+# EVENT_PUBLISHER must stay "log". Consumed topics: warehouse.workforce.events
+# (labor capacity) and warehouse.facility.events (storage/station capacity);
+# produced topic: warehouse.warehouse-planning.events.
+kafka:
+  enabled: false
+  brokers: "kafka:9092"
+
+# Extra env vars appended to the OLTP container as a raw list.
+extraEnv: []
+
+# The Postgres dial (migrations + ping) at boot is wrapped in a bounded retry
+# (~31s). periodSeconds * failureThreshold gives a ~60s window, comfortably
+# past that, before the kubelet gives up. Once startupProbe succeeds,
+# liveness/readiness take over. The service exposes /healthz only (there is no
+# /readyz), so readiness reuses it.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  failureThreshold: 30
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5
+
+# Room for the binary's graceful shutdown (10s HTTP drain + 10s consumer drain).
+terminationGracePeriodSeconds: 30
+
+# --- MCP server ---
+# The Model Context Protocol server (cmd/mcp). DISABLED by default: the binary
+# is being added by a parallel PR and is not in the image's cmd/ set until it
+# merges. Enabling it renders its own Deployment + Service (component=mcp) over
+# the same OLTP database, served at "/" and "/mcp" with GET /healthz probes.
+# The container env names in templates/mcp-deployment.yaml are PROVISIONAL
+# (mirrored from siblings) -- verify against cmd/mcp/main.go when it lands.
+# No auth / API key: MCP servers are unauthenticated fleet-wide.
+mcp:
+  enabled: false
+  replicaCount: 1
+  httpAddr: ":8090"
+  service:
+    type: ClusterIP
+    port: 8090
+    targetPort: 8090
+  extraEnv: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Deliberately NOT here (tracked deferrals, not omissions by accident):
+#   - analytics projector / reports components: warehouse-planning has no
+#     analytics stream yet.
+#   - frontend remote: there is no web/ app yet.

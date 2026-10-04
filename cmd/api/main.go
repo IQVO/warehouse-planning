@@ -162,8 +162,9 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 	// (Istio native sidecars), so migrations and the first ping retry with
 	// backoff (~31s budget); on exhaustion the LAST error is returned and
 	// the process still refuses to boot.
+	migrationsURL := migrationsDatabaseURL(databaseURL)
 	if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
-		return postgres.RunMigrations(databaseURL, migrationsPath)
+		return postgres.RunMigrations(migrationsURL, migrationsPath)
 	}); err != nil {
 		return adapters{}, noop, err
 	}
@@ -188,6 +189,17 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		outbox:            outboxRepo,
 		outboxStore:       outboxRepo,
 	}, pool.Close, nil
+}
+
+// migrationsDatabaseURL returns the DSN the golang-migrate boot step uses:
+// MIGRATIONS_DATABASE_URL when set, else databaseURL itself. In the kind
+// cluster DATABASE_URL points at PgBouncer (transaction pooling), which cannot
+// honour golang-migrate's session-scoped pg_advisory_lock, so warehouse-infra
+// also provisions MIGRATIONS_DATABASE_URL as a DIRECT Postgres DSN. Only the
+// migration step uses it; the runtime pgxpool always uses DATABASE_URL. Where
+// the split is not provisioned (local dev, CI) behaviour is unchanged.
+func migrationsDatabaseURL(databaseURL string) string {
+	return getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 }
 
 // runningConsumer pairs a started Kafka consumer with the channel that

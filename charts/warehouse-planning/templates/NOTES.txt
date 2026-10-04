@@ -1,0 +1,36 @@
+{{ .Chart.Name }} has been deployed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+Service:   {{ include "warehouse-planning.fullname" . }} ({{ .Values.service.type }}, port {{ .Values.service.port }})
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+Ingress:   http://{{ .host }}{{ (index .paths 0).path }}
+{{- end }}
+{{- else if .Values.gatewayApi.enabled }}
+Gateway API HTTPRoute enabled — routed via the parentRefs/hosts configured
+in gatewayApi.*.
+{{- else }}
+To reach it locally:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "warehouse-planning.fullname" . }} 8080:{{ .Values.service.port }}
+  curl http://localhost:8080/healthz
+{{- end }}
+
+{{- if eq .Values.config.eventPublisher "kafka" }}
+
+config.eventPublisher is "kafka" — CapacityPlan events are relayed from the
+transactional outbox onto warehouse.warehouse-planning.events, and the labor /
+storage capacity consumers read warehouse.workforce.events and
+warehouse.facility.events from {{ .Values.kafka.brokers }}.
+{{- else }}
+
+NOTE: config.eventPublisher is "log" (the default) — outbox rows are drained
+to the log sink, nothing reaches warehouse.warehouse-planning.events.
+{{- end }}
+{{- if not .Values.kafka.enabled }}
+
+NOTE: kafka.enabled is false — KAFKA_BROKERS is not set, so the labor /
+storage capacity Kafka consumers are DISABLED (the REST surface still works).
+{{- end }}

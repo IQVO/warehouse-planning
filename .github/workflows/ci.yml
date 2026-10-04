@@ -322,6 +322,10 @@ jobs:
       - uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
       - name: Run chart-testing (lint)
         run: ct lint --charts charts/warehouse-planning --validate-maintainers=false --check-version-increment=false
+      - name: Chart wiring tests (each Service selects exactly one Deployment)
+        run: |
+          pip install pyyaml
+          python3 charts/warehouse-planning/tests/test_service_selectors.py
 
   # ============================================================
   # CLASSIFICATION: LINTERS & STATIC ANALYSIS (architecture fitness)
@@ -530,10 +534,10 @@ jobs:
             --version "$CHART_VERSION" \
             --app-version "$CHART_VERSION" \
             -d /tmp/chart-out
-          echo "CHART_TGZ=/tmp/chart-out/inventory-storage-${CHART_VERSION}.tgz" >> "$GITHUB_ENV"
+          echo "CHART_TGZ=/tmp/chart-out/warehouse-planning-${CHART_VERSION}.tgz" >> "$GITHUB_ENV"
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
-          helm push "/tmp/chart-out/inventory-storage-${CHART_VERSION}.tgz" \
+          helm push "/tmp/chart-out/warehouse-planning-${CHART_VERSION}.tgz" \
             oci://ghcr.io/claudioed
       - name: Create and push the git tag
         run: |
