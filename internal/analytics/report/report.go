@@ -8,6 +8,7 @@ package report
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -43,10 +44,17 @@ type PlanEvent struct {
 
 // Projection is the WRITER port: Apply records the event id and folds the
 // event into the model in ONE transaction. applied is false when the id was
-// already recorded (a replay): nothing changed.
+// already recorded (a replay): nothing changed. An error wrapping
+// ErrRejected is deterministic (the store can never accept this event: retry
+// is pointless); any other error is transient and the same event may be
+// retried.
 type Projection interface {
 	Apply(ctx context.Context, e PlanEvent) (applied bool, err error)
 }
+
+// ErrRejected marks an event the analytical store deterministically refuses
+// (a data-exception or integrity-violation class error).
+var ErrRejected = errors.New("report: event rejected by the analytical store")
 
 // Reader is the READER port. Every method answers for the half-open range
 // [From, To): From inclusive, To exclusive. Results are never nil.
