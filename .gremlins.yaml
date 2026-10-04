@@ -58,6 +58,18 @@ unleash:
     # is unchanged -- not lowered -- and is still strictly below every
     # measured value.
     #
+    # Re-measured 2026-10-04 (window coverage, ADR 0003), local gremlins
+    # v0.6.0, one `gremlins unleash <pkg>` per package as above, after adding
+    # CapacityWindow.Covers / SortNewestFirst and the newest-wins, per-type
+    # shadowing selection in ComposeStepCapacity: processcapacity 35/35 killed
+    # (was 33), capacityplan 14/14 killed, processpath 1/1 killed -- efficacy
+    # 100.00% and mutant coverage 100.00% in each. The threshold (99) is
+    # unchanged -- not lowered -- and is still strictly below every measured
+    # value. gremlins does not mutate Covers' After/Before method calls (no
+    # `<`/`>` operator to flip), so its exact boundaries are pinned by
+    # TestCapacityWindow_Covers (one second either side of each bound); that
+    # test was checked to fail when Covers' end bound is made strict.
+    #
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we
     # already achieve" approach -- never copied from a sibling repo.

@@ -63,8 +63,11 @@ Query parameters:
 
 - `location` (required) -- the warehouse location every step's
   ProcessCapacity is looked up under.
-- `window_start` / `window_end` (required, RFC3339) -- the capacity
-  window every step's ProcessCapacity is looked up for.
+- `window_start` / `window_end` (required, RFC3339) -- the planning window.
+  A step's registered ProcessCapacity window applies when it COVERS
+  `[window_start, window_end)` (`window_start <= requested start` AND
+  `window_end >= requested end`; docs/adr/0003). `window_end` must be after
+  `window_start` (`400 invalid-capacity-window` otherwise).
 - `units_per_order` / `packages_per_order` (both optional, numbers) --
   the WorkloadProfile's conversion factors, carried directly on the
   request. PHASE 2 SIMPLIFICATION: there is no dedicated WorkloadProfile
@@ -79,8 +82,10 @@ Query parameters:
 ```
 
 Capacity is composed at READ time (see "Station capacity" below): per step
-the candidates are the ProcessCapacity constraints registered at exactly
-(process, location, window) plus a DERIVED STATION constraint (stations
+the candidates are the constraints of the ProcessCapacity aggregates of
+(process, location) whose window COVERS the requested window (per constraint
+type the aggregate with the latest window start wins, tie: the narrower
+window; ADR 0003) plus a DERIVED STATION constraint (stations
 tallied across the site's zones x the declared StationStandard); every
 candidate is normalized to ORDER/hour before the minimum is taken. Two
 ADDITIVE response fields describe the composition:
@@ -101,13 +106,16 @@ declared standard (that step then uses its registered constraints only).
 Errors (`application/problem+json`):
 
 - `404 process-path-not-found` -- no ProcessPath registered under `{id}`.
-- `422 missing-step-capacity` -- a path step has neither a registered
-  ProcessCapacity for `location`/the window nor a derived STATION constraint.
+- `422 missing-step-capacity` -- a path step has neither a ProcessCapacity
+  whose window covers `location`/the window nor a derived STATION constraint
+  (the detail names the step, location and window).
 - `422 non-positive-conversion-factor` / `422 missing-conversion-factor` /
   `422 unsupported-normalization-unit` -- a WorkloadProfile/normalization
   problem (bad factor, a needed factor never supplied, or a step's native
   unit this phase cannot normalize to ORDER).
-- `400` -- a malformed `window_start`/`window_end`/`units_per_order`/
+- `400` -- `invalid-capacity-window` (`window_end` not after `window_start`;
+  new with ADR 0003 -- before, an inverted window was a `422` miss) or a
+  malformed `window_start`/`window_end`/`units_per_order`/
   `packages_per_order`.
 
 ## `POST /capacity-plans` request/response shape
@@ -117,9 +125,11 @@ and stores a DRAFT plan. PHASE 4 SIMPLIFICATION: `assigned_demand` (orders)
 and the WorkloadProfile factors travel in the body (the final demand
 ingestion from order-management/network-fulfillment is a later decision; no
 live cross-context call, no WorkloadProfile persistence yet). The factor
-validation is exactly Phase 2's path-capacity endpoint. As in Phase 2, every
-step's ProcessCapacity must have been registered for EXACTLY
-`[window_start, window_end)` -- there is no overlap matching.
+validation is exactly Phase 2's path-capacity endpoint. Every step's
+ProcessCapacity is resolved by window COVERAGE, as in the path-capacity
+endpoint (docs/adr/0003): a registered window applies when it covers
+`[window_start, window_end)`. The plan stores the REQUESTED window, and
+`capacity_over_window` / `shortage` are computed from its length.
 
 ```json
 // request

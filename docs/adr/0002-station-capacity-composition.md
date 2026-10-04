@@ -5,6 +5,8 @@
 Accepted (2026-10-04). Supersedes the part of the ADR 0001 Addendum (2026-10-03,
 "Confirmed consumed-event shapes", Storage/Station) that tallied
 `facility-layout` slots into LOCATION/STATION `CapacityConstraint`s.
+Decision 2's "registered at exactly `(P, L, W)`" is refined by ADR 0003: a
+registered window applies when it COVERS `W`.
 
 ## Context
 

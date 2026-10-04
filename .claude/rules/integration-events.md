@@ -152,7 +152,10 @@ cannot derive honestly.
   fit onto `ProcessCapacity`'s `(ProcessType, Location, CapacityWindow)`
   identity. `ProcessType` = uppercase(`path_id`), `Location` = `building_id`
   (the SITE code, e.g. `SIM1`), `CapacityWindow` = `[event.time, event.time +
-  planned_hours)`. Rate = `planned_heads * planned_rate` registered as
+  planned_hours)`. The window derivation is kept as is: one commit's lines
+  share the start and differ in end per path (live `SIM1`: PICK +32h, REBIN
+  +8h, PACK +24h), which is why capacity lookups match by window COVERAGE
+  (docs/adr/0003). Rate = `planned_heads * planned_rate` registered as
   `UNIT/HOUR` (documented default -- `planned_rate`'s native unit is not
   specified upstream). This is the ONLY thing the consumers register as a
   `ProcessCapacity` constraint.
@@ -175,7 +178,9 @@ cannot derive honestly.
     does not contribute). For a path step with process `P` at location `L`,
     `GetProcessPathCapacity` / `CreateCapacityPlan` add a derived STATION
     candidate `stationCount(L, activity=P) x StationStandard(L, P)` to the
-    constraints registered at `(P, L, window)`, normalize every candidate to
+    constraints of the aggregates of `(P, L)` whose window COVERS the requested
+    window (docs/adr/0003: per constraint type the latest window start wins),
+    normalize every candidate to
     ORDER/hour and take the minimum (the binding constraint type is
     reported). The standard -- throughput of ONE station, e.g. 180
     PACKAGE/hour -- is an operator-declared planning parameter of THIS context

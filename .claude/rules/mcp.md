@@ -27,8 +27,11 @@ One MCP server for this bounded context, an additive inbound adapter
 ## Tools (10; budget is 10)
 
 All argument names are snake_case, matching the REST bodies. Timestamps are
-RFC3339; a window must equal the registered window EXACTLY (no overlap
-matching). Failures are MCP tool errors (`isError: true`) whose text is
+RFC3339. `register_process_capacity_constraint` and
+`get_effective_process_capacity` address ONE aggregate and keep EXACT window
+keys (as `POST`/`GET /process-capacities`); `get_process_path_capacity` and
+`create_capacity_plan` resolve each step by window COVERAGE (a registered
+window applies when it covers the requested one; docs/adr/0003). Failures are MCP tool errors (`isError: true`) whose text is
 `<slug>: <message>`, using the REST problem slugs (`capacity-plan-not-found`,
 `capacity-plan-already-published`, `process-path-not-found`,
 `missing-step-capacity`, `negative-assigned-demand`, ...). Unexpected

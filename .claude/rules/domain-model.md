@@ -12,7 +12,12 @@
   HOUR`. Never compared across differing units without going through a
   WorkloadProfile first.
 - **CapacityWindow** — the `[start, end)` period a capacity value is valid
-  for. A capacity number with no window is incomplete by definition.
+  for. A capacity number with no window is incomplete by definition. A
+  window `C` COVERS a planning window `W` when `C.start <= W.start AND
+  C.end >= W.end` (`CapacityWindow.Covers`; a window covers itself): that is
+  the rule by which a registered constraint applies to a requested window
+  (docs/adr/0003). The window is also the ProcessCapacity's IDENTITY, which
+  stays an exact key.
 - **WorkloadProfile** — the per-warehouse conversion factors (e.g. units
   per order, packages per order) used to normalize different processes'
   native rates into one comparable flow unit.
@@ -55,7 +60,12 @@
 - **Step composition** — `ComposeStepCapacity`
   (`internal/domain/processcapacity/step_capacity.go`): for a path step with
   process P at location L and window W, the candidate constraints are
-  (a) the ProcessCapacity constraints registered at EXACTLY `(P, L, W)` and
+  (a) the constraints of the ProcessCapacity aggregates of `(P, L)` whose
+  window COVERS W (`StepInput.Covering`, from
+  `ProcessCapacityRepository.FindCovering`; ADR 0003): per constraint TYPE the
+  one from the aggregate with the LATEST window start (tie: the narrower
+  window, i.e. the earlier end) -- an older/wider covering aggregate's
+  constraint of the SAME type is shadowed, other types still apply -- and
   (b) a DERIVED STATION constraint = `stationCount(L, activity=P) x
   StationStandard(L, P)`, present only when BOTH a station count > 0 and a
   standard exist. Every candidate is normalized to ORDER with the request's
@@ -127,8 +137,10 @@ Vocabulary only, NOT implemented or published yet (nothing raises them):
   ProcessCapacity aggregate, recomputes and persists the effective rate.
 - `GetEffectiveProcessCapacity` — query: effective rate + binding
   constraint for a process+location+window.
-- `GetProcessPathCapacity` (Phase 2, composition since ADR 0002) — resolves a
-  ProcessPath's steps' registered ProcessCapacity, the site's tallied station
+- `GetProcessPathCapacity` (Phase 2, composition since ADR 0002, coverage since
+  ADR 0003) — resolves a
+  ProcessPath's steps' covering ProcessCapacity aggregates
+  (`ports.ProcessCapacityRepository.FindCovering`), the site's tallied station
   counts (`ports.StorageTallyReader`) and the declared StationStandards, plus
   the warehouse WorkloadProfile, and returns normalized path capacity, the
   bottleneck step and its binding constraint, every step's composed result
@@ -142,7 +154,9 @@ Vocabulary only, NOT implemented or published yet (nothing raises them):
   stock must never be read from inventory-storage (design doc rule 1).
 - `CreateCapacityPlan` (Phase 4) — resolves the path capacity through
   `GetProcessPathCapacity` (the same read-time composition; each step's
-  registered ProcessCapacity must be for EXACTLY the plan's window, and
+  registered ProcessCapacity must COVER the plan's window (ADR 0003; the
+  plan keeps the REQUESTED window, and `capacity_over_window` / shortage use
+  its length), and
   stations can bind it), builds the aggregate, saves it
   and queues `CapacityPlanCreated` in the outbox -- one `ports.UnitOfWork.Do`.
   Assigned demand and the WorkloadProfile factors arrive in the request body
