@@ -29,6 +29,14 @@ info:
     local ProcessCapacity read models current; this context never makes a
     live cross-context call.
 
+    **Consumed (ADR 0004, opt-in).** `OrderAllocated` and
+    `OrderPartiallyAllocated` (order-management, topic
+    `warehouse.order-management.events`) keep a local expected-demand read
+    model current when `DEMAND_CONSUMER_GROUP` is set (unset = no consumer).
+    Each order is counted once, at its latest promise cutoff, and attributed to
+    the ONE configured site (`DEMAND_SITE_ID`): order-management's events carry
+    no fulfillment site. `OrderRepromised` and every other type are ignored.
+
     **Envelope (mandatory).** Every message is a CloudEvents 1.0 event in
     *structured content mode* (Kafka value = JSON event format) with the Kafka
     header `content-type: application/cloudevents+json; charset=UTF-8`. All of
@@ -123,6 +131,39 @@ channels:
         oneOf:
           - $ref: "#/components/messages/LocationSlotRegistered"
           - $ref: "#/components/messages/LocationSlotDecommissioned"
+
+  warehouse.order-management.events:
+    description: |
+      order-management's integration topic (`OrderTopic`). This service consumes
+      it with a STABLE consumer group read from env `DEMAND_CONSUMER_GROUP` (no
+      default; unset means the consumer is not started). Only
+      `OrderAllocated` and `OrderPartiallyAllocated` are acted on; every other
+      CloudEvents `type` -- `OrderRepromised` included -- is ignored, and a
+      message that is not a valid CloudEvent is skipped (WARN), never blocking
+      the partition.
+    publish:
+      operationId: consumeOrderAllocationEvents
+      summary: Consume order-management's order allocation events.
+      description: |
+        Consumed by this service into a LOCAL expected-demand read model
+        (`order_demand`, one row per order id; `GET /demand`,
+        `get_expected_demand`, and the default of `POST /capacity-plans`
+        `assigned_demand`). An order is demand in a window [start, end) when its
+        `promise_date` (the promise cutoff) is at or after start and strictly
+        before end. Last writer wins per order id on the CloudEvents `time`
+        (a later or equal time replaces, an older one is a no-op). The
+        idempotency claim on the CloudEvents `id` and the upsert commit in ONE
+        database transaction; the offset is committed only afterwards. order-
+        management's events carry no site, no quantities and no cancellations
+        (OrderCancelled is analytics-topic only), so demand is counted in
+        ORDERS, attributed to the one configured site, and not netted; see
+        docs/adr/0004-demand-ingestion-from-order-management.md.
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/OrderAllocated"
+          - $ref: "#/components/messages/OrderPartiallyAllocated"
 
 components:
   messages:
@@ -315,6 +356,67 @@ components:
               planned_heads: 3
               planned_rate: 50
               planned_hours: 8
+
+    OrderAllocated:
+      name: OrderAllocated
+      title: Order allocated (consumed)
+      summary: order-management allocated every line of an order and released the eligible ones.
+      description: |
+        CONSUMED from `warehouse.order-management.events` (producer: order-management,
+        its own `apis/asyncapi.yaml`). Upserts the order into the expected-demand read
+        model: promise cutoff = `data.promise_date`, released lines = `len(data.lines)`,
+        site = the configured `DEMAND_SITE_ID` (the event carries none). `subject` must
+        equal `data.order_id`. Deduped on the CloudEvents `id`; last writer wins per
+        order on `time`. `type` =
+        `com.warehouse.wes.order-management.order.OrderAllocated`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/OrderAllocatedEvent"
+      examples:
+        - name: twoLineOrder
+          summary: A two-line order promised for 2026-10-05T10:00Z.
+          payload:
+            specversion: "1.0"
+            id: "4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90"
+            source: "/warehouse/order-management"
+            type: "com.warehouse.wes.order-management.order.OrderAllocated"
+            subject: "ord-7c9e6679-7d5a-4b37-b2f1-93b0c4a1d8f2"
+            time: "2026-10-04T09:15:30Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:order-management:events:OrderAllocated:v1"
+            data:
+              order_id: "ord-7c9e6679-7d5a-4b37-b2f1-93b0c4a1d8f2"
+              promise_date: "2026-10-05T10:00:00Z"
+              lines:
+                - line_no: 1
+                  sku: "SKU-BOOK-0001"
+                  path_id: "pick"
+                  gift_wrap: false
+                  fulfillment_class: "SAME_SKU_MULTI"
+                - line_no: 2
+                  sku: "SKU-BOOK-0002"
+                  path_id: "pick"
+                  gift_wrap: true
+                  fulfillment_class: "SAME_SKU_MULTI"
+
+    OrderPartiallyAllocated:
+      name: OrderPartiallyAllocated
+      title: Order partially allocated (consumed)
+      summary: Some lines of a partial-shipment order were allocated and released, some backordered.
+      description: |
+        CONSUMED from `warehouse.order-management.events`. Same payload shape and the
+        same effect as OrderAllocated (`data.lines` carries exactly the lines released
+        in that pass); a later OrderAllocated for the same order replaces it. `type` =
+        `com.warehouse.wes.order-management.order.OrderPartiallyAllocated`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/OrderPartiallyAllocatedEvent"
 
     LocationSlotRegistered:
       name: LocationSlotRegistered
@@ -807,3 +909,52 @@ components:
               const: "urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1"
             data:
               $ref: "#/components/schemas/LocationSlotDecommissionedData"
+    OrderAllocationData:
+      type: object
+      description: >-
+        Fields this service reads from order-management's OrderAllocated /
+        OrderPartiallyAllocated `data` (its own AllocationData; hand-mirrored,
+        never imported). Everything else in the payload is ignored.
+      required: [order_id, promise_date]
+      properties:
+        order_id:
+          type: string
+          description: Must equal the CloudEvents `subject`.
+          example: "ord-7c9e6679-7d5a-4b37-b2f1-93b0c4a1d8f2"
+        promise_date:
+          type: string
+          format: date-time
+          description: The order's promise cutoff instant. The window predicate is applied to it.
+          example: "2026-10-05T10:00:00Z"
+        lines:
+          type: array
+          description: Exactly the lines released in this allocation pass (may be empty); only its length is read.
+          items:
+            type: object
+            properties:
+              line_no:
+                type: integer
+    OrderAllocatedEvent:
+      description: CloudEvents 1.0 envelope of order-management's OrderAllocated (consumed).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.order-management.order.OrderAllocated"
+            dataschema:
+              const: "urn:warehouse:order-management:events:OrderAllocated:v1"
+            data:
+              $ref: "#/components/schemas/OrderAllocationData"
+    OrderPartiallyAllocatedEvent:
+      description: CloudEvents 1.0 envelope of order-management's OrderPartiallyAllocated (consumed).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.order-management.order.OrderPartiallyAllocated"
+            dataschema:
+              const: "urn:warehouse:order-management:events:OrderPartiallyAllocated:v1"
+            data:
+              $ref: "#/components/schemas/OrderAllocationData"

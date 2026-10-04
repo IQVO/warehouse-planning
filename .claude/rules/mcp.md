@@ -24,7 +24,7 @@ One MCP server for this bounded context, an additive inbound adapter
   insert their CloudEvents into the outbox inside the UnitOfWork (same as
   REST); the relay in `cmd/api` drains them.
 
-## Tools (10; budget is 10)
+## Tools (11; budget is 11)
 
 All argument names are snake_case, matching the REST bodies. Timestamps are
 RFC3339. `register_process_capacity_constraint` and
@@ -43,12 +43,13 @@ infrastructure errors are logged and reported as a generic `internal-error`.
 | `get_effective_process_capacity` | read | `ProcessCapacityRepository` port (no use case, as REST) | `process_type`, `location`, `window_start`, `window_end` | `effective_rate`, `effective_unit`, `binding_constraint`, `constraints[]` (`constraint_type`, `quantity`, `unit`, `period_seconds`); `process-capacity-not-found` if none |
 | `register_process_path` | write | `RegisterProcessPath` | `id`, `name`, `steps` (ordered, non-empty) | `id`, `name`, `steps` |
 | `get_process_path_capacity` | read | `GetProcessPathCapacity` | `id`, `location`, `window_start`, `window_end`, optional `units_per_order`, `packages_per_order` | `normalized_rate` (ORDER/hour), `normalized_unit` (`ORDER`), `bottleneck_step`, `step_breakdown[]` (`step`, `normalized_rate` ORDER/hour, `binding_constraint`), `warnings[]` (never null) |
-| `create_capacity_plan` | write | `CreateCapacityPlan` | `warehouse_id`, `location`, `window_start`, `window_end`, `path_id`, `assigned_demand` (orders; required, never silently 0), optional `units_per_order`, `packages_per_order` | the plan (below), `status: DRAFT` |
+| `create_capacity_plan` | write | `CreateCapacityPlan` | `warehouse_id`, `location`, `window_start`, `window_end`, `path_id`, optional `assigned_demand` (orders; when given it always wins, `0` included; when omitted it defaults to the orders `get_expected_demand` reports for the location and window, else `missing-assigned-demand` -- never silently 0; docs/adr/0004), optional `units_per_order`, `packages_per_order` | the plan (below), `status: DRAFT`, `demand_source` (`request` \| `orders`) |
 | `publish_capacity_plan` | write | `PublishCapacityPlan` | `id` | the plan, `status: PUBLISHED`, `published_at`; second call -> `capacity-plan-already-published` |
 | `get_capacity_plan` | read | `CapacityPlanRepository` port (no use case, as REST) | `id` | the plan |
 | `declare_station_standard` | write (idempotent: same key replaces) | `DeclareStationStandard` | `location` (site code, e.g. `SIM1`), `process_type`, `quantity` (> 0, per ONE station), `unit` (UNIT, PACKAGE, ORDER), `period_seconds` (> 0) | `location`, `process_type`, `quantity`, `unit`, `period_seconds`, `created` |
 | `list_station_standards` | read | `StationStandardRepository` port (no use case, as REST) | optional `location` | `location` (when filtered), `standards[]` (same fields) |
 | `get_storage_capacity` | read | `GetStorageCapacity` | `location` | `location`, `storage_positions[]` (`zone_id`, `location_type`, `positions`), `stations[]` (`zone_id`, `activity`, `stations`); empty arrays when nothing is tallied |
+| `get_expected_demand` | read | `GetExpectedDemand` | `location`, `window_start` (inclusive), `window_end` (exclusive) | `location`, `window_start`, `window_end`, `orders`, `released_lines` (NOT units), `source` (`order-management`), `as_of` (null when none); same body as REST `GET /demand`; `orders` 0 means no data, not zero demand |
 
 Plan body (same as REST `capacityPlanResponse`): `id`, `warehouse_id`,
 `location`, `window_start`, `window_end`, `path_id`, `assigned_demand`,
@@ -89,6 +90,8 @@ Add a typed input struct (snake_case `json` tags + `jsonschema:"..."`
 description on every field), a `Deps` method calling an existing use case
 (or a repository port for a plain read), register it in `registerTools` with
 annotations, map errors through `mapError`, and extend `wantTools` in
-`TestToolSurface`. Keep the surface at <= 10 tools: the budget was 8 and was raised to 10, in one
-reviewed change, by the three station-capacity tools (`TestToolSurface`'s
-`maxTools` pins it and the exact curated set).
+`TestToolSurface`. Keep the surface at <= 11 tools: the budget was 8 and was raised to 10, in one
+reviewed change, by the three station-capacity tools and then to 11 by
+`get_expected_demand` (docs/adr/0004; `TestToolSurface`'s `maxTools` pins it and
+the exact curated set). The demand tool reads the same Postgres read model the
+`cmd/api` consumer writes -- `cmd/mcp` still never dials Kafka.

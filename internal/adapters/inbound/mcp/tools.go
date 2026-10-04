@@ -626,6 +626,13 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Annotations: readOnly,
 	}, d.getCapacityPlan)
 
+	d.registerReadModelTools(server, idempotent, readOnly)
+}
+
+// registerReadModelTools adds the station-capacity tools (ADR 0002) and calls
+// registerDemandTools (ADR 0004). Split from registerTools only to keep each
+// function within the length budget as the surface grows.
+func (d Deps) registerReadModelTools(server *mcp.Server, idempotent func(bool) *mcp.ToolAnnotations, readOnly *mcp.ToolAnnotations) {
 	addTool(server, &mcp.Tool{
 		Name: "declare_station_standard",
 		Description: "Declare the throughput of ONE station of a process at a site (e.g. 180 PACKAGE per 3600 s for PACK at SIM1). Station counts are tallied from facility-layout and carry no throughput of their own; " +
@@ -647,6 +654,13 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Annotations: readOnly,
 	}, d.getStorageCapacity)
 
+	d.registerDemandTools(server, readOnly)
+}
+
+// registerDemandTools adds the expected-demand read tool (docs/adr/0004). It
+// is its own method only to keep registerTools within the function-length
+// budget as the surface grows.
+func (d Deps) registerDemandTools(server *mcp.Server, readOnly *mcp.ToolAnnotations) {
 	addTool(server, &mcp.Tool{
 		Name: "get_expected_demand",
 		Description: "Read the expected demand of a site over a window from the local read model fed by order-management's published order events (OrderAllocated, OrderPartiallyAllocated): " +

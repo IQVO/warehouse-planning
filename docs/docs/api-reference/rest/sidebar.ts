@@ -106,6 +106,22 @@ const sidebar: SidebarsConfig = {
         },
       ],
     },
+    {
+      type: "category",
+      label: "demand",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/demand",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/get-expected-demand",
+          label: "Expected demand of a site over a window (order-management read model)",
+          className: "api-method get",
+        },
+      ],
+    },
   ],
 };
 

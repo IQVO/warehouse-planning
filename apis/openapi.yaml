@@ -30,6 +30,8 @@ tags:
     description: CapacityPlan creation, publication and lookup (Phase 4).
   - name: station-capacity
     description: Operator-declared station standards and the storage/station read model of a site (ADR 0002).
+  - name: demand
+    description: Expected demand of a site, read from the local read model fed by order-management's order events (ADR 0004).
 paths:
   /process-capacities:
     post:
@@ -293,10 +295,17 @@ paths:
         to a step when it COVERS [window_start, window_end), exactly as in
         GET /process-paths/{id}/capacity (docs/adr/0003). The plan stores
         its own requested window.
-        assigned_demand arrives in the request -- a documented Phase 4
-        simplification (the final demand ingestion from order-management /
-        network-fulfillment is a later decision; this context never makes a
-        live cross-context call). The plan is saved and its
+        assigned_demand is OPTIONAL (docs/adr/0004). An explicit value
+        (including 0) is used exactly as stated and the plan's demand_source
+        is "request". When it is OMITTED the demand defaults to the number of
+        orders the local read model -- fed by order-management's published
+        OrderAllocated / OrderPartiallyAllocated events, never by a live call --
+        expects at `location` in [window_start, window_end) (see GET /demand),
+        the plan's demand_source is "orders", and assigned_demand in the
+        response is that figure. When the read model has no order for that
+        location and window the request is rejected with 422
+        missing-assigned-demand: absence never silently means zero demand.
+        The plan is saved and its
         CapacityPlanCreated event is queued in the transactional outbox in
         ONE database transaction.
       requestBody:
@@ -329,7 +338,9 @@ paths:
             A path step has no ProcessCapacity registered for this
             location/window; a WorkloadProfile factor is missing, not
             positive, or cannot normalize a step's unit; assigned_demand is
-            absent or negative; or warehouse_id/location/path_id is blank.
+            negative, or is omitted and the order-demand read model has no
+            order for this location and window (missing-assigned-demand); or
+            warehouse_id/location/path_id is blank.
           content:
             application/problem+json:
               schema:
@@ -514,8 +525,98 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+  /demand:
+    get:
+      operationId: getExpectedDemand
+      summary: Expected demand of a site over a window (order-management read model)
+      tags: [demand]
+      description: >
+        The orders order-management has promised at a site for a window, read
+        from the LOCAL read model this service builds from order-management's
+        published OrderAllocated / OrderPartiallyAllocated CloudEvents
+        (docs/adr/0004; never a live call). `orders` counts the distinct orders
+        whose promise cutoff (the event's promise_date) falls in the half-open
+        window [window_start, window_end): a cutoff exactly at window_start
+        counts, one exactly at window_end belongs to the next window. An order
+        is counted once, at the promise of its latest event (last writer wins on
+        the CloudEvents time). `released_lines` sums the lines their latest
+        allocation pass released; it is NOT units -- order-management's events
+        carry no quantities. order-management orders carry no fulfillment
+        site, so every consumed order is attributed to the ONE site configured
+        on this service (DEMAND_SITE_ID); any other location reads 0. Cancellations
+        are not published on the integration topic and are not netted, and an
+        OrderRepromised event carries no new cutoff, so it is ignored. 200 with
+        orders 0 and as_of null when nothing is known -- an empty answer that
+        POST /capacity-plans never turns into a zero-demand plan.
+      parameters:
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: window_start
+          in: query
+          required: true
+          description: RFC 3339; inclusive.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T08:00:00Z"
+        - name: window_end
+          in: query
+          required: true
+          description: RFC 3339; exclusive, must be after window_start.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T16:00:00Z"
+      responses:
+        "200":
+          description: The expected demand (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExpectedDemandResponse"
+        "400":
+          description: location missing, window_start/window_end missing or not RFC 3339, or a window whose end is not after its start.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 components:
   schemas:
+    ExpectedDemandResponse:
+      type: object
+      required: [location, window_start, window_end, orders, released_lines, source, as_of]
+      properties:
+        location:
+          type: string
+          example: SIM1
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        orders:
+          type: integer
+          minimum: 0
+          description: Distinct orders whose promise cutoff is in [window_start, window_end).
+          example: 3
+        released_lines:
+          type: integer
+          minimum: 0
+          description: Lines released by those orders' latest allocation pass. NOT units.
+          example: 6
+        source:
+          type: string
+          enum: [order-management]
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: CloudEvents time of the newest order event the site's model reflects (whole site, not only the window); null when none.
     DeclareStationStandardRequest:
       type: object
       required:
@@ -769,7 +870,6 @@ components:
         - window_start
         - window_end
         - path_id
-        - assigned_demand
       properties:
         warehouse_id:
           type: string
@@ -796,7 +896,13 @@ components:
           type: number
           format: double
           minimum: 0
-          description: Orders assigned to the window (request-carried in Phase 4).
+          description: >
+            OPTIONAL. Orders assigned to the window. When present (even 0) it
+            is used exactly as stated and the plan's demand_source is
+            "request". When omitted it defaults to the orders order-management
+            expects at `location` in the window (GET /demand; demand_source
+            "orders"), or the request is rejected with 422
+            missing-assigned-demand when there are none -- never silently 0.
           example: 12000
         units_per_order:
           type: number
@@ -833,7 +939,17 @@ components:
         assigned_demand:
           type: number
           format: double
+          description: The demand the plan was evaluated against (see demand_source), in orders.
           example: 12000
+        demand_source:
+          type: string
+          enum: [request, orders]
+          description: >
+            Additive (docs/adr/0004). "request": assigned_demand was stated by
+            the caller (also every plan created before demand ingestion);
+            "orders": it was omitted and defaulted from the order-management
+            read model.
+          example: request
         status:
           type: string
           enum: [DRAFT, PUBLISHED]

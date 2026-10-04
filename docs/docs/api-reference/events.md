@@ -53,6 +53,13 @@ and there is no analytics stream
 | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `LABOR_CAPACITY_CONSUMER_GROUP` |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `STORAGE_CAPACITY_CONSUMER_GROUP` |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `STORAGE_CAPACITY_CONSUMER_GROUP` |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (unset = not consumed) |
+| `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (unset = not consumed) |
+
+The two order-management types feed the expected-demand read model
+(`GET /demand`, MCP `get_expected_demand`, and the default of `assigned_demand`
+on `POST /capacity-plans`); every other type on that topic, `OrderRepromised`
+included, is ignored. See `docs/adr/0004-demand-ingestion-from-order-management.md`.
 
 What each consumed event changes is described on
 [Upstream contracts](/docs/ecosystem/upstream-contracts).

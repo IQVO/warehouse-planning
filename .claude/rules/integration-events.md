@@ -137,6 +137,19 @@ Confirmed 2026-10-03 against each producer's own `apis/asyncapi.yaml` on
 | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (fan-out: one message per PathPlan line) -> LABOR `CapacityConstraint` = `planned_heads * planned_rate`; window = `[event.time, event.time + planned_hours]` (documented assumption, no real shift-start field exists yet) |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `zoneId`, `locationType`, `role` (default `Storage`), `activities` (present only when `role=WorkCenter`) -> tallied per `(zoneId, locationType)` as storage positions (role=Storage), or per zone+activity as stations (role=WorkCenter). Tally only: no ProcessCapacity constraint is registered |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `locationCode` -> decrements the same tally |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `order_id` (= `subject`), `promise_date`, `len(lines)` -> upserts ONE row per order id in the expected-demand read model (`order_demand`), site = the configured `DEMAND_SITE_ID` (the event carries none), last writer wins on the CloudEvents `time`. Consumer group env `DEMAND_CONSUMER_GROUP`: **unset = consumer OFF** (docs/adr/0004) |
+| `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | same payload shape and effect as `OrderAllocated` |
+
+`OrderRepromised` (same topic: cpt ids only, no new cutoff instant), the
+analytics-topic-only types (`OrderCancelled`, `OrderReceived`, ...) and every
+other `type` are ignored. Demand is therefore counted in ORDERS (no units),
+attributed to one site, and NOT netted for cancellations; an order is demand in
+`[start, end)` when its `promise_date` is `>= start` and `< end`. The consumer
+(`order_demand_consumer.go`) has the labor/storage consumers' exact shape: one
+`UnitOfWork` for the processed-event claim (`order-demand-consumer`) AND the
+upsert, offsets committed after success, transient errors retried, validation
+before the transaction, never blocking the partition. `cmd/mcp` reads the table
+and never dials Kafka.
 
 `process-path-management` is deliberately NOT consumed — its `ProcessPath`
 carries `path_id`/`required_capabilities`/`eligibility`, never an ordered

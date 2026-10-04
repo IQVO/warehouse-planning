@@ -70,6 +70,19 @@ unleash:
     # TestCapacityWindow_Covers (one second either side of each bound); that
     # test was checked to fail when Covers' end bound is made strict.
     #
+    # Re-measured 2026-10-04 (order-demand read model, ADR 0004), local
+    # gremlins v0.6.0, one `gremlins unleash <pkg>` per package as above, after
+    # adding ./internal/domain/demand (Order.Supersedes / CountsIn / Summarize,
+    # NewOrder validation) to the fast subset and DemandSource to capacityplan:
+    # demand 13/13 killed (new), capacityplan 15/15 killed (was 14),
+    # processcapacity and processpath untouched -- efficacy 100.00% and mutant
+    # coverage 100.00% in each. The threshold (99) is unchanged -- not lowered --
+    # and is still strictly below every measured value. The window predicate
+    # and the last-writer-wins rule compare with time.Compare (>= / <), not
+    # Before/After method calls, precisely so gremlins mutates their
+    # boundaries; the tests pin start-inclusive / end-exclusive and
+    # equal-time-replaces at the boundary value itself.
+    #
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we
     # already achieve" approach -- never copied from a sibling repo.

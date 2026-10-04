@@ -22,6 +22,7 @@ Station capacity (current, docs/adr/0002):
 - `PUT /station-standards/{location}/{process_type}` -> `DeclareStationStandard`
 - `GET /station-standards?location=`                 -> direct repository read
 - `GET /storage-capacity?location=`                  -> `GetStorageCapacity`
+- `GET /demand?location=&window_start=&window_end=`  -> `GetExpectedDemand` (docs/adr/0004)
 
 Kept in sync with `apis/openapi.yaml` as each endpoint ships (the
 `docs-api-drift` CI job fails if generated docs disagree with the spec).
@@ -121,10 +122,11 @@ Errors (`application/problem+json`):
 ## `POST /capacity-plans` request/response shape
 
 Evaluates a ProcessPath against the demand assigned to a location and window
-and stores a DRAFT plan. PHASE 4 SIMPLIFICATION: `assigned_demand` (orders)
-and the WorkloadProfile factors travel in the body (the final demand
-ingestion from order-management/network-fulfillment is a later decision; no
-live cross-context call, no WorkloadProfile persistence yet). The factor
+and stores a DRAFT plan. `assigned_demand` (orders) is OPTIONAL since ADR 0004:
+present (even `0`) it is used as stated and ALWAYS wins; omitted it defaults to
+the orders order-management expects at `(location, window)` from the local read
+model (`GET /demand`; no live cross-context call). The WorkloadProfile factors
+still travel in the body (no WorkloadProfile persistence yet). The factor
 validation is exactly Phase 2's path-capacity endpoint. Every step's
 ProcessCapacity is resolved by window COVERAGE, as in the path-capacity
 endpoint (docs/adr/0003): a registered window applies when it covers
@@ -143,8 +145,15 @@ endpoint (docs/adr/0003): a registered window applies when it covers
   "path_id": "pick-rebin-pack", "assigned_demand": 12000, "status": "DRAFT",
   "path_capacity": 1000, "bottleneck_step": "REBIN",
   "capacity_over_window": 8000, "shortage": 4000, "created_at": "...",
-  "bottleneck_constraint": "LABOR", "warnings": [] }
+  "bottleneck_constraint": "LABOR", "warnings": [], "demand_source": "request" }
 ```
+
+`demand_source` (additive, ADR 0004) is `"request"` when `assigned_demand` was
+stated (also every plan created before migration `0006`) or `"orders"` when it
+was omitted and defaulted from the order-management read model; in the latter
+case `assigned_demand` is the number of orders expected in the window. It is
+stored with the plan and returned by GET and publish too; the published
+CloudEvents payloads do not carry it.
 
 `path_capacity` is ORDER per HOUR; `capacity_over_window` and `shortage` are
 orders. The plan uses the same read-time composition as the path capacity, so
@@ -165,8 +174,9 @@ Errors (`application/problem+json`):
 - `409 capacity-plan-already-published` (publish twice; nothing is queued).
 - `422 missing-step-capacity`, `non-positive-conversion-factor`,
   `missing-conversion-factor`, `unsupported-normalization-unit` (as Phase 2),
-  plus `negative-assigned-demand`, `missing-assigned-demand` (field absent --
-  never silently zero) and `missing-required-field` (blank `warehouse_id`,
+  plus `negative-assigned-demand`, `missing-assigned-demand` (field absent AND
+  the demand read model has no order for the location and window -- byte-identical
+  to the pre-ADR-0004 answer; never silently zero) and `missing-required-field` (blank `warehouse_id`,
   `location` or `path_id`).
 
 Create and publish each queue their CloudEvents in the transactional outbox in
@@ -215,3 +225,31 @@ The READ MODEL of a site -- not a throughput, and with no "consumed" figure
 
 `200` with empty lists when nothing is tallied; `400 missing-location` when
 `location` is absent. Zero-count buckets are omitted.
+
+## Expected demand (docs/adr/0004)
+
+### `GET /demand?location=&window_start=&window_end=`
+
+The orders order-management has promised at a site for a window, from the LOCAL
+read model built from its published `OrderAllocated` / `OrderPartiallyAllocated`
+events (never a live call). All three query parameters are required; the window
+is half-open `[window_start, window_end)`.
+
+```json
+{ "location": "SIM1", "window_start": "2026-10-05T08:00:00Z", "window_end": "2026-10-05T16:00:00Z",
+  "orders": 3, "released_lines": 6, "source": "order-management", "as_of": "2026-10-04T09:15:30Z" }
+```
+
+- `orders`: distinct orders whose promise cutoff is `>= window_start` and
+  `< window_end` (a cutoff exactly at the start counts, exactly at the end does
+  not). One order id is one count, at its latest event's cutoff.
+- `released_lines`: lines released by those orders' latest allocation pass. NOT
+  units -- the events carry no quantities.
+- `as_of`: `time` of the newest order event the site's model reflects (null when
+  none). `200` with `orders: 0` and `as_of: null` when nothing is known: that is
+  *no data*, and `POST /capacity-plans` never turns it into a zero-demand plan.
+- Every consumed order is attributed to the ONE configured site
+  (`DEMAND_SITE_ID`); any other `location` reads 0. Cancellations are not netted.
+- `400 missing-location` / `malformed-window-start` / `malformed-window-end` /
+  `invalid-capacity-window`. The route exists only when the demand read model is
+  wired (always in `cmd/api`); it reads the table even when the consumer is off.
