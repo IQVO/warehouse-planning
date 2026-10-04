@@ -1,70 +1,73 @@
 ---
 name: domain-review
-description: Ubiquitous-language drift review of a change against .claude/rules/domain-model.md: renamed or invented terms, aggregate-invariant leaks. Invoke explicitly: /domain-review [range].
+description: Ubiquitous-language drift review of a warehouse-planning change against .claude/rules/domain-model.md (ProcessCapacity, CapacityWindow, StationStandard, CapacityPlan, ...) - renamed or invented terms, aggregate-invariant leaks, units. Invoke explicitly - /domain-review [range].
 disable-model-invocation: true
 argument-hint: "[git range]"
 ---
 
 Perform a ubiquitous-language drift review of the current changes (or
 `$ARGUMENTS` if given), comparing new/changed code against
-`.claude/rules/domain-model.md` (or this repo's equivalent doc — check
-`AGENTS.md`/`CLAUDE.md` for where the ubiquitous language lives if that
-file doesn't exist here).
+`.claude/rules/domain-model.md`. The same vocabulary is published for readers
+in `docs/docs/ddd/ubiquitous-language.md`, `docs/docs/ddd/use-cases.md` and
+`docs/docs/overview/aggregates.md`; the rule file is the source of truth, the
+docs pages must follow it.
 
-Ubiquitous language drift is the quiet failure mode DDD is supposed to
-prevent: code that technically works but silently renames, reshapes, or
-duplicates a concept the domain-model doc already named — so future
-readers can no longer map code to domain conversation.
+Drift is the quiet failure: code that works but renames, reshapes or
+duplicates a concept the model already named, so nobody can map code back to
+the domain conversation.
 
 ## What to check, in priority order
 
-1. **A new type/field/method that duplicates an existing domain concept
-   under a different name.** If the domain-model doc already names a
-   concept (e.g. this repo's "Usable inventory" — on-hand minus active
-   reservations minus held/damaged), a new calculation that computes the
-   same thing under a different name (`AvailableQty`, `FreeStock`, etc.)
-   is drift — even if the math is correct, it fragments the vocabulary.
-   Flag it and point at the existing name.
-2. **A domain type/method named in implementation terms instead of
-   domain terms.** `internal/domain/` code should read like the ubiquitous
-   language, not like database/HTTP vocabulary — a method called
-   `UpdateRow` or `PatchState` where the domain-model doc would call the
-   equivalent operation `Stow`/`Revoke`/`RunCycleCount` is drift, and the
-   fitness-test suite won't catch this because it's a naming problem, not
-   an import-direction problem.
-3. **An invariant enforced in code that the domain-model doc doesn't
-   mention, or vice versa.** If a new domain rule was added to the code
-   (a new validation, a new state-transition guard), the domain-model doc
-   should be updated in the SAME PR — an undocumented invariant is
-   invisible to the next person who touches that aggregate and may
-   accidentally remove it thinking it's dead code.
-4. **A value object that should be closed but was implemented open (or
-   vice versa).** This repo's own domain-model doc calls out
-   `HandlingTag` as a deliberately CLOSED enum (unlike facility-layout's
-   open `LocationType`) because it carries real regulatory meaning —
-   check any new categorical field against whether the domain actually
-   wants an open or closed set, and flag a mismatch either direction.
-5. **A cross-aggregate rule implemented as a cross-aggregate call instead
-   of an explicit local check, or vice versa**, per whatever this repo's
-   own domain-model doc says about which invariants are local vs. which
-   legitimately need external state (e.g. this repo's DOT segregation
-   check is explicitly documented as "purely LOCAL... no cross-context
-   call" — a change that quietly makes it call out to another service
-   would be a real regression worth flagging even if functionally it
-   still "works").
-6. **New terminology introduced without updating the domain-model doc.**
-   If new code introduces a genuinely new domain concept the doc doesn't
-   yet name, that's not necessarily wrong — but the doc needs a new entry
-   in the SAME PR, or the vocabulary silently forks between prose and
-   code.
+1. **A new type/field/method duplicating an existing concept under another
+   name.** The vocabulary is `ProcessCapacity`, `CapacityConstraint`,
+   `CapacityRate`, `CapacityWindow`, `WorkloadProfile`, `ProcessPath`,
+   `ProcessPathCapacity`, `StationStandard`, station count, site/location,
+   `CapacityPlan`, shortage, bottleneck. A second way to say "throughput of one
+   station" (`PerStationRate`, `StationRate`) or "end-to-end rate"
+   (`PathThroughput`) next to `StationStandard` / `ProcessPathCapacity` is
+   drift even when the math is right. Point at the existing name.
+2. **Implementation words in domain code.** `internal/domain/` should read like
+   the language: `Publish`, `Covers`, `ComposeStepCapacity`, `EffectiveRate`,
+   not `UpdateRow`, `SetStatus`, `PatchWindow`. The fitness tests cannot catch
+   naming.
+3. **Units and windows treated loosely.** A capacity number with no window is
+   incomplete by definition; a `CapacityRate` is quantity + native unit +
+   period and is never compared across units without a `WorkloadProfile`
+   (`NormalizeToOrderRate`). Flag a raw float compared across UNIT / PACKAGE /
+   ORDER, or a `CapacityWindow` replaced by two bare timestamps. Registration
+   uses the window as exact identity; planning lookups use `Covers` (ADR 0003).
+4. **An invariant in code that the model does not mention, or vice versa.**
+   A new validation or state guard (`ErrAlreadyPublished`, shortage is never
+   negative and demand equal to capacity is not a shortage, one native unit per
+   `ProcessCapacity`) must be written into `.claude/rules/domain-model.md` in
+   the SAME PR; an undocumented invariant looks like dead code to the next
+   editor.
+5. **Open versus closed vocabularies.** `ConstraintType` (LABOR, LOCATION,
+   EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT) and `CapacityUnit`
+   (UNIT, LINE, ORDER, PACKAGE) are closed sets with defined behaviour (a
+   `StationStandard` accepts only UNIT, PACKAGE or ORDER; `LINE` is rejected
+   by normalization). A new categorical value must be checked against what
+   the domain wants, and against the OpenAPI enums.
+6. **Where a rule is allowed to get its data.** Station capacity is
+   `stationCount x StationStandard` composed at read time from local data
+   (ADR 0002); a count has no throughput of its own, and the standard is an
+   operator-declared parameter of this context. Flag a change that stores a
+   derived capacity, invents a standard, or reaches into a sibling context
+   or into stock levels.
+7. **Terms the model deliberately keeps unimplemented.**
+   `ProcessCapacityRegistered` and `ProcessCapacityChanged` are vocabulary
+   only; a change that references them as if published is wrong until it
+   adds the raise path, the encoder case and the AsyncAPI message.
+8. **New terminology without a doc update.** A genuinely new concept needs an
+   entry in `.claude/rules/domain-model.md` (and the ubiquitous-language page)
+   in the same PR, or code and prose fork.
 
 ## Output format
 
-For each finding: the term/concept involved, where it appears in the
-domain-model doc (or "not yet documented"), where the drift appears in
-code, and a one-sentence recommendation (rename, document, or confirm
-it's an intentional new concept). If the changes introduce no new domain
-concepts and use existing vocabulary correctly, say so plainly.
+For each finding: the term involved, where it is in the domain-model rule (or
+"not yet documented"), where the drift is in code, and a one-sentence
+recommendation (rename, document, or confirm it is an intentional new
+concept). If the change introduces no new concepts and uses the existing
+vocabulary correctly, say so plainly.
 
-This command never modifies files. It is advisory input for the author
-to act on, not a blocking gate.
+This command never modifies files; it is advisory input for the author.

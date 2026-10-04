@@ -1,126 +1,145 @@
 ---
 name: how-to-add-a-rest-endpoint
-description: Add or change a REST endpoint in this service in the fleet's hexagonal order (domain invariant, use case, port, HTTP adapter, apis/openapi.yaml, generated docs, godog scenario). Use when touching internal/adapters/inbound/http, apis/openapi.yaml, or exposing a use case over HTTP.
+description: Add or change a REST endpoint in warehouse-planning in hexagonal order (domain invariant, use case, port, chi handler, errors.go, apis/openapi.yaml, regenerated Docusaurus API reference, godog scenario). Use when touching internal/adapters/inbound/http, apis/openapi.yaml, or exposing a use case over HTTP.
 ---
 
 # How to add a REST endpoint
 
-Use when asked to add a new REST use case/endpoint to this service. Follow
-this order — domain first, adapter last — never the reverse; writing the
-HTTP handler before the domain invariant it enforces produces handlers
-that validate nothing and use cases that get bypassed.
+Use when asked to add or change a REST endpoint. Go domain first, adapter
+last: a handler written before the invariant it enforces validates nothing
+and gets bypassed by the use case. There is no auth layer to wire (never add
+one, see `.claude/rules/fleet/no-auth-and-mcp.md`).
 
-This walks the exact path `POST /bins/{binId}/cycle-count` took
-(`internal/application/usecases/run_cycle_count.go` +
-`internal/adapters/inbound/http/server.go`'s `handleRunCycleCount`) as the
-concrete worked example — read those two files alongside this guide.
+Worked examples in this repo, read them next to this guide:
 
-## 1. Domain first: does an invariant already exist, or do you need one?
+- `PUT /station-standards/{location}/{process_type}` (ADR 0002): a plain
+  upsert. `internal/application/usecases/declare_station_standard.go` +
+  `handleDeclareStationStandard` in `internal/adapters/inbound/http/station_handler.go`.
+- `POST /capacity-plans/{id}/publish`: a write that also emits events through
+  the transactional outbox. `internal/application/usecases/publish_capacity_plan.go` +
+  `handlePublishCapacityPlan` in `internal/adapters/inbound/http/capacity_plan_handler.go`.
 
-Check `internal/domain/<aggregate>/` for the rule this endpoint enforces.
-A REST endpoint should almost never contain business logic itself — it
-decodes a request, calls a use case, encodes the result. If the operation
-needs a new domain rule (e.g. "a counted quantity below zero is invalid"),
-add it to the aggregate/value-object in `internal/domain/`, with its own
-table-driven unit test, BEFORE touching the application or adapter layers.
+## 1. Domain first: does the invariant exist?
 
-## 2. Application: define the use case
+Look in `internal/domain/<aggregate>/` (`processcapacity`, `capacityplan`,
+`processpath`). The endpoint decodes, calls a use case and encodes; business
+rules live in the aggregate or value object. For the station-standard
+endpoint the rule ("throughput per station is positive, unit is UNIT,
+PACKAGE or ORDER") is `processcapacity.NewStationStandard` in
+`internal/domain/processcapacity/station_standard.go`, tested in
+`station_standard_test.go`. Add a new rule there, with a table-driven test
+(including the exact boundary value), BEFORE touching the layers above.
+The domain package depends on nothing internal but the domain
+(`TestHexagonalArchitecture`); no JSON tags, no HTTP status codes in it.
 
-Add a new file in `internal/application/usecases/` (one file per use
-case, this repo's convention — not one giant `usecases.go`). Shape:
+## 2. Application: one use case per file
+
+New file in `internal/application/usecases/`. This repo's shape is a
+`<Verb><Noun>` struct holding ports plus a `Handle(ctx, cmd)` method (not
+`Execute`), with a `<Verb><Noun>Command` struct carrying domain types:
 
 ```go
-package usecases
-
-type <Verb><Noun>Result struct {
-    // fields the caller needs back — domain types, not DTOs
+type DeclareStationStandard struct {
+	Repo ports.StationStandardRepository // ports only, never a concrete adapter
 }
 
-// <Verb><Noun> — one sentence: what business capability this represents,
-// and the domain rule it enforces (mirror RunCycleCount's doc comment,
-// which states the Unlocated-on-shortfall rule right in the doc comment).
-type <Verb><Noun> struct {
-    Repo   ports.<Aggregate>Repo   // driven ports only — never a concrete adapter
-    Events ports.EventPublisher    // if this raises a domain event
-    Clock  ports.Clock             // if it needs "now" (never call time.Now() directly)
-}
-
-func (uc *<Verb><Noun>) Execute(ctx context.Context, /* domain-typed args */) (<Verb><Noun>Result, error) {
-    // 1. load aggregate(s) via the port
-    // 2. call the aggregate's own method to apply the rule (never inline
-    //    the invariant here — that belongs in internal/domain/)
-    // 3. persist via the port
-    // 4. publish the domain event via Events, if any
-    // 5. return the result
-}
+func (uc *DeclareStationStandard) Handle(ctx context.Context, cmd DeclareStationStandardCommand) (processcapacity.StationStandard, bool, error)
 ```
 
-Add the port to `internal/application/ports/` if it doesn't exist yet —
-ports are interfaces ONLY (`TestPortsAreCustomerOwned`/
-`TestApplicationPortsContainOnlyInterfaces`-style fitness tests in
-`internal/architecture/` enforce this; a struct or function in a ports
-package fails CI).
+- Reads that have no invariant are NOT use cases: the handler calls the
+  repository port directly (`s.CapacityPlans.FindByID`,
+  `s.StationStandards.List`, `s.ProcessCapacities.FindByProcessLocationWindow`).
+- A write that must emit an integration event takes
+  `ports.UnitOfWork`, `ports.OutboxRepository` and `ports.EventEncoder`
+  and runs the save plus `enqueue(...)` inside ONE `UnitOfWork.Do`, exactly like
+  `PublishCapacityPlan`. Never publish to Kafka from a handler or use case
+  (see `.claude/skills/how-to-add-an-integration-event/SKILL.md`).
+- Time comes in through a `Now func() time.Time` field (`utcNow` default),
+  never a bare `time.Now()` in the use case.
+- Add a port to `internal/application/ports/` only if none fits; ports are
+  interfaces only. Implement it twice: `internal/adapters/outbound/memory/`
+  (unit tests, BDD, no-DB mode) and `internal/adapters/outbound/postgres/`
+  (new migration under `internal/adapters/outbound/postgres/migrations/` as
+  an `NNNN_name.up.sql` + `.down.sql` pair; the next free number, check
+  `ls`).
+- Test in `internal/application/usecases/*_test.go` against the memory
+  repositories: success path AND each domain-rule failure path. The 90%
+  coverage gate (`make coverage`) clears on happy paths alone, so the
+  failure path is the thing reviewers look for.
 
-Write the use case's unit test against the in-memory adapter
-(`internal/adapters/outbound/memory/`) — never a real Postgres/HTTP call
-in a unit test. Cover the success path AND the domain-rule failure path.
+## 3. Adapter: chi handler in `internal/adapters/inbound/http/`
 
-## 3. Adapter: wire the HTTP handler
+1. `dto.go`: request/response structs with snake_case JSON tags
+   (`declareStationStandardRequest`, `stationStandardResponse`). DTOs live
+   only here. Use pointer fields for "required but must not default to
+   zero" values (see `AssignedDemand *float64` in `createCapacityPlanRequest`,
+   answered with `missing-assigned-demand`).
+2. A handler method on `*Server` in the file for that aggregate
+   (`capacity_plan_handler.go`, `process_capacity_handler.go`,
+   `process_path_handler.go`, `station_handler.go`; a new aggregate gets
+   its own `<name>_handler.go`): `decodeJSON(w, r, &req)` (it writes the
+   400 `malformed-json` itself and returns false), parse timestamps with
+   `time.RFC3339` and answer `writeProblem(...)` on malformed input, call the
+   use case, `writeError(w, r, err)` on error, `writeJSON(w, status, dto)`.
+   Path params come from `chi.URLParam`, query from `r.URL.Query()`.
+3. Add the use case/port as a field on the `Server` struct and the route in
+   `NewRouter`, both in `process_capacity_handler.go`
+   (`r.Put("/station-standards/{location}/{process_type}", s.handleDeclareStationStandard)`).
+   A new HTTP method also goes into the CORS `AllowedMethods` list there
+   (`TestRouter_CORSAllowsPut` is the regression test for PUT).
+4. `errors.go`: a new typed domain/use-case error needs an entry in BOTH
+   `statusFor` (HTTP status) and `problemCatalog` (the RFC 7807
+   `problemInfo{slug, title}`; order matters, first `errors.Is` match
+   wins). Slugs are kebab-case and are a published contract. The MCP
+   adapter keeps a PARALLEL catalog (`slugFor` in
+   `internal/adapters/inbound/mcp/errors.go`): if the same use case is
+   reachable through an MCP tool, add the error there too.
+5. Wire the use case in the composition root `cmd/api/main.go` (the
+   `&inboundhttp.Server{...}` literal). `cmd/mcp` builds its own deps and is
+   NOT touched unless you also add an MCP tool (see
+   `.claude/rules/mcp.md`; the tool budget is pinned at 10 by
+   `TestToolSurface`, so a new tool is a deliberate, reviewed change).
+6. Tests next to the handler (`station_handler_test.go`,
+   `capacity_plan_handler_test.go`): an `httptest.Server` over
+   `NewRouter` with memory repositories, one success test and one test per
+   error slug you added, asserting the problem `type`.
 
-In `internal/adapters/inbound/http/`:
+## 4. Contract: OpenAPI, then regenerate the docs (clean first)
 
-1. `dto.go` — add the request/response DTO structs (JSON tags, this repo's
-   naming convention: `<verb><noun>Request`/`<verb><noun>Response`).
-   DTOs live ONLY in the adapter layer — domain types never carry JSON
-   tags.
-2. `server.go` — add the route (`r.Post("/path/{param}", s.handle<Name>)`
-   in the router setup) and the handler function:
-   - decode + validate the request (`decodeJSON`), converting to domain
-     value objects immediately (`shared.NewBinId`, `shared.NewQuantity`,
-     etc.) — a bad value fails here as an RFC 7807 validation error, never
-     reaches the use case
-   - call the use case's `Execute`
-   - map use-case errors to HTTP status via `writeError` (check
-     `errors.go` for the existing error→status mapping before adding a new
-     error type)
-   - encode the domain result back to the response DTO and `writeJSON`
-3. Add the new use case field to the `Server`/`Deps` struct and wire it in
-   the composition root (`cmd/<service>/main.go`).
+Add or change the path in `apis/openapi.yaml` (operationId in camelCase,
+the same `application/problem+json` responses the handler can return).
+CI's `api-lint` job runs
+`spectral lint apis/openapi.yaml --ruleset .spectral.yaml --fail-severity=warn`.
 
-Write at least one httptest per endpoint: one success path, one error
-path (validation failure AND/OR the domain-rule failure, whichever this
-endpoint can produce).
-
-## 4. Contract: update OpenAPI, then regenerate docs
-
-Add the path to `apis/openapi.yaml` (request/response schemas, the RFC
-7807 problem-detail response for each error case — see the existing
-`/bins/{binId}/cycle-count` entry for the shape).
-
-Regenerate the Docusaurus REST reference — this repo's `docs-api-drift`
-CI job fails the PR if you skip this:
+The Docusaurus site under `docs/` renders the REST reference from that
+spec. The generator caches, so ALWAYS clean first, then commit the diff
+under `docs/docs/api-reference/rest/` (CI's `docs-api-drift` job fails the
+PR otherwise):
 
 ```bash
-cd docs
-npm run clean-api-docs   # or the repo's own script name — check package.json
-npm run gen-api-docs
+cd docs && npm ci && npm run clean-api-docs warehouse-planning && npm run gen-api-docs warehouse-planning
 ```
 
-## 5. Behaviour: add a godog scenario
+Update the prose in `.claude/rules/rest-api.md` (request/response shapes and
+error list) in the same change. `docs/docs/api-reference/events.md` is
+hand-written and only matters for event changes.
 
-If this endpoint is user-facing behaviour (not purely internal
-plumbing), add a `.feature` file under `features/` exercising it
-end-to-end against the real HTTP server — see `features/cycle_count.feature`
-for the exact shape this repo's `bdd` CI job expects (Given/When/Then over
-real HTTP, not mocked).
+## 5. Behaviour: a godog scenario
 
-## 6. Verify before opening the PR
+If the endpoint changes planning behaviour, extend a file in `features/`
+(`capacity_plan.feature`, `station_capacity.feature`,
+`process_capacity.feature`, `process_path_capacity.feature`). Step
+definitions are in `features_test.go` at the repo root (`InitializeScenario`
+registers them against a real chi router over in-memory repositories and
+outbox). Reuse existing steps first; a new step is a `world` method plus an
+`sc.Step(...)` line there.
+
+## 6. Verify
 
 ```bash
-make check       # fmt-check vet build lint test
-make check-all    # + coverage (90% gate) + arch-test + bdd
+make check-fast   # fmt-check, vet, arch-test, tests of changed packages
+make check-all    # check + coverage (90% gate) + arch-test + bdd
 ```
 
-`make coverage` gates `./internal/domain/...,./internal/application/...`
-at 90% — a new use case with no test on its failure path is the most
-common way to miss this gate.
+Integration tests (`make integration`) need Docker for testcontainers and are
+not part of `check-all`.

@@ -1,108 +1,114 @@
 ---
 name: how-to-write-an-adr
-description: Write an Architecture Decision Record in this repo's numbering and format, including companion ADRs for cross-repo changes. Use when a design decision should be recorded or a change contradicts an existing ADR.
+description: Write an Architecture Decision Record for warehouse-planning in this repo's format and location (docs/adr/NNNN-title.md, no frontmatter, served by the Docusaurus adr plugin, hand-listed in docs/sidebars.ts), including superseding and cross-repo decisions. Use when a design decision should be recorded or a change contradicts an existing ADR.
 ---
 
 # How to write an ADR
 
-Use when a change is architecturally significant — a new bounded-context
-integration, a reversal of a prior decision, a cross-repo contract change,
-or anything a future reader would otherwise have to reverse-engineer from
-the diff. Not every change needs one: a bug fix or a routine feature
-addition inside an already-decided architecture doesn't.
+Write one when a change is architecturally significant: a new bounded-context
+integration (a new consumed or published event, a new upstream), a reversal
+or refinement of an earlier decision, a contract change other repos feel, or
+anything a future reader would otherwise reverse-engineer from the diff. A
+bug fix or a routine feature inside an already-decided architecture does
+not need one. Two rules in this repo explicitly demand a recorded decision
+first: custom CloudEvents extension attributes
+(`.claude/rules/integration-events.md`) and re-adopting auth
+(`.claude/rules/fleet/no-auth-and-mcp.md`).
 
 ## Numbering and location
 
-`docs/docs/adr/NNNN-kebab-case-title.md`, four-digit zero-padded,
-sequential — check the highest existing number
-(`git ls-tree --name-only origin/develop -- docs/docs/adr/` and pick the
-next integer, never reuse or guess). `docs/docs/adr/about.md` explains the
-format to readers; you don't need to touch it when adding a new ADR.
+ADRs live in `docs/adr/NNNN-kebab-case-title.md`, four digits, sequential.
+They stay in `docs/adr/` (other repos link to those paths); the Docusaurus
+site serves them in place through the second docs plugin instance
+(`id: 'adr'` in `docs/docusaurus.config.ts`, route `/docs/adr/<file name
+without .md>`; `numberPrefixParser: false` keeps the `NNNN-` prefix in ids
+and URLs).
 
-## Frontmatter (Docusaurus needs all five fields)
-
-```yaml
----
-id: NNNN-kebab-case-title
-slug: /adr/NNNN-kebab-case-title
-title: "NN. Title (a short noun phrase, matching the heading)"
-sidebar_label: "NN. Short label for the nav sidebar"
-sidebar_position: NN
-description: "One or two sentences — this shows up in search and link
-  previews, so make it stand alone without the rest of the doc."
----
-```
-
-`id`/`slug` are the full kebab-case filename (minus `.md`); `title`/
-`sidebar_label` repeat the number as plain text (`"13. ..."`, not `#13`);
-`sidebar_position` is the bare integer. Getting these inconsistent is the
-most common cause of a broken sidebar entry or 404 after merge — verify
-by running the docs build (see below) before opening the PR.
-
-## Format: Michael Nygard's template
-
-```markdown
-# NNNN. Title (a short noun phrase)
-
-## Status
-Accepted | Proposed | Deprecated | Superseded by ADR-XXXX
-
-## Context
-The forces at play — technical, business, constraints — that make this
-decision necessary. Write in the past tense, as if explaining to someone
-who wasn't there. State the alternatives seriously considered, not just
-the one chosen; a reader six months from now needs to know a simpler
-option was weighed and rejected, not assume nobody thought of it.
-
-## Decision
-What was actually decided, stated as an active, present-tense
-declaration ("we will...", not "we might..."). Be specific about the
-mechanism, not just the intent — this section should let a reader
-implement the same decision from scratch without asking follow-up
-questions.
-
-## Consequences
-What becomes easier, what becomes harder, and what future work this
-creates or forecloses. Be honest about the downsides — an ADR that only
-lists benefits reads as marketing, not a decision record.
-```
-
-The `## Decision` section is the part worth the most editing effort: see
-ADR-0013 (`docs/docs/adr/0013-location-classification-via-facility-events.md`)
-for a model example — it states the exact mechanism (event-fed local
-cache replacing a synchronous HTTP read), names the readiness-gate design,
-and is specific enough that Task "how-to-add-an-integration-event"'s
-consumer-group guidance can point straight at it.
-
-## Superseding an earlier ADR
-
-Don't edit the old ADR's Decision section. Add a `## Status` line noting
-`Superseded by ADR-XXXX` on the OLD one (a one-line patch), and open the
-new ADR referencing it: `**Accepted.** <date>. Supersedes [NN. Old title](./NNNN-old-slug.md).`
-— see ADR-0015 (`0015-remove-rest-identity-layer.md`) for the exact
-wording pattern superseding ADR-0014.
-
-## Cross-repo decisions: use a companion ADR, not one repo's private opinion
-
-When a decision genuinely spans two bounded-context repos (e.g.
-facility-layout's functional-location roles enabling wes-work-planning's
-travel-graph feature), write ONE ADR per repo, each referencing the other
-explicitly as "the companion ADR" with a one-line description of the
-split of responsibility — see facility-layout's ADR-0016/0017 pair. Don't
-write the decision once in one repo and expect the other repo's readers
-to find it; each bounded context's docs site is read independently.
-
-## After writing: regenerate and verify the docs build
+Existing ADRs: `0001-warehouse-planning-bounded-context.md` (placement,
+context map, no live cross-context lookup, plus its Addendum on confirmed
+upstream contracts), `0002-station-capacity-composition.md`,
+`0003-window-coverage-semantics.md`. The next one is the highest number
+present plus one; check, never guess:
 
 ```bash
-cd docs
-npm ci
-npm run build   # onBrokenLinks / onBrokenAnchors are both 'throw' — this
-                 # WILL fail if the frontmatter/slug is wrong or a
-                 # cross-reference link is broken
+ls docs/adr
 ```
 
-A broken ADR link or malformed frontmatter fails the build with a clear
-Docusaurus error, not a silent 404 — always run this locally before
-opening the PR; several repos in this fleet gate this in CI
-(`docs-api-drift`/dedicated docs build job) but not all yet.
+## Format
+
+There is NO YAML frontmatter in this repo's ADRs: the file starts with the
+title line, and the sidebar order comes from the file names. Copy the shape of
+`docs/adr/0003-window-coverage-semantics.md`:
+
+```markdown
+# ADR NNNN: Title as a full sentence of the decision
+
+## Status
+
+Accepted (YYYY-MM-DD). [Supersedes / Refines ADR 000M ...]
+
+## Context
+
+The forces: technical, business, constraints, and the alternatives
+seriously considered and why they lost. Reference real files and endpoints.
+
+## Decision
+
+What is decided, present tense, specific about the mechanism, so a reader can
+implement it without follow-up questions.
+
+## Consequences
+
+What gets easier, what gets harder, what is foreclosed; the honest
+downsides. An optional `## Explicit non-goals` section (ADR 0003) is a good
+place to say what this does NOT change.
+```
+
+ADR 0002 is the model for a decision with a measurable behavioural change
+(it names the endpoints, the migration `0005`, the use cases and the tests
+that pin it); ADR 0001's Addendum is the model for recording what an upstream
+contract was verified to say.
+
+## Superseding or refining an earlier ADR
+
+Do not rewrite the old Decision. Edit only the OLD ADR's `## Status` to point
+forward (ADR 0001's status line links `[ADR 0002](0002-station-capacity-composition.md)`
+for the part it superseded) and open the NEW one with the relationship in
+its own Status (ADR 0002: "Supersedes the part of the ADR 0001 Addendum ...";
+ADR 0003: "Refines ADR 0002 decision 2"). Use relative links between ADRs
+(`0002-station-capacity-composition.md`) and absolute site links
+(`/docs/adr/0002-station-capacity-composition`) from pages under
+`docs/docs/`; Docusaurus is configured to FAIL the build on a broken link.
+
+## Wire it in
+
+1. Add the entry to the hand-maintained ADR category in `docs/sidebars.ts`
+   (`type: 'link'`, `href: '/docs/adr/NNNN-kebab-case-title'`). The
+   `docs/sidebarsAdr.ts` sidebar of the plugin instance is autogenerated and
+   needs no edit.
+2. Update the places that state the decision so they cannot drift:
+   `.claude/rules/*.md` and `CLAUDE.md` (cite the ADR by number), the
+   matching page under `docs/docs/` (for example
+   `docs/docs/overview/capacity-composition.md`), and
+   `docs/docs/overview/context.md` if the context map changed.
+3. A decision that spans two repos (for example a new consumed event) is
+   recorded here AND acknowledged in the other repo's own docs; the producer's
+   `apis/asyncapi.yaml` stays the authority for the contract. ADR 0001's
+   Addendum is how this repo recorded the verified contracts of
+   `workforce-management` and `facility-layout`. Never state another repo's
+   ADR number you have not opened.
+
+## Verify
+
+```bash
+cd docs && npm ci && npm run build
+```
+
+The build throws on broken links and anchors (`onBrokenLinks`,
+`onBrokenAnchors`, `onBrokenMarkdownLinks` are all `'throw'`), and the `Docs`
+workflow runs the same build on every PR that touches `docs/**`. Then
+`python3 scripts/harness/guide_lint.py` checks that every repo path a guide
+cites exists. Its ADR-number check only looks in the docs/docs/adr layout
+used by other fleet repos, which this repo does not have (ADRs are in
+`docs/adr/`), so it does NOT validate ADR numbers here:
+open `docs/adr/` and verify each cited number yourself.

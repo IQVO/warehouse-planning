@@ -65,10 +65,12 @@ there is nothing to "choose" here:
   the `content-type` header); a legacy-flat-message-rejected test per
   consumer; Kafka integration tests via testcontainers only.
 
-Full standard, subdomain table and the fleet's cross-service type
-catalogue: warehouse-docs `docs/strategic-design/event-standard-cloudevents.md`.
-See also `docs/adr/0001-warehouse-planning-bounded-context.md` for why this
-context never makes a live cross-context REST/MCP call instead.
+The short fleet rule is `.claude/rules/fleet/cloudevents.md` (do not edit it).
+The full standard, subdomain table and the fleet's cross-service type
+catalogue live in the separate warehouse-docs repository, in its
+docs/strategic-design/event-standard-cloudevents.md page (not in this
+repo). See also `docs/adr/0001-warehouse-planning-bounded-context.md` for why
+this context never makes a live cross-context REST/MCP call instead.
 
 ### Published types
 
