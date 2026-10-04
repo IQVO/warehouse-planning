@@ -97,6 +97,9 @@ func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {
 		CapacityOverWindow: p.CapacityOverWindow(),
 		Shortage:           p.Shortage(),
 		CreatedAt:          p.CreatedAt().UTC().Format(time.RFC3339),
+
+		BottleneckConstraint: string(p.BottleneckConstraint()),
+		Warnings:             nonNilStrings(p.Warnings()),
 	}
 	if !p.PublishedAt().IsZero() {
 		publishedAt := p.PublishedAt().UTC().Format(time.RFC3339)

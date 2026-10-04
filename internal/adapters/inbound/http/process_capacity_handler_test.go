@@ -20,7 +20,7 @@ func newTestServer() (*httptest.Server, *memory.ProcessCapacityRepo) {
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
 		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
-		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo},
+		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
 	}
 	return httptest.NewServer(inboundhttp.NewRouter(s)), repo
 }

@@ -22,8 +22,6 @@ import (
 	_ "github.com/testcontainers/testcontainers-go/modules/kafka"
 
 	kafkaconsumer "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
-	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
 // locationSlotWireEvent builds the exact CloudEvents 1.0 structured-mode
@@ -49,70 +47,66 @@ func locationSlotWireEvent(t *testing.T, id, eventName string, occurredAt time.T
 }
 
 // TestStorageCapacityConsumer_Integration_RealKafkaAndPostgres proves a
-// real LocationSlotRegistered message produced onto a real Kafka topic
-// is consumed and lands as a LOCATION CapacityConstraint in a real,
-// Postgres-backed ProcessCapacityRepository, and that a subsequent
-// LocationSlotDecommissioned decrements it back down.
+// real LocationSlotRegistered message produced onto a real Kafka topic is
+// consumed and lands in the Postgres tally -- and ONLY there: no
+// ProcessCapacity row is written, the site-scoped read side sees the station,
+// and a subsequent LocationSlotDecommissioned decrements it back down.
 func TestStorageCapacityConsumer_Integration_RealKafkaAndPostgres(t *testing.T) {
 	brokers := startKafkaBroker(t)
 	topic := uniqueTopic("warehouse.facility.events")
 	createTopic(t, brokers, topic)
 
-	pcRepo, processedRepo, tallyRepo, uow := startPostgresForKafkaTests(t)
-	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
-
+	fx := startPgFixture(t)
 	c := &kafkaconsumer.StorageCapacityConsumer{
 		Reader:          kafkago.NewReader(kafkago.ReaderConfig{Brokers: brokers, Topic: topic, GroupID: uniqueGroupID("storage-capacity")}),
-		Register:        register,
-		Tally:           tallyRepo,
-		ProcessedEvents: processedRepo,
-		UoW:             uow,
+		Tally:           fx.tally,
+		ProcessedEvents: fx.processed,
+		UoW:             fx.uow,
 		Logger:          testLogger(),
 	}
 	defer func() { _ = c.Close() }()
 	runStorageConsumerInBackground(t, c)
 
 	publishMessages(t, brokers, topic, kafkago.Message{
-		Key: []byte("WH1-A-01"),
+		Key: []byte("SIM1-OPS-WC-01"),
 		Value: locationSlotWireEvent(t, fmt.Sprintf("itest-storage-reg-%d", time.Now().UnixNano()), "LocationSlotRegistered", time.Now().UTC(), map[string]any{
-			"locationCode": "WH1-A-01",
-			"zoneId":       "ZONE-A",
-			"locationType": "BULK",
+			"locationCode": "SIM1-OPS-WC-01",
+			"zoneId":       "SIM1-OPS-WC",
+			"role":         "WorkCenter",
+			"activities":   []string{"Pack"},
 		}),
 	})
 
-	waitForCount := func(t *testing.T, processType, location string, want float64) {
+	waitForStations := func(t *testing.T, want int) {
 		t.Helper()
 		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
-			pc, err := pcRepo.FindByProcessLocationWindow(context.Background(),
-				processcapacity.ProcessType(processType), location,
-				kafkaconsumer.StandingWindowStart, kafkaconsumer.StandingWindowEnd)
+			got, err := fx.tally.StationCount(context.Background(), "SIM1", "PACK")
 			if err != nil {
-				t.Fatalf("FindByProcessLocationWindow: %v", err)
+				t.Fatalf("StationCount: %v", err)
 			}
-			if pc != nil {
-				effective, _, err := pc.EffectiveRate()
-				if err != nil {
-					t.Fatalf("EffectiveRate: %v", err)
-				}
-				if effective.Quantity() == want {
-					return
-				}
+			if got == want {
+				return
 			}
 			time.Sleep(250 * time.Millisecond)
 		}
-		t.Fatalf("never observed %s/%s reach count %v", processType, location, want)
+		t.Fatalf("never observed SIM1's PACK stations reach %d", want)
 	}
 
-	waitForCount(t, "STORAGE", "ZONE-A:BULK", 1)
+	waitForStations(t, 1)
+	if n := fx.tallyCount(t, "SIM1-OPS-WC", "STATION", "PACK"); n != 1 {
+		t.Fatalf("tally row = %d, want 1", n)
+	}
 
 	publishMessages(t, brokers, topic, kafkago.Message{
-		Key: []byte("WH1-A-01"),
+		Key: []byte("SIM1-OPS-WC-01"),
 		Value: locationSlotWireEvent(t, fmt.Sprintf("itest-storage-decom-%d", time.Now().UnixNano()), "LocationSlotDecommissioned", time.Now().UTC(), map[string]any{
-			"locationCode": "WH1-A-01",
+			"locationCode": "SIM1-OPS-WC-01",
 		}),
 	})
+	waitForStations(t, 0)
 
-	waitForCount(t, "STORAGE", "ZONE-A:BULK", 0)
+	if n := fx.processCapacityRows(t); n != 0 {
+		t.Fatalf("process_capacity rows = %d, want 0: the facility consumer only maintains the tally", n)
+	}
 }

@@ -76,7 +76,7 @@ func newPlanFixture(t *testing.T) *planFixture {
 	seedPickRebinPackPathCapacity(t, context.Background(), pcs, paths, planWindowStart, planWindowEnd)
 	f := &planFixture{pcs: pcs, paths: paths, plans: plans, outbox: ob, uow: uow}
 	f.create = &CreateCapacityPlan{
-		PathCapacity: &GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs},
+		PathCapacity: &GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
 		Plans:        plans, Outbox: ob, Encoder: fakeEncoder{}, UnitOfWork: uow,
 		NewID: func() string { return "plan-1" },
 		Now:   func() time.Time { return planCreatedAt },

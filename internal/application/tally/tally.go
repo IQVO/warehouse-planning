@@ -27,3 +27,19 @@ type Update struct {
 	TallyKey  string
 	Count     int
 }
+
+// Bucket is one (zone, tally type, tally key) bucket with its current count,
+// as listed by ports.StorageTallyReader.SiteBuckets: for TypeLocation the key
+// is the locationType, for TypeStation the (upper-cased) activity.
+type Bucket struct {
+	ZoneID    string
+	TallyType string
+	TallyKey  string
+	Count     int
+}
+
+// ZonePrefix is the zone-id prefix identifying the zones of the site
+// `location`: facility-layout's LocationCode grammar is Site-Area-Zone-...,
+// SiteCode is upper-case alphanumeric with no dashes, so a zone belongs to a
+// site exactly when its id starts with `<site>-` (see ADR 0002).
+func ZonePrefix(location string) string { return location + "-" }

@@ -188,7 +188,7 @@ func TestRelay_RealPostgresAndKafka_PublishesTheFourCloudEventsAndRetriesWithThe
 
 	upo, ppo := 2.5, 1.0
 	create := &usecases.CreateCapacityPlan{
-		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs},
+		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(pool), Tally: postgres.NewStorageTallyRepo(pool)},
 		Plans:        plans, Outbox: ob, Encoder: enc, UnitOfWork: uow,
 	}
 	publish := &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow}

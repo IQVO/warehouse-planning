@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/claudioed/warehouse-planning/internal/application/tally"
@@ -112,4 +114,50 @@ func (r *StorageTallyRepo) Count(zoneID, tallyType, tallyKey string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.counts[tallyMapKey(zoneID, tallyType, tallyKey)]
+}
+
+// StationCount implements ports.StorageTallyReader: the STATION tally of
+// activity summed across the zones whose id starts with tally.ZonePrefix(location).
+func (r *StorageTallyRepo) StationCount(_ context.Context, location, activity string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prefix, total := tally.ZonePrefix(location), 0
+	for k, count := range r.counts {
+		zone, tallyType, key := splitTallyMapKey(k)
+		if tallyType == tally.TypeStation && key == activity && strings.HasPrefix(zone, prefix) {
+			total += count
+		}
+	}
+	return total, nil
+}
+
+// SiteBuckets implements ports.StorageTallyReader: every bucket with a count
+// above zero in the zones of the site, ordered by zone, tally type, key.
+func (r *StorageTallyRepo) SiteBuckets(_ context.Context, location string) ([]tally.Bucket, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prefix := tally.ZonePrefix(location)
+	out := []tally.Bucket{}
+	for k, count := range r.counts {
+		zone, tallyType, key := splitTallyMapKey(k)
+		if count > 0 && strings.HasPrefix(zone, prefix) {
+			out = append(out, tally.Bucket{ZoneID: zone, TallyType: tallyType, TallyKey: key, Count: count})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.ZoneID != b.ZoneID {
+			return a.ZoneID < b.ZoneID
+		}
+		if a.TallyType != b.TallyType {
+			return a.TallyType < b.TallyType
+		}
+		return a.TallyKey < b.TallyKey
+	})
+	return out, nil
+}
+
+func splitTallyMapKey(k string) (zoneID, tallyType, tallyKey string) {
+	parts := strings.SplitN(k, "\x00", 3)
+	return parts[0], parts[1], parts[2]
 }

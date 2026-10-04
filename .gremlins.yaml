@@ -49,6 +49,15 @@ unleash:
     # The threshold (99) is unchanged -- not lowered -- and is still
     # strictly below every measured value.
     #
+    # Re-measured 2026-10-04 (station-capacity composition, ADR 0002), local
+    # gremlins v0.6.0, one `gremlins unleash <pkg>` per package as above, after
+    # adding StationStandard, ComposeStepCapacity / ComposeProcessPathCapacity
+    # and the plan's bottleneck_constraint/warnings: processcapacity 33/33
+    # killed (was 21), capacityplan 14/14 killed, processpath 1/1 killed --
+    # efficacy 100.00% and mutant coverage 100.00% in each. The threshold (99)
+    # is unchanged -- not lowered -- and is still strictly below every
+    # measured value.
+    #
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we
     # already achieve" approach -- never copied from a sibling repo.

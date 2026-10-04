@@ -48,7 +48,7 @@ func TestRouter_HealthzIsOpenAndServesOK(t *testing.T) {
 }
 
 // Both mount points speak Streamable HTTP, with no credentials, and a real
-// client can list the 7 tools and call one end to end.
+// client can list the 10 tools and call one end to end.
 func TestStreamableHTTP_RootAndMCPPathsServeTools(t *testing.T) {
 	srv := newTestServer(t)
 	for _, path := range []string{"/", "/mcp"} {
@@ -64,8 +64,8 @@ func TestStreamableHTTP_RootAndMCPPathsServeTools(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list tools: %v", err)
 			}
-			if len(tools.Tools) != 7 {
-				t.Fatalf("tools = %d, want 7", len(tools.Tools))
+			if len(tools.Tools) != 10 {
+				t.Fatalf("tools = %d, want 10", len(tools.Tools))
 			}
 
 			res, err := session.CallTool(context.Background(), &sdk.CallToolParams{

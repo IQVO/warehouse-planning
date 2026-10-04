@@ -28,6 +28,15 @@ func secondsToDuration(seconds float64) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
+// nonNilStrings returns s, or an empty (non-nil) slice, so a list field
+// always serializes as [] and never null.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 // parseOptionalFloatQueryParam parses a query parameter as *float64,
 // returning (nil, nil) when the parameter is absent/empty -- the caller
 // distinguishes "not provided" from "provided but malformed".

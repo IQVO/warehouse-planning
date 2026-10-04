@@ -86,6 +86,8 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 
 	var (
 		pcRepo    ports.ProcessCapacityRepository
+		standards ports.StationStandardRepository
+		tallyRead ports.StorageTallyReader
 		pathRepo  ports.ProcessPathRepository
 		planRepo  ports.CapacityPlanRepository
 		outboxRep ports.OutboxRepository
@@ -97,6 +99,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		logger.Info("DATABASE_URL not configured; using in-memory adapters")
 		pc, plans, outboxRepo := memory.NewProcessCapacityRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 		pcRepo, pathRepo, planRepo, outboxRep = pc, memory.NewProcessPathRepo(), plans, outboxRepo
+		standards, tallyRead = memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
 		// Participants make the in-memory UoW roll back on error too.
 		uow = memory.NewUnitOfWork(pc, plans, outboxRepo)
 	} else {
@@ -118,12 +121,15 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		}
 		logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
 		pcRepo, pathRepo = postgres.NewProcessCapacityRepo(pool), postgres.NewProcessPathRepo(pool)
+		standards, tallyRead = postgres.NewStationStandardRepo(pool), postgres.NewStorageTallyRepo(pool)
 		planRepo, outboxRep = postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool)
 		uow = postgres.NewUnitOfWork(pool)
 		closeFn = pool.Close
 	}
 
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: pcRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{
+		ProcessPaths: pathRepo, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tallyRead,
+	}
 	encoder := outboundkafka.NewEncoder()
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
@@ -137,6 +143,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 			Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
 		},
 		CapacityPlans: planRepo,
+
+		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
+		StationStandards:       standards,
+		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: tallyRead},
 	}, closeFn, nil
 }
 

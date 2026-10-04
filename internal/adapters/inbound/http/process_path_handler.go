@@ -92,9 +92,19 @@ func (s *Server) handleGetProcessPathCapacity(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	breakdown := make([]stepBreakdownItem, 0, len(result.Steps))
+	for _, step := range result.Steps {
+		breakdown = append(breakdown, stepBreakdownItem{
+			Step:              string(step.Step),
+			NormalizedRate:    step.Rate.Quantity() / step.Rate.Period().Hours(),
+			BindingConstraint: string(step.Binding),
+		})
+	}
 	writeJSON(w, http.StatusOK, processPathCapacityResponse{
 		NormalizedRate: result.NormalizedRate.Quantity(),
 		NormalizedUnit: string(result.NormalizedRate.Unit()),
 		BottleneckStep: string(result.BottleneckStep),
+		StepBreakdown:  breakdown,
+		Warnings:       nonNilStrings(result.Warnings),
 	})
 }

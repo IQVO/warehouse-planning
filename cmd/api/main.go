@@ -67,7 +67,10 @@ func run() error {
 	pcRepo, pathRepo := ad.processCapacities, ad.processPaths
 
 	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: pcRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{
+		ProcessPaths: pathRepo, ProcessCapacities: pcRepo,
+		StationStandards: ad.stationStandards, Tally: ad.tallyReader,
+	}
 	encoder := outboundkafka.NewEncoder()
 	server := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
@@ -90,6 +93,12 @@ func run() error {
 			UnitOfWork: ad.uow,
 		},
 		CapacityPlans: ad.capacityPlans,
+
+		// Station capacity (ADR 0002): operator-declared per-station
+		// throughput, and the storage/station read model of a site.
+		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: ad.stationStandards},
+		StationStandards:       ad.stationStandards,
+		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: ad.tallyReader},
 	}
 	httpServer := &http.Server{
 		Addr:              httpAddr,
@@ -118,8 +127,13 @@ type adapters struct {
 	processPaths      ports.ProcessPathRepository
 	processedEvents   ports.ProcessedEventRepository
 	storageTally      ports.StorageTallyRepository
-	// uow makes a Kafka message's claim + tally + constraint writes one
-	// atomic transaction; all three repositories above join it via ctx.
+	// tallyReader and stationStandards back the read-time station-capacity
+	// composition (ADR 0002); tallyReader is the read side of storageTally.
+	tallyReader      ports.StorageTallyReader
+	stationStandards ports.StationStandardRepository
+	// uow makes a Kafka message's claim + tally writes (and the labor
+	// consumer's claim + constraint upsert) one atomic transaction; the
+	// repositories above join it via ctx.
 	uow ports.UnitOfWork
 
 	// Phase 4: the CapacityPlan repository, the outbox write port and the
@@ -150,6 +164,8 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 			processPaths:      pathRepo,
 			processedEvents:   processed,
 			storageTally:      tallyRepo,
+			tallyReader:       tallyRepo,
+			stationStandards:  memory.NewStationStandardRepo(),
 			// Participants make the in-memory UoW roll back on error too.
 			uow:           memory.NewUnitOfWork(pcRepo, processed, tallyRepo, planRepo, outboxRepo),
 			capacityPlans: planRepo,
@@ -178,12 +194,15 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 	}
 	logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
 	outboxRepo := postgres.NewOutboxRepo(pool)
+	tallyRepo := postgres.NewStorageTallyRepo(pool)
 
 	return adapters{
 		processCapacities: postgres.NewProcessCapacityRepo(pool),
 		processPaths:      postgres.NewProcessPathRepo(pool),
 		processedEvents:   postgres.NewProcessedEventRepo(pool),
-		storageTally:      postgres.NewStorageTallyRepo(pool),
+		storageTally:      tallyRepo,
+		tallyReader:       tallyRepo,
+		stationStandards:  postgres.NewStationStandardRepo(pool),
 		uow:               postgres.NewUnitOfWork(pool),
 		capacityPlans:     postgres.NewCapacityPlanRepo(pool),
 		outbox:            outboxRepo,
@@ -210,8 +229,9 @@ type runningConsumer struct {
 	done chan struct{}
 }
 
-// startKafkaConsumers starts LaborCapacityConsumer and
-// StorageCapacityConsumer as background goroutines, each only if
+// startKafkaConsumers starts LaborCapacityConsumer (registers LABOR
+// constraints) and StorageCapacityConsumer (a pure facility-layout tally
+// maintainer) as background goroutines, each only if
 // KAFKA_BROKERS is set -- matching the fleet's lazy-dial pattern: a
 // kafka-go Reader never dials synchronously at construction time (see
 // internal/adapters/inbound/kafka/kafka.go's readerConfig doc comment),
@@ -237,7 +257,7 @@ func startKafkaConsumers(
 	storageGroup := getenv("STORAGE_CAPACITY_CONSUMER_GROUP", "warehouse-planning-storage-capacity")
 
 	laborConsumer := inboundkafka.NewLaborCapacityConsumer(brokers, laborGroup, register, processedEvents, uow, logger)
-	storageConsumer := inboundkafka.NewStorageCapacityConsumer(brokers, storageGroup, register, storageTally, processedEvents, uow, logger)
+	storageConsumer := inboundkafka.NewStorageCapacityConsumer(brokers, storageGroup, storageTally, processedEvents, uow, logger)
 
 	laborCtx, stopLabor := context.WithCancel(context.Background())
 	storageCtx, stopStorage := context.WithCancel(context.Background())

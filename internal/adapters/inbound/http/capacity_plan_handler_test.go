@@ -37,9 +37,9 @@ func newPlanServer(t *testing.T) *planServer {
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
 		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
-		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs},
+		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
-			PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs},
+			PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
 			Plans:        plans, Outbox: ob, Encoder: enc, UnitOfWork: uow,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow},

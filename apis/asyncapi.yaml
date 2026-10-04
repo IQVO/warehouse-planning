@@ -111,8 +111,12 @@ channels:
       operationId: consumeLocationSlotEvents
       summary: Consume facility-layout's location slot events.
       description: |
-        Consumed by this service: positions and work centers are tallied into
-        LOCATION and STATION capacity constraints.
+        Consumed by this service: storage positions (per zone + locationType) and
+        work-center stations (per zone + activity) are tallied. The consumer only
+        maintains that tally -- it registers no ProcessCapacity constraint.
+        Station counts are composed with labor and the operator-declared station
+        standard at read time, and positions are a read model
+        (`GET /storage-capacity`); see docs/adr/0002-station-capacity-composition.md.
       tags:
         - name: consumed
       message:
@@ -318,9 +322,10 @@ components:
       summary: facility-layout registered a storage position or a work center.
       description: |
         CONSUMED from `warehouse.facility.events` (producer: facility-layout). Tallied
-        per (zoneId, locationType) for a LOCATION constraint (role Storage), or per
-        zone + activity for a STATION constraint (role WorkCenter). Deduped on the
-        CloudEvents `id`.
+        per (zoneId, locationType) as storage positions (role Storage), or per
+        zone + activity as stations (role WorkCenter). A zone belongs to the site
+        (planning location) named by its zone id's first dash-separated segment.
+        Deduped on the CloudEvents `id`.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -751,7 +756,7 @@ components:
           example: "BULK"
         role:
           type: string
-          description: Storage (default) tallies a LOCATION constraint; WorkCenter tallies STATION constraints.
+          description: Storage (default) tallies storage positions per locationType; WorkCenter tallies stations per activity.
           example: "Storage"
         activities:
           type: array

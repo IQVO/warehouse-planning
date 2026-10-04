@@ -35,6 +35,15 @@ type Server struct {
 	CreateCapacityPlan  *usecases.CreateCapacityPlan
 	PublishCapacityPlan *usecases.PublishCapacityPlan
 	CapacityPlans       ports.CapacityPlanRepository
+
+	// Station capacity (ADR 0002). DeclareStationStandard backs
+	// PUT /station-standards/{location}/{process_type}; StationStandards is
+	// the read port behind GET /station-standards (a direct, no-invariant
+	// repository read, like ProcessCapacities); GetStorageCapacity backs
+	// GET /storage-capacity.
+	DeclareStationStandard *usecases.DeclareStationStandard
+	StationStandards       ports.StationStandardRepository
+	GetStorageCapacity     *usecases.GetStorageCapacity
 }
 
 // DefaultServiceName labels this service for logs/telemetry when the
@@ -54,7 +63,7 @@ func NewRouter(s *Server) http.Handler {
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsAllowedOrigins(),
-		AllowedMethods:   []string{http.MethodGet, http.MethodPost},
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut},
 		AllowedHeaders:   []string{"Accept", "Content-Type"},
 		AllowCredentials: false,
 	}))
@@ -67,6 +76,9 @@ func NewRouter(s *Server) http.Handler {
 	r.Post("/capacity-plans", s.handleCreateCapacityPlan)
 	r.Post("/capacity-plans/{id}/publish", s.handlePublishCapacityPlan)
 	r.Get("/capacity-plans/{id}", s.handleGetCapacityPlan)
+	r.Put("/station-standards/{location}/{process_type}", s.handleDeclareStationStandard)
+	r.Get("/station-standards", s.handleListStationStandards)
+	r.Get("/storage-capacity", s.handleGetStorageCapacity)
 
 	return r
 }

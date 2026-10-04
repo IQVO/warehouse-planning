@@ -134,3 +134,44 @@ func decommissionSlot(ctx context.Context, q querier, locationCode string) ([]ta
 	}
 	return updates, true, nil
 }
+
+// StationCount implements ports.StorageTallyReader: the STATION tally of
+// activity summed across the zones whose id starts with tally.ZonePrefix(location).
+// (left()/length() rather than LIKE, so a location can never act as a pattern.)
+func (r *StorageTallyRepo) StationCount(ctx context.Context, location, activity string) (int, error) {
+	var total int64
+	err := queryFor(ctx, r.pool).QueryRow(ctx, `
+		SELECT COALESCE(SUM(count), 0)
+		FROM location_slot_tally
+		WHERE tally_type = $1 AND tally_key = $2 AND left(zone_id, length($3::text)) = $3::text
+	`, tally.TypeStation, activity, tally.ZonePrefix(location)).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return int(total), nil
+}
+
+// SiteBuckets implements ports.StorageTallyReader: every bucket with a count
+// above zero in the zones of the site, ordered by zone, tally type, key.
+func (r *StorageTallyRepo) SiteBuckets(ctx context.Context, location string) ([]tally.Bucket, error) {
+	rows, err := queryFor(ctx, r.pool).Query(ctx, `
+		SELECT zone_id, tally_type, tally_key, count
+		FROM location_slot_tally
+		WHERE count > 0 AND left(zone_id, length($1::text)) = $1::text
+		ORDER BY zone_id, tally_type, tally_key
+	`, tally.ZonePrefix(location))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []tally.Bucket{}
+	for rows.Next() {
+		var b tally.Bucket
+		if err := rows.Scan(&b.ZoneID, &b.TallyType, &b.TallyKey, &b.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}

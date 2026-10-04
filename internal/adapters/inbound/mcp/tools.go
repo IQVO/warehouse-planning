@@ -31,6 +31,14 @@ type Deps struct {
 	PublishCapacityPlan *usecases.PublishCapacityPlan
 	// CapacityPlans backs get_capacity_plan (direct repository read, as REST).
 	CapacityPlans ports.CapacityPlanRepository
+
+	// Station capacity (ADR 0002): DeclareStationStandard backs
+	// declare_station_standard, StationStandards backs list_station_standards
+	// (direct repository read, as REST) and GetStorageCapacity backs
+	// get_storage_capacity.
+	DeclareStationStandard *usecases.DeclareStationStandard
+	StationStandards       ports.StationStandardRepository
+	GetStorageCapacity     *usecases.GetStorageCapacity
 }
 
 // --- shared helpers -----------------------------------------------------------
@@ -191,10 +199,21 @@ type getPathCapacityInput struct {
 	PackagesPerOrder *float64 `json:"packages_per_order,omitempty" jsonschema:"workload conversion factor: PACKAGE per ORDER; required if any step is measured in PACKAGE"`
 }
 
+// pathCapacityOutput is the REST body of GET /process-paths/{id}/capacity.
+// step_breakdown (each step's normalized ORDER-per-hour rate and the
+// constraint type binding it) and warnings (never null) are additive.
 type pathCapacityOutput struct {
-	NormalizedRate float64 `json:"normalized_rate"`
-	NormalizedUnit string  `json:"normalized_unit"`
-	BottleneckStep string  `json:"bottleneck_step"`
+	NormalizedRate float64             `json:"normalized_rate"`
+	NormalizedUnit string              `json:"normalized_unit"`
+	BottleneckStep string              `json:"bottleneck_step"`
+	StepBreakdown  []stepBreakdownView `json:"step_breakdown"`
+	Warnings       []string            `json:"warnings"`
+}
+
+type stepBreakdownView struct {
+	Step              string  `json:"step"`
+	NormalizedRate    float64 `json:"normalized_rate"`
+	BindingConstraint string  `json:"binding_constraint"`
 }
 
 func (d Deps) getProcessPathCapacity(ctx context.Context, in getPathCapacityInput) (pathCapacityOutput, error) {
@@ -213,10 +232,20 @@ func (d Deps) getProcessPathCapacity(ctx context.Context, in getPathCapacityInpu
 	if err != nil {
 		return pathCapacityOutput{}, mapError(err)
 	}
+	breakdown := make([]stepBreakdownView, 0, len(result.Steps))
+	for _, step := range result.Steps {
+		breakdown = append(breakdown, stepBreakdownView{
+			Step:              string(step.Step),
+			NormalizedRate:    step.Rate.Quantity() / step.Rate.Period().Hours(),
+			BindingConstraint: string(step.Binding),
+		})
+	}
 	return pathCapacityOutput{
 		NormalizedRate: result.NormalizedRate.Quantity(),
 		NormalizedUnit: string(result.NormalizedRate.Unit()),
 		BottleneckStep: string(result.BottleneckStep),
+		StepBreakdown:  breakdown,
+		Warnings:       nonNilStrings(result.Warnings),
 	}, nil
 }
 
@@ -255,6 +284,11 @@ type capacityPlanOutput struct {
 	Shortage           float64 `json:"shortage"`
 	CreatedAt          string  `json:"created_at"`
 	PublishedAt        *string `json:"published_at,omitempty"`
+
+	// BottleneckConstraint (e.g. LABOR, STATION; empty for plans created
+	// before it was recorded) and Warnings (never null) are additive.
+	BottleneckConstraint string   `json:"bottleneck_constraint"`
+	Warnings             []string `json:"warnings"`
 }
 
 func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
@@ -272,6 +306,9 @@ func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
 		CapacityOverWindow: p.CapacityOverWindow(),
 		Shortage:           p.Shortage(),
 		CreatedAt:          p.CreatedAt().UTC().Format(time.RFC3339),
+
+		BottleneckConstraint: string(p.BottleneckConstraint()),
+		Warnings:             nonNilStrings(p.Warnings()),
 	}
 	if !p.PublishedAt().IsZero() {
 		publishedAt := p.PublishedAt().UTC().Format(time.RFC3339)
@@ -330,6 +367,140 @@ func (d Deps) getCapacityPlan(ctx context.Context, in planIDInput) (capacityPlan
 	return toCapacityPlanOutput(plan), nil
 }
 
+// nonNilStrings returns s, or an empty (non-nil) slice, so a list field
+// always serializes as [] and never null.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// --- declare_station_standard (write) -----------------------------------------
+
+type declareStationStandardInput struct {
+	Location      string  `json:"location" jsonschema:"the site (building) code the standard applies to, e.g. SIM1; equals the first dash-separated segment of the facility zone ids"`
+	ProcessType   string  `json:"process_type" jsonschema:"the process the stations perform, e.g. PACK; matches a facility work-center activity and a process path step"`
+	Quantity      float64 `json:"quantity" jsonschema:"the throughput of ONE station per period; must be positive"`
+	Unit          string  `json:"unit" jsonschema:"the process's natural unit: UNIT, PACKAGE or ORDER (LINE cannot be normalized and is rejected)"`
+	PeriodSeconds float64 `json:"period_seconds" jsonschema:"the period the quantity is measured over, in seconds; must be positive (3600 = per hour)"`
+}
+
+type stationStandardView struct {
+	Location      string  `json:"location"`
+	ProcessType   string  `json:"process_type"`
+	Quantity      float64 `json:"quantity"`
+	Unit          string  `json:"unit"`
+	PeriodSeconds float64 `json:"period_seconds"`
+}
+
+type declareStationStandardOutput struct {
+	Location      string  `json:"location"`
+	ProcessType   string  `json:"process_type"`
+	Quantity      float64 `json:"quantity"`
+	Unit          string  `json:"unit"`
+	PeriodSeconds float64 `json:"period_seconds"`
+	Created       bool    `json:"created" jsonschema:"true when a new standard was declared, false when an existing one was replaced"`
+}
+
+func toStationStandardView(s processcapacity.StationStandard) stationStandardView {
+	rate := s.PerStation()
+	return stationStandardView{
+		Location:      s.Location(),
+		ProcessType:   string(s.ProcessType()),
+		Quantity:      rate.Quantity(),
+		Unit:          string(rate.Unit()),
+		PeriodSeconds: rate.Period().Seconds(),
+	}
+}
+
+func (d Deps) declareStationStandard(ctx context.Context, in declareStationStandardInput) (declareStationStandardOutput, error) {
+	standard, created, err := d.DeclareStationStandard.Handle(ctx, usecases.DeclareStationStandardCommand{
+		Location:    in.Location,
+		ProcessType: processcapacity.ProcessType(in.ProcessType),
+		Quantity:    in.Quantity,
+		Unit:        processcapacity.CapacityUnit(in.Unit),
+		Period:      time.Duration(in.PeriodSeconds * float64(time.Second)),
+	})
+	if err != nil {
+		return declareStationStandardOutput{}, mapError(err)
+	}
+	v := toStationStandardView(standard)
+	return declareStationStandardOutput{
+		Location: v.Location, ProcessType: v.ProcessType, Quantity: v.Quantity, Unit: v.Unit, PeriodSeconds: v.PeriodSeconds,
+		Created: created,
+	}, nil
+}
+
+// --- list_station_standards (read) --------------------------------------------
+
+type listStationStandardsInput struct {
+	Location string `json:"location,omitempty" jsonschema:"optional site code to filter by; omit to list every declared standard"`
+}
+
+type listStationStandardsOutput struct {
+	Location  string                `json:"location,omitempty"`
+	Standards []stationStandardView `json:"standards"`
+}
+
+func (d Deps) listStationStandards(ctx context.Context, in listStationStandardsInput) (listStationStandardsOutput, error) {
+	standards, err := d.StationStandards.List(ctx, in.Location)
+	if err != nil {
+		return listStationStandardsOutput{}, mapError(err)
+	}
+	out := make([]stationStandardView, 0, len(standards))
+	for _, s := range standards {
+		out = append(out, toStationStandardView(s))
+	}
+	return listStationStandardsOutput{Location: in.Location, Standards: out}, nil
+}
+
+// --- get_storage_capacity (read) ----------------------------------------------
+
+type getStorageCapacityInput struct {
+	Location string `json:"location" jsonschema:"the site (building) code, e.g. SIM1; its zones are the facility zones whose id starts with SIM1-"`
+}
+
+type storagePositionsView struct {
+	ZoneID       string `json:"zone_id"`
+	LocationType string `json:"location_type"`
+	Positions    int    `json:"positions"`
+}
+
+type zoneStationsView struct {
+	ZoneID   string `json:"zone_id"`
+	Activity string `json:"activity"`
+	Stations int    `json:"stations"`
+}
+
+type storageCapacityOutput struct {
+	Location         string                 `json:"location"`
+	StoragePositions []storagePositionsView `json:"storage_positions"`
+	Stations         []zoneStationsView     `json:"stations"`
+}
+
+func (d Deps) getStorageCapacity(ctx context.Context, in getStorageCapacityInput) (storageCapacityOutput, error) {
+	if in.Location == "" {
+		return storageCapacityOutput{}, toolError("missing-location", "location is required")
+	}
+	capacity, err := d.GetStorageCapacity.Handle(ctx, in.Location)
+	if err != nil {
+		return storageCapacityOutput{}, mapError(err)
+	}
+	out := storageCapacityOutput{
+		Location:         capacity.Location,
+		StoragePositions: make([]storagePositionsView, 0, len(capacity.StoragePositions)),
+		Stations:         make([]zoneStationsView, 0, len(capacity.Stations)),
+	}
+	for _, p := range capacity.StoragePositions {
+		out.StoragePositions = append(out.StoragePositions, storagePositionsView{ZoneID: p.ZoneID, LocationType: p.LocationType, Positions: p.Positions})
+	}
+	for _, s := range capacity.Stations {
+		out.Stations = append(out.Stations, zoneStationsView{ZoneID: s.ZoneID, Activity: s.Activity, Stations: s.Stations})
+	}
+	return out, nil
+}
+
 // --- registration -------------------------------------------------------------
 
 // registerTools adds every tool to the server. Read tools are annotated
@@ -368,7 +539,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 	addTool(server, &mcp.Tool{
 		Name: "get_process_path_capacity",
 		Description: "Compute a registered process path's end-to-end capacity at a location and exact window, normalized to ORDER per hour, and the bottleneck step. " +
-			"Every step needs a registered capacity; units_per_order / packages_per_order convert UNIT and PACKAGE steps. Read-only.",
+			"Each step's capacity is the minimum of its registered constraints and a derived STATION constraint (stations tallied at the site x the declared station standard); step_breakdown reports each step's rate and binding constraint, " +
+			"warnings flags stations tallied without a declared standard. Every step needs a registered or derived capacity; units_per_order / packages_per_order convert UNIT and PACKAGE steps. Read-only.",
 		Annotations: readOnly,
 	}, d.getProcessPathCapacity)
 
@@ -389,9 +561,30 @@ func (d Deps) registerTools(server *mcp.Server) {
 
 	addTool(server, &mcp.Tool{
 		Name:        "get_capacity_plan",
-		Description: "Read a capacity plan by id: its status (DRAFT or PUBLISHED), path capacity, capacity over window, shortage and bottleneck step. Read-only.",
+		Description: "Read a capacity plan by id: its status (DRAFT or PUBLISHED), path capacity, capacity over window, shortage, bottleneck step, the constraint type binding it (bottleneck_constraint) and any composition warnings. Read-only.",
 		Annotations: readOnly,
 	}, d.getCapacityPlan)
+
+	addTool(server, &mcp.Tool{
+		Name: "declare_station_standard",
+		Description: "Declare the throughput of ONE station of a process at a site (e.g. 180 PACKAGE per 3600 s for PACK at SIM1). Station counts are tallied from facility-layout and carry no throughput of their own; " +
+			"count x this standard is composed with the step's other constraints (e.g. LABOR) when a path capacity or capacity plan is computed, and STATION can then be the binding constraint. " +
+			"Writes the standard; declaring an existing location/process_type replaces it.",
+		Annotations: idempotent(true),
+	}, d.declareStationStandard)
+
+	addTool(server, &mcp.Tool{
+		Name:        "list_station_standards",
+		Description: "List the declared station standards (throughput of one station per location and process type), optionally filtered by location. Read-only.",
+		Annotations: readOnly,
+	}, d.listStationStandards)
+
+	addTool(server, &mcp.Tool{
+		Name: "get_storage_capacity",
+		Description: "Read the facility-layout read model of a site: storage positions per zone and location type, and work-center station counts per zone and activity. " +
+			"Positions are a count, not a throughput, and no consumed figure exists (stock is never read from inventory-storage). Empty lists when nothing is tallied. Read-only.",
+		Annotations: readOnly,
+	}, d.getStorageCapacity)
 }
 
 // addTool registers one tool. A handler error is returned to the SDK as the
