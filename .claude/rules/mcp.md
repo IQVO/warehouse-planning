@@ -1,7 +1,17 @@
+---
+paths:
+  - "internal/adapters/inbound/mcp/**"
+  - "cmd/mcp/**"
+---
+
 # MCP server (inbound adapter)
 
 One MCP server for this bounded context, an additive inbound adapter
-(ADR-0008) over the SAME use cases the REST adapter calls:
+(the fleet's "MCP servers are additive inbound adapters" decision, cited as
+ADR-0008 in `HARNESS.md` and in `TestMCPAdapterDependencyRule`; there is no
+ADR-0008 in this repo's `docs/adr/`, which holds 0001-0003 only; the short
+rule is `.claude/rules/fleet/no-auth-and-mcp.md`) over the SAME
+use cases the REST adapter calls:
 
 - Code: `internal/adapters/inbound/mcp/` (tools, error mapping) and the
   composition root `cmd/mcp/` (env, adapters, router, graceful shutdown).
