@@ -1,3 +1,10 @@
+---
+paths:
+  - "internal/adapters/**/kafka/**"
+  - "internal/adapters/outbound/events/**"
+  - "apis/asyncapi*"
+---
+
 # Cross-service integration events (Kafka)
 
 This service both PUBLISHES and CONSUMES. Publishes the four CapacityPlan

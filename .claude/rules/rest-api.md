@@ -1,3 +1,10 @@
+---
+paths:
+  - "internal/adapters/inbound/http/**"
+  - "apis/openapi*.yaml"
+  - "apis/openapi/**"
+---
+
 <!-- TEMPLATE (warehouse-harness-template v2): fill in for THIS repo. -->
 # REST API (inbound adapter)
 
