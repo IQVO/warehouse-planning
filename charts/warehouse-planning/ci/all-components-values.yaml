@@ -1,0 +1,24 @@
+# Used by `ct lint`: every optional component enabled at once.
+database:
+  existingSecret: "warehouse-planning-db"
+config:
+  eventPublisher: "kafka"
+  outboxRelayInterval: "500ms"
+  corsAllowedOrigins: "http://localhost:5173"
+kafka:
+  enabled: true
+  brokers: "kafka.warehouse-systems.svc.cluster.local:9092"
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: warehouse-gateway
+      namespace: kong
+      sectionName: http
+  hosts:
+    - path: /api/warehouse-planning
+      pathType: PathPrefix
+autoscaling:
+  api:
+    enabled: true
+mcp:
+  enabled: true

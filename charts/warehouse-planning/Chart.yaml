@@ -1,0 +1,12 @@
+apiVersion: v2
+name: warehouse-planning
+description: Warehouse Planning — capacity planning (process-path capacity, capacity plans, shortage detection); consumes labor and storage capacity events, publishes CapacityPlan events
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/IQVO/warehouse-planning
+keywords:
+  - ddd
+  - hexagonal-architecture
+  - warehouse-management-system
+  - golang
