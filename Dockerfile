@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY . .
 
-# Build EVERY cmd/* binary (cmd/api today; cmd/mcp once its PR lands) by
+# Build EVERY cmd/* binary (cmd/api and cmd/mcp) by
 # looping over the cmd/ directories, so a new composition root can never be
 # merged with a Dockerfile that silently forgets to build it (CI skips the
 # image build on non-main PRs, so the first symptom would otherwise be a
@@ -36,11 +36,11 @@ RUN apk upgrade --no-cache && \
     apk add --no-cache ca-certificates tzdata && \
     addgroup -g 1000 -S app && adduser -u 1000 -S app -G app
 WORKDIR /app
-# Every binary built above (api, and mcp when present) -> /app/<name>.
+# Every binary built above (api and mcp) -> /app/<name>.
 COPY --from=build --chown=app:app /out/ ./
 # The service's golang-migrate files live under internal/; the chart sets
 # MIGRATIONS_PATH=migrations (relative to /app), matching the siblings' layout.
 COPY --from=build --chown=app:app /src/internal/adapters/outbound/postgres/migrations ./migrations
 USER 1000
-EXPOSE 8080
+EXPOSE 8080 8090
 ENTRYPOINT ["./api"]
