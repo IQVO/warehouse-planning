@@ -11,11 +11,11 @@ Phase 2 (current):
 - `POST /process-paths`              -> `RegisterProcessPath`
 - `GET /process-paths/{id}/capacity` -> `GetProcessPathCapacity`
 
-Phase 4:
+Phase 4 (current):
 
 - `POST /capacity-plans`             -> `CreateCapacityPlan`
 - `POST /capacity-plans/{id}/publish`-> `PublishCapacityPlan`
-- `GET  /capacity-plans/{id}`        -> query
+- `GET  /capacity-plans/{id}`        -> direct repository read
 
 Kept in sync with `apis/openapi.yaml` as each endpoint ships (the
 `docs-api-drift` CI job fails if generated docs disagree with the spec).
@@ -78,3 +78,49 @@ Errors (`application/problem+json`):
   unit this phase cannot normalize to ORDER).
 - `400` -- a malformed `window_start`/`window_end`/`units_per_order`/
   `packages_per_order`.
+
+## `POST /capacity-plans` request/response shape
+
+Evaluates a ProcessPath against the demand assigned to a location and window
+and stores a DRAFT plan. PHASE 4 SIMPLIFICATION: `assigned_demand` (orders)
+and the WorkloadProfile factors travel in the body (the final demand
+ingestion from order-management/network-fulfillment is a later decision; no
+live cross-context call, no WorkloadProfile persistence yet). The factor
+validation is exactly Phase 2's path-capacity endpoint. As in Phase 2, every
+step's ProcessCapacity must have been registered for EXACTLY
+`[window_start, window_end)` -- there is no overlap matching.
+
+```json
+// request
+{ "warehouse_id": "WH-1", "location": "PATH-ZONE-A",
+  "window_start": "2026-10-05T08:00:00Z", "window_end": "2026-10-05T16:00:00Z",
+  "path_id": "pick-rebin-pack", "assigned_demand": 12000,
+  "units_per_order": 2.5, "packages_per_order": 1 }
+// 201 response
+{ "id": "<uuid>", "warehouse_id": "WH-1", "location": "PATH-ZONE-A",
+  "window_start": "2026-10-05T08:00:00Z", "window_end": "2026-10-05T16:00:00Z",
+  "path_id": "pick-rebin-pack", "assigned_demand": 12000, "status": "DRAFT",
+  "path_capacity": 1000, "bottleneck_step": "REBIN",
+  "capacity_over_window": 8000, "shortage": 4000, "created_at": "..." }
+```
+
+`path_capacity` is ORDER per HOUR; `capacity_over_window` and `shortage` are
+orders. `GET /capacity-plans/{id}` returns the same body (200 / 404);
+`POST /capacity-plans/{id}/publish` returns it with `status: "PUBLISHED"` and
+`published_at` (200).
+
+Errors (`application/problem+json`):
+
+- `400 malformed-json` / `malformed-window-start` / `malformed-window-end` /
+  `invalid-capacity-window` (end not after start).
+- `404 process-path-not-found` (create), `404 capacity-plan-not-found`
+  (publish, get).
+- `409 capacity-plan-already-published` (publish twice; nothing is queued).
+- `422 missing-step-capacity`, `non-positive-conversion-factor`,
+  `missing-conversion-factor`, `unsupported-normalization-unit` (as Phase 2),
+  plus `negative-assigned-demand`, `missing-assigned-demand` (field absent --
+  never silently zero) and `missing-required-field` (blank `warehouse_id`,
+  `location` or `path_id`).
+
+Create and publish each queue their CloudEvents in the transactional outbox in
+the same database transaction as the plan (see `integration-events.md`).

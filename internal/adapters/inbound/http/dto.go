@@ -57,3 +57,39 @@ type processPathCapacityResponse struct {
 	NormalizedUnit string  `json:"normalized_unit"`
 	BottleneckStep string  `json:"bottleneck_step"`
 }
+
+// createCapacityPlanRequest is POST /capacity-plans' request body.
+// assigned_demand (orders) is a pointer so an absent field is rejected
+// instead of silently meaning zero demand. units_per_order and
+// packages_per_order are the WorkloadProfile's conversion factors, carried
+// on the request exactly like Phase 2's path-capacity endpoint.
+type createCapacityPlanRequest struct {
+	WarehouseID      string   `json:"warehouse_id"`
+	Location         string   `json:"location"`
+	WindowStart      string   `json:"window_start"`
+	WindowEnd        string   `json:"window_end"`
+	PathID           string   `json:"path_id"`
+	AssignedDemand   *float64 `json:"assigned_demand"`
+	UnitsPerOrder    *float64 `json:"units_per_order"`
+	PackagesPerOrder *float64 `json:"packages_per_order"`
+}
+
+// capacityPlanResponse is the CapacityPlan representation returned by all
+// three /capacity-plans endpoints. Quantities are orders; path_capacity is
+// ORDER per HOUR.
+type capacityPlanResponse struct {
+	ID                 string  `json:"id"`
+	WarehouseID        string  `json:"warehouse_id"`
+	Location           string  `json:"location"`
+	WindowStart        string  `json:"window_start"`
+	WindowEnd          string  `json:"window_end"`
+	PathID             string  `json:"path_id"`
+	AssignedDemand     float64 `json:"assigned_demand"`
+	Status             string  `json:"status"`
+	PathCapacity       float64 `json:"path_capacity"`
+	BottleneckStep     string  `json:"bottleneck_step"`
+	CapacityOverWindow float64 `json:"capacity_over_window"`
+	Shortage           float64 `json:"shortage"`
+	CreatedAt          string  `json:"created_at"`
+	PublishedAt        *string `json:"published_at,omitempty"`
+}

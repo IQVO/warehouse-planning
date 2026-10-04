@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
@@ -34,11 +35,15 @@ func statusFor(err error) int {
 		errors.Is(err, processcapacity.ErrMissingConversionFactor),
 		errors.Is(err, processcapacity.ErrUnsupportedNormalizationUnit),
 		errors.Is(err, processcapacity.ErrMissingStepCapacity),
-		errors.Is(err, processpath.ErrEmptySteps):
+		errors.Is(err, processpath.ErrEmptySteps),
+		errors.Is(err, capacityplan.ErrNegativeDemand),
+		errors.Is(err, capacityplan.ErrRequiredField):
 		return http.StatusUnprocessableEntity
-	case errors.Is(err, processcapacity.ErrUnitMismatch):
+	case errors.Is(err, processcapacity.ErrUnitMismatch),
+		errors.Is(err, capacityplan.ErrAlreadyPublished):
 		return http.StatusConflict
-	case errors.Is(err, usecases.ErrProcessPathNotFound):
+	case errors.Is(err, usecases.ErrProcessPathNotFound),
+		errors.Is(err, usecases.ErrCapacityPlanNotFound):
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
@@ -66,6 +71,10 @@ func problemCatalog() []struct {
 		{processcapacity.ErrUnsupportedNormalizationUnit, problemInfo{"unsupported-normalization-unit", "This step's native unit cannot be normalized to ORDER"}},
 		{processcapacity.ErrMissingStepCapacity, problemInfo{"missing-step-capacity", "No ProcessCapacity is registered for one of the path's steps at this location and window"}},
 		{usecases.ErrProcessPathNotFound, problemInfo{"process-path-not-found", "No ProcessPath is registered under this id"}},
+		{capacityplan.ErrNegativeDemand, problemInfo{"negative-assigned-demand", "Assigned demand must not be negative"}},
+		{capacityplan.ErrRequiredField, problemInfo{"missing-required-field", "warehouse_id, location and path_id are required"}},
+		{capacityplan.ErrAlreadyPublished, problemInfo{"capacity-plan-already-published", "This CapacityPlan has already been published"}},
+		{usecases.ErrCapacityPlanNotFound, problemInfo{"capacity-plan-not-found", "No CapacityPlan exists under this id"}},
 	}
 }
 

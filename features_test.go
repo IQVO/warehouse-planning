@@ -18,6 +18,7 @@ import (
 	"github.com/cucumber/godog"
 
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
+	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
@@ -46,6 +47,13 @@ type world struct {
 
 	status int
 	body   []byte
+
+	// outbox is the in-memory transactional outbox behind the server, so
+	// scenarios can assert which integration events were queued.
+	outbox *memory.OutboxRepo
+	// planID is the id of the capacity plan the last successful create
+	// returned; the publish/get steps act on it.
+	planID string
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -53,13 +61,24 @@ type world struct {
 func (w *world) start() {
 	repo := memory.NewProcessCapacityRepo()
 	pathRepo := memory.NewProcessPathRepo()
+	planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	uow := memory.NewUnitOfWork(repo, planRepo, outboxRepo)
+	encoder := outboundkafka.NewEncoder()
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo}
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
 		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
-		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo},
+		GetProcessPathCapacity:            pathCapacity,
+		CreateCapacityPlan: &usecases.CreateCapacityPlan{
+			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
+		},
+		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
+		CapacityPlans:       planRepo,
 	}
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
+	w.outbox = outboxRepo
+	w.planID = ""
 	w.status = 0
 	w.body = nil
 }
@@ -157,7 +176,92 @@ func (w *world) iLookUpTheProcessPathCapacity(ctx context.Context, pathID, locat
 	return w.record(ctx, http.MethodGet, path, nil)
 }
 
+// iCreateACapacityPlan handles "I create a capacity plan for warehouse ...".
+func (w *world) iCreateACapacityPlan(ctx context.Context, warehouse, location, pathID, windowStart, windowEnd string, demand, unitsPerOrder, packagesPerOrder float64) error {
+	if err := w.record(ctx, http.MethodPost, "/capacity-plans", map[string]any{
+		"warehouse_id":       warehouse,
+		"location":           location,
+		"window_start":       windowStart,
+		"window_end":         windowEnd,
+		"path_id":            pathID,
+		"assigned_demand":    demand,
+		"units_per_order":    unitsPerOrder,
+		"packages_per_order": packagesPerOrder,
+	}); err != nil {
+		return err
+	}
+	if w.status == http.StatusCreated {
+		var body struct {
+			ID string `json:"id"`
+		}
+		if err := w.decode(&body); err != nil {
+			return err
+		}
+		w.planID = body.ID
+	}
+	return nil
+}
+
+func (w *world) iPublishTheCapacityPlan(ctx context.Context) error {
+	return w.record(ctx, http.MethodPost, "/capacity-plans/"+w.planID+"/publish", nil)
+}
+
+func (w *world) iPublishTheCapacityPlanWithID(ctx context.Context, id string) error {
+	return w.record(ctx, http.MethodPost, "/capacity-plans/"+id+"/publish", nil)
+}
+
 // ----------------------------------------------------------------- Then ----
+
+// theCapacityPlanIs asserts the plan in the last response AND the same
+// plan as returned by GET /capacity-plans/{id} (so the read side agrees).
+func (w *world) theCapacityPlanIs(ctx context.Context, status string, rate float64, unit string, over, shortage float64, bottleneck string) error {
+	check := func(body []byte, source string) error {
+		var plan struct {
+			ID                 string  `json:"id"`
+			Status             string  `json:"status"`
+			PathCapacity       float64 `json:"path_capacity"`
+			BottleneckStep     string  `json:"bottleneck_step"`
+			CapacityOverWindow float64 `json:"capacity_over_window"`
+			Shortage           float64 `json:"shortage"`
+		}
+		if err := json.Unmarshal(body, &plan); err != nil {
+			return fmt.Errorf("%s: not valid JSON (%w): %s", source, err, string(body))
+		}
+		if plan.ID != w.planID || plan.Status != status || plan.PathCapacity != rate || plan.BottleneckStep != bottleneck ||
+			plan.CapacityOverWindow != over || plan.Shortage != shortage {
+			return fmt.Errorf("%s: expected %s plan %s with %v %s/HOUR, over window %v, shortage %v, bottleneck %s; got %s",
+				source, status, w.planID, rate, unit, over, shortage, bottleneck, string(body))
+		}
+		return nil
+	}
+	if err := check(w.body, "response"); err != nil {
+		return err
+	}
+	status0, body0 := w.status, w.body
+	defer func() { w.status, w.body = status0, body0 }()
+	if err := w.record(ctx, http.MethodGet, "/capacity-plans/"+w.planID, nil); err != nil {
+		return err
+	}
+	if w.status != http.StatusOK {
+		return fmt.Errorf("GET /capacity-plans/%s: expected 200, got %d", w.planID, w.status)
+	}
+	return check(w.body, "GET")
+}
+
+func (w *world) theOutboxEventTypesAre(raw string) error {
+	var want []string
+	for _, name := range strings.Split(raw, ",") {
+		want = append(want, "com.warehouse.wes.warehouse-planning.capacityplan."+strings.TrimSpace(name))
+	}
+	var got []string
+	for _, m := range w.outbox.Messages() {
+		got = append(got, m.EventType)
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		return fmt.Errorf("expected outbox event types %v, got %v", want, got)
+	}
+	return nil
+}
 
 func (w *world) theResponseStatusIs(expected int) error {
 	if w.status != expected {
@@ -254,9 +358,15 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^I register a process path "([^"]*)" named "([^"]*)" with steps ([A-Z, ]+)$`, w.iRegisterAProcessPath)
 	sc.Step(`^I look up the capacity of process path "([^"]*)" at "([^"]*)" for the window "([^"]*)" to "([^"]*)" with units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iLookUpTheProcessPathCapacity)
 
+	sc.Step(`^I create a capacity plan for warehouse "([^"]*)" at "([^"]*)" on path "([^"]*)" for the window "([^"]*)" to "([^"]*)" with assigned demand (-?\d+(?:\.\d+)?), units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iCreateACapacityPlan)
+	sc.Step(`^I publish the capacity plan$`, w.iPublishTheCapacityPlan)
+	sc.Step(`^I publish the capacity plan "([^"]*)"$`, w.iPublishTheCapacityPlanWithID)
+
 	sc.Step(`^the response status is (\d+)$`, w.theResponseStatusIs)
 	sc.Step(`^the effective capacity response reports (\d+(?:\.\d+)?) (UNIT|LINE|ORDER|PACKAGE) per (HOUR) bound by (LABOR|LOCATION|EQUIPMENT|STATION|CONVEYOR|BUFFER|REPLENISHMENT)$`, w.theEffectiveCapacityResponseReports)
 	sc.Step(`^the effective capacity response lists (\d+) constraints?$`, w.theEffectiveCapacityResponseListsConstraints)
 	sc.Step(`^the problem detail type is "([^"]*)"$`, w.theProblemDetailTypeIs)
+	sc.Step(`^the capacity plan is (DRAFT|PUBLISHED) with path capacity (\d+(?:\.\d+)?) (ORDER) per HOUR, capacity over window (\d+(?:\.\d+)?), shortage (\d+(?:\.\d+)?) and bottleneck ([A-Z-]+)$`, w.theCapacityPlanIs)
+	sc.Step(`^the outbox event types are ([A-Za-z, ]+)$`, w.theOutboxEventTypesAre)
 	sc.Step(`^the process path capacity response reports (\d+(?:\.\d+)?) (ORDER) per (HOUR) bound by ([A-Z-]+)$`, w.theProcessPathCapacityResponseReports)
 }

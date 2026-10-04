@@ -5,7 +5,10 @@ info:
     Can this warehouse process the demand assigned to it, given its
     current labor, location, equipment, station, conveyor and buffer
     constraints? Phase 1 exposes native ProcessCapacity registration and
-    the computed effective rate.
+    the computed effective rate; Phase 2 the normalized ProcessPath
+    capacity; Phase 4 CapacityPlans (assigned demand vs. path capacity,
+    shortage, bottleneck) whose lifecycle events leave through a
+    transactional outbox (see asyncapi.yaml).
   version: "0.1.0"
   contact:
     name: warehouse-planning maintainers
@@ -19,6 +22,8 @@ tags:
     description: Native and effective ProcessCapacity registration (Phase 1).
   - name: process-paths
     description: ProcessPath registration and normalized ProcessPathCapacity (Phase 2).
+  - name: capacity-plans
+    description: CapacityPlan creation, publication and lookup (Phase 4).
 paths:
   /process-capacities:
     post:
@@ -236,6 +241,130 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+  /capacity-plans:
+    post:
+      operationId: createCapacityPlan
+      summary: Create a DRAFT CapacityPlan and compute its shortage
+      tags: [capacity-plans]
+      description: >
+        Evaluates the ProcessPath path_id against assigned_demand (orders)
+        for the warehouse's location over [window_start, window_end):
+        loads each step's ProcessCapacity, normalizes it with the
+        WorkloadProfile factors supplied in the body (same shape and
+        validation as GET /process-paths/{id}/capacity -- there is no
+        WorkloadProfile persistence yet), and computes path_capacity
+        (ORDER per HOUR), bottleneck_step, capacity_over_window
+        (path_capacity x window hours) and shortage
+        (max(0, assigned_demand - capacity_over_window), never negative).
+        The window is both the plan's planning window AND the window every
+        step's ProcessCapacity is looked up under: each step's
+        ProcessCapacity must have been registered for EXACTLY this
+        window_start/window_end (no overlap matching), as in Phase 2.
+        assigned_demand arrives in the request -- a documented Phase 4
+        simplification (the final demand ingestion from order-management /
+        network-fulfillment is a later decision; this context never makes a
+        live cross-context call). The plan is saved and its
+        CapacityPlanCreated event is queued in the transactional outbox in
+        ONE database transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCapacityPlanRequest"
+      responses:
+        "201":
+          description: Plan created (status DRAFT).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlanResponse"
+        "400":
+          description: Malformed JSON body, malformed window_start/window_end, or a window whose end is not after its start.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: No ProcessPath registered under path_id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            A path step has no ProcessCapacity registered for this
+            location/window; a WorkloadProfile factor is missing, not
+            positive, or cannot normalize a step's unit; assigned_demand is
+            absent or negative; or warehouse_id/location/path_id is blank.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /capacity-plans/{id}:
+    get:
+      operationId: getCapacityPlan
+      summary: Get a CapacityPlan
+      tags: [capacity-plans]
+      description: Returns the stored plan, including its computed shortage and status.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+      responses:
+        "200":
+          description: The plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlanResponse"
+        "404":
+          description: No CapacityPlan exists under id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /capacity-plans/{id}/publish:
+    post:
+      operationId: publishCapacityPlan
+      summary: Publish a DRAFT CapacityPlan
+      tags: [capacity-plans]
+      description: >
+        Moves the plan DRAFT -> PUBLISHED, saves it and queues, in the same
+        database transaction, CapacityPlanPublished plus -- only when the
+        plan has a shortage -- CapacityShortageDetected and
+        BottleneckDetected in the transactional outbox. A relay publishes
+        them to Kafka as CloudEvents (see asyncapi.yaml). Publishing twice
+        is never silent: the second call is a 409 and queues nothing.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+      responses:
+        "200":
+          description: Plan published.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlanResponse"
+        "404":
+          description: No CapacityPlan exists under id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: The plan is already PUBLISHED.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 components:
   schemas:
     RegisterConstraintRequest:
@@ -369,3 +498,102 @@ components:
         bottleneck_step:
           type: string
           example: REBIN
+    CreateCapacityPlanRequest:
+      type: object
+      required:
+        - warehouse_id
+        - location
+        - window_start
+        - window_end
+        - path_id
+        - assigned_demand
+      properties:
+        warehouse_id:
+          type: string
+          example: WH-1
+        location:
+          type: string
+          description: The ProcessCapacity location every path step is looked up under.
+          example: PATH-ZONE-A
+        window_start:
+          type: string
+          format: date-time
+          example: "2026-10-05T08:00:00Z"
+        window_end:
+          type: string
+          format: date-time
+          example: "2026-10-05T16:00:00Z"
+        path_id:
+          type: string
+          description: id of a registered ProcessPath.
+          example: pick-rebin-pack
+        assigned_demand:
+          type: number
+          format: double
+          minimum: 0
+          description: Orders assigned to the window (request-carried in Phase 4).
+          example: 12000
+        units_per_order:
+          type: number
+          format: double
+          description: WorkloadProfile factor (UNIT per ORDER); needed only if a step is measured in UNIT.
+          example: 2.5
+        packages_per_order:
+          type: number
+          format: double
+          description: WorkloadProfile factor (PACKAGE per ORDER); needed only if a step is measured in PACKAGE.
+          example: 1
+    CapacityPlanResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: UUID.
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+        warehouse_id:
+          type: string
+          example: WH-1
+        location:
+          type: string
+          example: PATH-ZONE-A
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        path_id:
+          type: string
+          example: pick-rebin-pack
+        assigned_demand:
+          type: number
+          format: double
+          example: 12000
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED]
+        path_capacity:
+          type: number
+          format: double
+          description: Normalized path capacity, ORDER per HOUR.
+          example: 1000
+        bottleneck_step:
+          type: string
+          example: REBIN
+        capacity_over_window:
+          type: number
+          format: double
+          description: path_capacity x window hours, in orders.
+          example: 8000
+        shortage:
+          type: number
+          format: double
+          description: max(0, assigned_demand - capacity_over_window), in orders.
+          example: 4000
+        created_at:
+          type: string
+          format: date-time
+        published_at:
+          type: string
+          format: date-time
+          description: Present only once PUBLISHED.
