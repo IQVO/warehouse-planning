@@ -25,7 +25,8 @@ no support guarantee.
 
 ## Deployment
 
-- **Image**: root `Dockerfile` builds every `cmd/*` directory (`api` today, `mcp` once it lands) into `/app/<name>`; `ENTRYPOINT` is `./api`. Migrations are copied to `/app/migrations`.
+- **Image**: root `Dockerfile` builds every `cmd/*` directory (`api` and `mcp`) into `/app/<name>`; `ENTRYPOINT` is `./api`. Migrations are copied to `/app/migrations`.
 - **Chart**: `charts/warehouse-planning` (OLTP `api` component; optional `mcp` component, off by default). It refuses to render without `database.url` or `database.existingSecret`. Run `helm lint charts/warehouse-planning --set database.url=postgres://u@example.invalid:5432/db` and `python3 charts/warehouse-planning/tests/test_service_selectors.py`.
+- **MCP**: `cmd/mcp` serves 7 tools over Streamable HTTP on `:8090` (`/` and `/mcp`, `GET /healthz`, no auth); see `.claude/rules/mcp.md`. Enable in the chart with `mcp.enabled=true`.
 - **Kind cluster**: wired by `warehouse-infra` (`local.services`); ArgoCD deploys the chart from this repo's `develop`.
 - **Not deployed yet (tracked deferrals)**: analytics projector/reports (no analytics stream yet) and a frontend remote (no `web/` yet).

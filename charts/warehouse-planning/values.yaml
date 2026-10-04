@@ -172,13 +172,13 @@ readinessProbe:
 terminationGracePeriodSeconds: 30
 
 # --- MCP server ---
-# The Model Context Protocol server (cmd/mcp). DISABLED by default: the binary
-# is being added by a parallel PR and is not in the image's cmd/ set until it
-# merges. Enabling it renders its own Deployment + Service (component=mcp) over
-# the same OLTP database, served at "/" and "/mcp" with GET /healthz probes.
-# The container env names in templates/mcp-deployment.yaml are PROVISIONAL
-# (mirrored from siblings) -- verify against cmd/mcp/main.go when it lands.
-# No auth / API key: MCP servers are unauthenticated fleet-wide.
+# The Model Context Protocol server (cmd/mcp, Streamable HTTP only). DISABLED
+# by default. Enabling it renders its own Deployment + Service (component=mcp)
+# over the same OLTP database, served at "/" and "/mcp" with GET /healthz
+# probes, command /app/mcp. Env names in templates/mcp-deployment.yaml match
+# cmd/mcp/main.go. It starts no outbox relay and dials no Kafka (the relay
+# runs in the api component). No auth / API key: MCP servers are
+# unauthenticated fleet-wide.
 mcp:
   enabled: false
   replicaCount: 1

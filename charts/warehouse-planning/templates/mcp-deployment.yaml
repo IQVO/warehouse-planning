@@ -39,12 +39,10 @@ spec:
           env:
             - name: MCP_ADDR
               value: {{ .Values.mcp.httpAddr | quote }}
-            # PROVISIONAL: cmd/mcp is being added by a parallel PR and its
-            # env contract was NOT readable when this chart was written. The
-            # names below (MCP_ADDR, MIGRATIONS_PATH, DATABASE_URL,
-            # MIGRATIONS_DATABASE_URL, LOG_LEVEL) mirror every sibling's
-            # cmd/mcp. Re-check them against cmd/mcp/main.go once it merges
-            # (mcp.enabled is false by default, so nothing renders until then).
+            # Env contract verified against cmd/mcp/main.go: MCP_ADDR,
+            # MIGRATIONS_PATH, LOG_LEVEL, DATABASE_URL and (migration step
+            # only) MIGRATIONS_DATABASE_URL. cmd/mcp has no auth env, starts
+            # no outbox relay and never dials Kafka.
             - name: MIGRATIONS_PATH
               value: {{ .Values.config.migrationsPath | quote }}
             - name: LOG_LEVEL
@@ -56,8 +54,8 @@ spec:
                   key: {{ .Values.database.existingSecretKey }}
             {{- if .Values.database.migrationsExistingSecretKey }}
             # See values.yaml's database.migrationsExistingSecretKey comment.
-            # If cmd/mcp also runs migrations on start (siblings do), it needs
-            # the same direct-connection split; harmless if it does not.
+            # cmd/mcp runs the idempotent migrations on start (like siblings),
+            # so it needs the same direct-connection split as the api.
             - name: MIGRATIONS_DATABASE_URL
               valueFrom:
                 secretKeyRef:
