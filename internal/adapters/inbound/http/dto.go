@@ -72,8 +72,11 @@ type stepBreakdownItem struct {
 }
 
 // createCapacityPlanRequest is POST /capacity-plans' request body.
-// assigned_demand (orders) is a pointer so an absent field is rejected
-// instead of silently meaning zero demand. units_per_order and
+// assigned_demand (orders) is a pointer: present (even 0) it is used as
+// stated; ABSENT it is defaulted from the order-management demand read
+// model, or rejected with 422 missing-assigned-demand when that has no
+// orders for the location and window -- absence never silently means zero
+// demand. units_per_order and
 // packages_per_order are the WorkloadProfile's conversion factors, carried
 // on the request exactly like Phase 2's path-capacity endpoint.
 type createCapacityPlanRequest struct {
@@ -106,6 +109,11 @@ type capacityPlanResponse struct {
 	CreatedAt          string  `json:"created_at"`
 	PublishedAt        *string `json:"published_at,omitempty"`
 
+	// DemandSource says where assigned_demand came from: "request" (stated
+	// by the caller; also every plan created before demand ingestion) or
+	// "orders" (defaulted from the order-management read model). Additive,
+	// docs/adr/0004.
+	DemandSource string `json:"demand_source"`
 	// BottleneckConstraint (the constraint type binding the bottleneck
 	// step, e.g. LABOR or STATION; empty for plans created before it was
 	// recorded) and Warnings (never null) are additive, see ADR 0002.

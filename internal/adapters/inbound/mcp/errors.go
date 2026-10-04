@@ -33,6 +33,7 @@ func slugFor(err error) (slug string, ok bool) {
 		{processcapacity.ErrMissingStepCapacity, "missing-step-capacity"},
 		{usecases.ErrProcessPathNotFound, "process-path-not-found"},
 		{capacityplan.ErrNegativeDemand, "negative-assigned-demand"},
+		{usecases.ErrMissingAssignedDemand, "missing-assigned-demand"},
 		{capacityplan.ErrRequiredField, "missing-required-field"},
 		{capacityplan.ErrAlreadyPublished, "capacity-plan-already-published"},
 		{usecases.ErrCapacityPlanNotFound, "capacity-plan-not-found"},
