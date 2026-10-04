@@ -338,6 +338,21 @@ func (w *world) theProblemDetailTypeIs(slug string) error {
 	return nil
 }
 
+// theProblemDetailMentions asserts the RFC 7807 "detail" of the last response
+// contains the fragment (e.g. the step named by a missing-coverage problem).
+func (w *world) theProblemDetailMentions(fragment string) error {
+	var problem struct {
+		Detail string `json:"detail"`
+	}
+	if err := w.decode(&problem); err != nil {
+		return err
+	}
+	if !strings.Contains(problem.Detail, fragment) {
+		return fmt.Errorf("problem detail %q does not mention %q", problem.Detail, fragment)
+	}
+	return nil
+}
+
 // theProcessPathCapacityResponseReports handles "the process path capacity
 // response reports <rate> ORDER per HOUR bound by <step>".
 func (w *world) theProcessPathCapacityResponseReports(rate float64, unit, _ string, bottleneck string) error {
@@ -584,6 +599,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the effective capacity response reports (\d+(?:\.\d+)?) (UNIT|LINE|ORDER|PACKAGE) per (HOUR) bound by (LABOR|LOCATION|EQUIPMENT|STATION|CONVEYOR|BUFFER|REPLENISHMENT)$`, w.theEffectiveCapacityResponseReports)
 	sc.Step(`^the effective capacity response lists (\d+) constraints?$`, w.theEffectiveCapacityResponseListsConstraints)
 	sc.Step(`^the problem detail type is "([^"]*)"$`, w.theProblemDetailTypeIs)
+	sc.Step(`^the problem detail mentions "([^"]*)"$`, w.theProblemDetailMentions)
 	sc.Step(`^the capacity plan is (DRAFT|PUBLISHED) with path capacity (\d+(?:\.\d+)?) (ORDER) per HOUR, capacity over window (\d+(?:\.\d+)?), shortage (\d+(?:\.\d+)?) and bottleneck ([A-Z-]+)$`, w.theCapacityPlanIs)
 	sc.Step(`^the outbox event types are ([A-Za-z, ]+)$`, w.theOutboxEventTypesAre)
 	sc.Step(`^the process path capacity response reports (\d+(?:\.\d+)?) (ORDER) per (HOUR) bound by ([A-Z-]+)$`, w.theProcessPathCapacityResponseReports)

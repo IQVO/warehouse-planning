@@ -28,3 +28,30 @@ Feature: ProcessPathCapacity
     Then the response status is 201
     When I look up the capacity of process path "pick-only" at "PATH-ZONE-B" for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z" with units_per_order 2.5 and packages_per_order 1
     Then the response status is 422
+
+  # LIVE-SHAPED windows (docs/adr/0003). The rows the labor consumer writes
+  # for ONE ShiftPlanCommitted share a start time but end at different times
+  # per path (observed at SIM1: PICK +32h, REBIN +8h, PACK +24h), so no single
+  # exact (start, end) exists for the whole path. A constraint applies to the
+  # requested window when its window COVERS it; the window below lies inside
+  # the intersection [08:00, 16:00) of the three.
+  Scenario: Live-shaped windows with one shared start and different ends resolve by coverage
+    When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-06T16:00:00Z"
+    And I register a LABOR constraint of 2500 UNIT per HOUR for REBIN at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    And I register a LABOR constraint of 1800 PACKAGE per HOUR for PACK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-06T08:00:00Z"
+    And I register a process path "live-pick-rebin-pack" named "Live Pick-Rebin-Pack" with steps PICK, REBIN, PACK
+    Then the response status is 201
+    When I look up the capacity of process path "live-pick-rebin-pack" at "SIM1" for the window "2026-10-05T09:00:00Z" to "2026-10-05T15:00:00Z" with units_per_order 2.5 and packages_per_order 1
+    Then the response status is 200
+    And the process path capacity response reports 1000 ORDER per HOUR bound by REBIN
+
+  Scenario: A window extending past one step's registered end is not covered by it
+    When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at SIM2 for the window "2026-10-05T08:00:00Z" to "2026-10-06T16:00:00Z"
+    And I register a LABOR constraint of 2500 UNIT per HOUR for REBIN at SIM2 for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    And I register a LABOR constraint of 1800 PACKAGE per HOUR for PACK at SIM2 for the window "2026-10-05T08:00:00Z" to "2026-10-06T08:00:00Z"
+    And I register a process path "live-pick-rebin-pack" named "Live Pick-Rebin-Pack" with steps PICK, REBIN, PACK
+    Then the response status is 201
+    When I look up the capacity of process path "live-pick-rebin-pack" at "SIM2" for the window "2026-10-05T09:00:00Z" to "2026-10-05T17:00:00Z" with units_per_order 2.5 and packages_per_order 1
+    Then the response status is 422
+    And the problem detail type is "missing-step-capacity"
+    And the problem detail mentions "REBIN"

@@ -57,3 +57,29 @@ Feature: CapacityPlan
     When I publish the capacity plan "no-such-plan"
     Then the response status is 404
     And the problem detail type is "capacity-plan-not-found"
+
+  # LIVE-SHAPED windows (docs/adr/0003): one shared start, ends +32h / +8h /
+  # +24h per path as observed at SIM1. The plan's window [09:00, 15:00) lies
+  # inside every constraint's window, so the path resolves to 1000 ORDER/h
+  # bound by Rebin; the shortage is computed from the REQUESTED 6h window
+  # (6000 orders), NOT from any constraint's own window: 12000 - 6000 = 6000.
+  Scenario: A plan over live-shaped windows computes shortage from the requested window
+    When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at PLAN-SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-06T16:00:00Z"
+    And I register a LABOR constraint of 2500 UNIT per HOUR for REBIN at PLAN-SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    And I register a LABOR constraint of 1800 PACKAGE per HOUR for PACK at PLAN-SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-06T08:00:00Z"
+    And I register a process path "live-pick-rebin-pack" named "Live Pick-Rebin-Pack" with steps PICK, REBIN, PACK
+    Then the response status is 201
+    When I create a capacity plan for warehouse "WH-1" at "PLAN-SIM1" on path "live-pick-rebin-pack" for the window "2026-10-05T09:00:00Z" to "2026-10-05T15:00:00Z" with assigned demand 12000, units_per_order 2.5 and packages_per_order 1
+    Then the response status is 201
+    And the capacity plan is DRAFT with path capacity 1000 ORDER per HOUR, capacity over window 6000, shortage 6000 and bottleneck REBIN
+
+  Scenario: A plan whose window extends past one step's registered end is rejected
+    When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at PLAN-SIM2 for the window "2026-10-05T08:00:00Z" to "2026-10-06T16:00:00Z"
+    And I register a LABOR constraint of 2500 UNIT per HOUR for REBIN at PLAN-SIM2 for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    And I register a LABOR constraint of 1800 PACKAGE per HOUR for PACK at PLAN-SIM2 for the window "2026-10-05T08:00:00Z" to "2026-10-06T08:00:00Z"
+    And I register a process path "live-pick-rebin-pack" named "Live Pick-Rebin-Pack" with steps PICK, REBIN, PACK
+    Then the response status is 201
+    When I create a capacity plan for warehouse "WH-1" at "PLAN-SIM2" on path "live-pick-rebin-pack" for the window "2026-10-05T09:00:00Z" to "2026-10-05T17:00:00Z" with assigned demand 12000, units_per_order 2.5 and packages_per_order 1
+    Then the response status is 422
+    And the problem detail type is "missing-step-capacity"
+    And the problem detail mentions "REBIN"
