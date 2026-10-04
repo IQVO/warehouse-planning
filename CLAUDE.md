@@ -86,7 +86,8 @@ Confirmed against the producers' own `apis/asyncapi.yaml` (see ADR 0001
 Addendum and `.claude/rules/integration-events.md`):
 
 - `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted`
-  on `warehouse.workforce.events` (LABOR constraint).
+  on `warehouse.workforce.events`: the labor consumer registers a LABOR
+  constraint on `Location=building_id` for `[event time, + planned_hours)`.
 - `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`
   and `...LocationSlotDecommissioned` on `warehouse.facility.events`
   (storage/station tallies).
@@ -95,8 +96,15 @@ Addendum and `.claude/rules/integration-events.md`):
 has no physical step sequence, so this context owns its own `ProcessPath`.
 
 Delivery is at-least-once: each message is handled in one unit of work
-(claim + tally/constraint write), the offset is committed only after
-success, and transient failures retry the same message with backoff.
+(claim + write), the offset is committed only after success, and
+transient failures retry the same message with backoff. The facility
+consumer only maintains the storage/station tally (`location_slot_tally`);
+it registers no ProcessCapacity. Station capacity is composed at READ time
+(station count x operator-declared `StationStandard`, ADR 0002), and step
+capacity is resolved by window COVERAGE, newest registration wins per
+constraint type (ADR 0003). A planning `location` is the site/building code
+(the first segment of a facility zone id, e.g. `SIM1` for zone
+`SIM1-OPS-WC`).
 
 ## Consumer group id
 
@@ -117,7 +125,9 @@ are consumed as published Kafka events and kept as local read models — the
 same rule already established in
 `process-path-management`/`labor-performance`, generalized here because a
 capacity decision must stay available and fast even if an upstream
-context is degraded. See `docs/adr/0001-warehouse-planning-bounded-context.md`.
+context is degraded. See `docs/adr/0001-warehouse-planning-bounded-context.md`
+(placement, context map, upstream contracts), `docs/adr/0002-station-capacity-composition.md`
+and `docs/adr/0003-window-coverage-semantics.md`.
 
 ## Harness version
 
