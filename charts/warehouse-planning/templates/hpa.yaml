@@ -23,3 +23,29 @@ spec:
           averageUtilization: {{ .Values.autoscaling.api.targetCPUUtilizationPercentage }}
     {{- end }}
 {{- end }}
+---
+{{- if and .Values.frontend.enabled .Values.autoscaling.frontend.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "warehouse-planning.frontendFullname" . }}
+  labels:
+    {{- include "warehouse-planning.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "warehouse-planning.frontendFullname" . }}
+  minReplicas: {{ .Values.autoscaling.frontend.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.frontend.maxReplicas }}
+  metrics:
+    {{- if .Values.autoscaling.frontend.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.frontend.targetCPUUtilizationPercentage }}
+    {{- end }}
+{{- end }}

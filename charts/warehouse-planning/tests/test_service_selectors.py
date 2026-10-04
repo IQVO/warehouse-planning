@@ -10,8 +10,10 @@ and its pod labels, and every Service selects on it, so each Service selects
 EXACTLY ONE Deployment. This test fails if that ever stops being true.
 
 It mirrors process-path-management's charts/.../tests/test_service_selectors.py
-(and warehouse-infra's scripts/check-chart-selectors.py), minus the
-analytics/frontend components this chart does not ship.
+(and warehouse-infra's scripts/check-chart-selectors.py), minus the analytics
+components this chart does not ship. The optional frontend (the nginx pod that
+serves the capacity_mfe remote) is checked too: it is its own workload,
+component=frontend, a ClusterIP Service, never routed by this chart.
 
 Run: python3 charts/warehouse-planning/tests/test_service_selectors.py
 Needs: helm, PyYAML.
@@ -30,7 +32,9 @@ RELEASE = "warehouse-planning"
 BASE = ["--set", "database.url=postgres://u@example.invalid:5432/db"]
 ENABLE_EVERYTHING = BASE + [
     "--set", "mcp.enabled=true",
+    "--set", "frontend.enabled=true",
     "--set", "autoscaling.api.enabled=true",
+    "--set", "autoscaling.frontend.enabled=true",
     "--set", "config.eventPublisher=kafka",
     "--set", "kafka.enabled=true",
     "--set", "gatewayApi.enabled=true",
@@ -81,6 +85,31 @@ def main() -> int:
     elif selector_of(services[mcp_svc]).get("app.kubernetes.io/component") != "mcp":
         failures.append("the MCP Service selector must pin component=mcp")
 
+    frontend_svc = f"{RELEASE}-frontend"
+    if frontend_svc not in services:
+        failures.append("the frontend Service was not rendered with frontend.enabled=true")
+    else:
+        if selector_of(services[frontend_svc]).get("app.kubernetes.io/component") != "frontend":
+            failures.append("the frontend Service selector must pin component=frontend")
+        if services[frontend_svc]["spec"].get("type") != "ClusterIP":
+            failures.append("the frontend Service must be ClusterIP")
+    if frontend_svc not in deployments:
+        failures.append("the frontend Deployment was not rendered with frontend.enabled=true")
+
+    # Frontend routing belongs to warehouse-infra's Nginx web gateway, not this chart.
+    for d in docs:
+        if d.get("kind") in {"Ingress", "HTTPRoute"} and "frontend" in d["metadata"]["name"]:
+            failures.append(f"{d['kind']} {d['metadata']['name']}: frontend routing must not live in this chart")
+
+    # The frontend HPA (autoscaling.frontend.enabled) must target the frontend Deployment.
+    for d in docs:
+        if d.get("kind") == "HorizontalPodAutoscaler" and d["metadata"]["name"] == frontend_svc:
+            if d["spec"]["scaleTargetRef"]["name"] != frontend_svc:
+                failures.append("the frontend HPA must scale the frontend Deployment")
+            break
+    else:
+        failures.append("the frontend HPA was not rendered with autoscaling.frontend.enabled=true")
+
     # Every Deployment's own selector must pin a component too, and be
     # satisfied by its pod labels.
     for name, dep in deployments.items():
@@ -99,14 +128,14 @@ def main() -> int:
                 f"Service {svc_name} selects {len(hit)} Deployments {sorted(hit)}; expected exactly 1"
             )
 
-    # Default values must not deploy the MCP component at all.
+    # Default values must not deploy the MCP or frontend components at all.
     stray = [
         d["metadata"]["name"]
         for d in render(BASE)
-        if d.get("metadata", {}).get("name", "").endswith("-mcp")
+        if d.get("metadata", {}).get("name", "").endswith(("-mcp", "-frontend"))
     ]
     if stray:
-        failures.append(f"mcp resources rendered with default values: {stray}")
+        failures.append(f"optional components rendered with default values: {stray}")
 
     # The chart must refuse to render without a database source.
     refused = subprocess.run(
@@ -121,7 +150,7 @@ def main() -> int:
         return 1
 
     print(f"PASS: {len(services)} Services each select exactly one Deployment; "
-          "mcp is off by default; chart refuses to render without a database source")
+          "mcp and frontend are off by default; chart refuses to render without a database source")
     return 0
 
 

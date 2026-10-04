@@ -13,6 +13,10 @@ docker-compose.yml
 *.md
 docs/
 
+# The micro-frontend remote has its own Dockerfile (web/Dockerfile) and build
+# context; none of it is part of the Go image.
+web/
+
 # Tool configs irrelevant to `go build`
 .golangci.yml
 lefthook.yml

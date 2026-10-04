@@ -78,6 +78,18 @@ Fully qualified name of the MCP server deployment/service.
 {{- end }}
 
 {{/*
+Fully qualified name of the frontend Module Federation remote deployment/service.
+
+The remote (web/, `capacity_mfe`) is served by its own nginx pod and reached
+through warehouse-infra's Nginx web gateway at /mfes/warehouse-planning/. It is
+deliberately a separate workload from the API: Kong never routes to it, and the
+OLTP Service must never select it (component=frontend vs component=api).
+*/}}
+{{- define "warehouse-planning.frontendFullname" -}}
+{{- include "warehouse-planning.fullname" . }}-frontend
+{{- end }}
+
+{{/*
 Fails chart rendering with a clear message if no DATABASE_URL source is
 configured. The binary would silently fall back to in-memory adapters (state
 lost on restart, ProcessPaths never persisted anyway) -- fine for `go run`,
