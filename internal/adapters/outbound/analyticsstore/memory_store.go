@@ -18,6 +18,7 @@ type Memory struct {
 	mu        sync.Mutex
 	processed map[string]struct{}
 	plans     map[string]*memPlan
+	lastAt    *time.Time
 }
 
 type memPlan struct {
@@ -44,6 +45,10 @@ func (m *Memory) Apply(_ context.Context, e report.PlanEvent) (bool, error) {
 		return false, nil
 	}
 	m.processed[e.EventID] = struct{}{}
+	if m.lastAt == nil || e.At.After(*m.lastAt) {
+		at := e.At.UTC()
+		m.lastAt = &at
+	}
 	p, ok := m.plans[e.PlanID]
 	if !ok {
 		p = &memPlan{}
@@ -88,6 +93,17 @@ func (m *Memory) published(r report.Range) []*memPlan {
 		}
 	}
 	return out
+}
+
+// LastEventAt implements report.Reader.
+func (m *Memory) LastEventAt(_ context.Context) (*time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastAt == nil {
+		return nil, nil
+	}
+	at := *m.lastAt
+	return &at, nil
 }
 
 // BottleneckCounts implements report.Reader.

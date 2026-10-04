@@ -82,7 +82,7 @@ type throughputReportDTO struct {
 }
 
 // NewReportsRouter builds the router of cmd/planning-reports: /healthz and
-// GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput}. No
+// GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput,freshness}. No
 // auth middleware (fleet rule), no CORS: the service is cluster-internal.
 func NewReportsRouter(s *ReportsServer) http.Handler {
 	r := chi.NewRouter()
@@ -92,7 +92,24 @@ func NewReportsRouter(s *ReportsServer) http.Handler {
 	r.Get("/reports/bottleneck-frequency", s.handleBottleneckFrequency)
 	r.Get("/reports/shortage-trend", s.handleShortageTrend)
 	r.Get("/reports/plan-throughput", s.handlePlanThroughput)
+	r.Get("/reports/freshness", s.handleFreshness)
 	return r
+}
+
+// handleFreshness serves GET /reports/freshness: how far the projection is
+// behind (now - the newest applied event time), for all three reports, which
+// read one projection. Both fields are null until the first event is applied.
+func (s *ReportsServer) handleFreshness(w http.ResponseWriter, r *http.Request) {
+	asOf, err := s.Reader.LastEventAt(r.Context())
+	if err != nil {
+		writeReportError(w, r)
+		return
+	}
+	now := time.Now
+	if s.Now != nil {
+		now = s.Now
+	}
+	writeJSON(w, http.StatusOK, report.ComputeFreshness(asOf, now()))
 }
 
 // parseRange validates ?from=&to= (RFC 3339, both optional) and writes the

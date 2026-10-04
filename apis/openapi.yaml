@@ -760,6 +760,33 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+  /reports/freshness:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReportsFreshness
+      summary: How far the analytics projection is behind
+      tags: [reports]
+      description: >
+        The freshness lag of the projection all three reports read: `as_of` is the CloudEvents
+        time of the newest event the projector has applied and `lag_seconds` is now minus
+        `as_of` (never negative). Both are null until the first event is applied. A growing
+        lag means the projector is down or behind, not that a report is wrong: it catches up
+        when the projector does.
+      responses:
+        "200":
+          description: The freshness (null fields while nothing was projected).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsFreshness"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 components:
   parameters:
     ReportFrom:
@@ -781,6 +808,22 @@ components:
         format: date-time
       example: "2026-10-07T00:00:00Z"
   schemas:
+    ReportsFreshness:
+      type: object
+      required: [as_of, lag_seconds]
+      properties:
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: CloudEvents time of the newest event applied; null when none.
+        lag_seconds:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          description: now - as_of, in seconds; null when nothing was applied.
+          example: 4.2
     ReportSite:
       type: object
       required: [warehouse_id, location]

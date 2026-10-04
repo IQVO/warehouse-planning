@@ -41,7 +41,7 @@ go run ./cmd/api
 
 # 2. Projector: the only writer of the analytical database (applies analytics/migrations itself)
 export ANALYTICS_DATABASE_URL='postgres://projector@localhost:5432/warehouse_planning_analytics?sslmode=disable'  # password via PGPASSWORD
-export ANALYTICS_CONSUMER_GROUP=warehouse-planning-analytics-projector
+export ANALYTICS_CONSUMER_GROUP=warehouse-planning-analytics
 go run ./cmd/planning-projector
 
 # 3. Reports: read-only

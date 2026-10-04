@@ -82,6 +82,19 @@ unleash:
     # Before/After method calls, precisely so gremlins mutates their
     # boundaries; the tests pin start-inclusive / end-exclusive and
     # equal-time-replaces at the boundary value itself.
+    # Re-measured 2026-10-04 (analytics read side, ADR 0005), local gremlins
+    # v0.6.0, one `gremlins unleash <pkg>` per package as above, after adding
+    # ./internal/analytics/report (range validation, shares/rates, continuous
+    # percentile, freshness lag) to the fast subset and
+    # CapacityPlanPublished.BottleneckConstraint to capacityplan:
+    # internal/analytics/report 28/28 killed (new), capacityplan 15/15 killed
+    # (unchanged), the other packages untouched -- efficacy 100.00% and mutant
+    # coverage 100.00% in each. The threshold (99) is unchanged -- not lowered --
+    # and is still strictly below every measured value. The package's windows
+    # are functions, not constants, because gremlins cannot cover constant
+    # arithmetic; the range predicates compare with time.Compare (>= / <) and
+    # the lag clamp uses math.Max so no equivalent boundary mutant exists; the
+    # tests pin from-inclusive / to-exclusive at the boundary instant itself.
     #
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we

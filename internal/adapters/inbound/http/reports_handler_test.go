@@ -71,6 +71,10 @@ func closeTo(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
 
 const explicitRange = "from=2026-10-05T00:00:00Z&to=2026-10-07T00:00:00Z"
 
+func reportsServerRealClock(r report.Reader) http.Handler {
+	return inboundhttp.NewReportsRouter(&inboundhttp.ReportsServer{Reader: r})
+}
+
 func scenario(t *testing.T) http.Handler {
 	return reportsServer(projectPlans(t,
 		planSpec{"a1", "WH-1", "SIM1", "PACK", "STATION", 5600, tp(rt(5, 8, 0, 0)), tp(rt(5, 8, 10, 0))},

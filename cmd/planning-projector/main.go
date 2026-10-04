@@ -41,9 +41,10 @@ const (
 	shutdownTimeout = 10 * time.Second
 
 	// defaultConsumerGroup is the projector's fixed group when
-	// ANALYTICS_CONSUMER_GROUP is unset (the chart always sets it). It is
-	// distinct from every OLTP consumer group of this service.
-	defaultConsumerGroup = "warehouse-planning-analytics-projector"
+	// ANALYTICS_CONSUMER_GROUP is unset (the chart always sets it): the fleet
+	// charter's `<ctx>-analytics` naming. It is distinct from every OLTP
+	// consumer group of this service.
+	defaultConsumerGroup = "warehouse-planning-analytics"
 
 	// defaultMigrationsPath is the analytical migrations directory relative
 	// to the repo root / the image's /app.

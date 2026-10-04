@@ -322,7 +322,7 @@ analytics:
     # ANALYTICS_CONSUMER_GROUP: the projector's FIXED consumer group. A stable
     # id lets a rescheduled pod resume from its committed offsets; a brand-new
     # group starts at the earliest offset and rebuilds the model from history.
-    consumerGroup: "warehouse-planning-analytics-projector"
+    consumerGroup: "warehouse-planning-analytics"
     resources:
       limits:
         cpu: 500m

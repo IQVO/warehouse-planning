@@ -71,7 +71,7 @@ unique constraint on this column, which is why they did not need it.
 ### 4. The projector (`cmd/planning-projector`)
 
 - Consumes the analytics topic under a **fixed consumer group read from env**
-  (`ANALYTICS_CONSUMER_GROUP`, default `warehouse-planning-analytics-projector`,
+  (`ANALYTICS_CONSUMER_GROUP`, default `warehouse-planning-analytics`,
   set by the chart). It is an at-least-once consumer, **not** a full-replay cache:
   committed offsets are honoured, and a brand-new group starts at the earliest
   offset so the model can be rebuilt from retained history.
@@ -117,6 +117,7 @@ a day is a UTC calendar day.
 | `GET /reports/bottleneck-frequency` | how often each bottleneck step (and binding constraint) bound a **published** plan, by site | `rows[]`: site, `bottleneck_step`, `binding_constraint`, `plans`, `share` (of the site's published plans) |
 | `GET /reports/shortage-trend` | published plans with shortage and total shortage, by site per day (plans without shortage counted too) | `days[]`: day, site, `plans_published`, `plans_with_shortage`, `total_shortage`, `shortage_rate` |
 | `GET /reports/plan-throughput` | plans created vs published per day, and create-to-publish latency by site | `days[]`: day, site, `plans_created`, `plans_published`; `latency[]`: site, `plans`, `median_seconds`, `p95_seconds` (continuous percentile) |
+| `GET /reports/freshness` | how far the projection is behind (fleet analytics charter §4; one endpoint for all three reports, which read one projection) | `as_of` (newest applied CloudEvents time), `lag_seconds` (now - as_of, never negative); both `null` until the first event |
 
 SQL only counts, sums and takes `percentile_cont`; rates, shares, range rules and
 the percentile definition live in `internal/analytics/report` (pure, mutation

@@ -290,9 +290,29 @@ var contractCases = []struct {
 		}
 	}},
 
+	{"last event time is the newest applied CloudEvents time", func(t *testing.T, newStore storeFactory) {
+		p, r := newStore(t)
+		loadContract(t, p)
+		got, err := r.LastEventAt(context.Background())
+		if err != nil || got == nil || !got.Equal(at(7, 0, 0, 0)) || got.Location() != time.UTC {
+			t.Fatalf("LastEventAt = %v, %v; want Oct 7 00:00:00 UTC (pTo published / pAtTo created)", got, err)
+		}
+		// An older event applied later does not move it back.
+		older := report.PlanEvent{Kind: report.KindBottleneckDetected, EventID: "late-old", At: at(5, 1, 0, 0), PlanID: "p1", WarehouseID: "WH-1", Location: "SIM1"}
+		if _, err := p.Apply(context.Background(), older); err != nil {
+			t.Fatal(err)
+		}
+		if again, _ := r.LastEventAt(context.Background()); !again.Equal(at(7, 0, 0, 0)) {
+			t.Fatalf("LastEventAt moved back to %v", again)
+		}
+	}},
+
 	{"an empty store answers with empty non-nil slices", func(t *testing.T, newStore storeFactory) {
 		_, r := newStore(t)
 		ctx := context.Background()
+		if at, err := r.LastEventAt(ctx); err != nil || at != nil {
+			t.Fatalf("LastEventAt on an empty store = %v, %v; want nil", at, err)
+		}
 		b, e1 := r.BottleneckCounts(ctx, contractRange)
 		s, e2 := r.ShortageDays(ctx, contractRange)
 		th, e3 := r.ThroughputDays(ctx, contractRange)

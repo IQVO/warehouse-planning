@@ -106,6 +106,20 @@ func (r *Reader) Latencies(ctx context.Context, rg report.Range) ([]report.Laten
 	})
 }
 
+// LastEventAt implements report.Reader: the newest CloudEvents time among the
+// applied events, nil while none was applied.
+func (r *Reader) LastEventAt(ctx context.Context) (*time.Time, error) {
+	var at *time.Time
+	if err := r.pool.QueryRow(ctx, `SELECT max(occurred_at) FROM analytics_processed_events`).Scan(&at); err != nil {
+		return nil, fmt.Errorf("analyticsstore: last event: %w", err)
+	}
+	if at != nil {
+		utc := at.UTC()
+		at = &utc
+	}
+	return at, nil
+}
+
 // collect runs query with the range as $1/$2 and scans every row; the result
 // is a non-nil slice even when empty.
 func collect[T any](ctx context.Context, pool *pgxpool.Pool, query string, rg report.Range, scan func(pgx.Rows) (T, error)) ([]T, error) {

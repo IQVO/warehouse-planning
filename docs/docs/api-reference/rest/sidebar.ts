@@ -160,6 +160,12 @@ const sidebar: SidebarsConfig = {
           label: "Plans created vs published per day, and create-to-publish latency by site",
           className: "api-method get",
         },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-reports-freshness",
+          label: "How far the analytics projection is behind",
+          className: "api-method get",
+        },
       ],
     },
   ],

@@ -19,7 +19,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	want := config{
 		analyticsURL: "postgres://u@h/db", brokers: []string{"k1:9092", "k2:9092"},
-		group: "warehouse-planning-analytics-projector", migrationsPath: "analytics/migrations", adminAddr: ":8091", logLevel: "info",
+		group: "warehouse-planning-analytics", migrationsPath: "analytics/migrations", adminAddr: ":8091", logLevel: "info",
 	}
 	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("config = %+v, want %+v", c, want)

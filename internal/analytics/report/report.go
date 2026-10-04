@@ -63,6 +63,10 @@ type Reader interface {
 	ShortageDays(ctx context.Context, r Range) ([]ShortageDay, error)
 	ThroughputDays(ctx context.Context, r Range) ([]ThroughputDay, error)
 	Latencies(ctx context.Context, r Range) ([]Latency, error)
+	// LastEventAt is the CloudEvents time of the newest event the projection
+	// has applied (nil while it has applied none): the basis of the freshness
+	// lag.
+	LastEventAt(ctx context.Context) (*time.Time, error)
 }
 
 // Site identifies where a plan was made: the planning location (a site code)
