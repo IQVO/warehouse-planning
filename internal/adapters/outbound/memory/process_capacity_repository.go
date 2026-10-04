@@ -91,3 +91,28 @@ func (r *ProcessCapacityRepo) FindByProcessLocationWindow(
 	}
 	return clonePC(pc), nil
 }
+
+// FindCovering returns copies of every stored ProcessCapacity of (process,
+// location) whose window covers [windowStart, windowEnd), newest first.
+func (r *ProcessCapacityRepo) FindCovering(
+	_ context.Context,
+	processType processcapacity.ProcessType,
+	location string,
+	windowStart, windowEnd time.Time,
+) ([]*processcapacity.ProcessCapacity, error) {
+	requested, err := processcapacity.NewCapacityWindow(windowStart, windowEnd)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	covering := []*processcapacity.ProcessCapacity{}
+	for k, pc := range r.store {
+		if k.processType != processType || k.location != location || !pc.Window().Covers(requested) {
+			continue
+		}
+		covering = append(covering, clonePC(pc))
+	}
+	processcapacity.SortNewestFirst(covering)
+	return covering, nil
+}

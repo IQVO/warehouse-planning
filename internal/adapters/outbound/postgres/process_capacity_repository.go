@@ -69,8 +69,8 @@ func savePC(ctx context.Context, q querier, pc *processcapacity.ProcessCapacity)
 	return nil
 }
 
-// FindByProcessLocationWindow returns the ProcessCapacity for the given
-// identity, or (nil, nil) if no row exists for it.
+// FindByProcessLocationWindow returns the ProcessCapacity for EXACTLY the
+// given identity, or (nil, nil) if no row exists for it.
 func (r *ProcessCapacityRepo) FindByProcessLocationWindow(
 	ctx context.Context,
 	processType processcapacity.ProcessType,
@@ -90,7 +90,73 @@ func (r *ProcessCapacityRepo) FindByProcessLocationWindow(
 		}
 		return nil, err
 	}
+	return loadPC(ctx, q, processType, location, windowStart, windowEnd, nativeUnit)
+}
 
+// FindCovering returns every ProcessCapacity of (process, location) whose
+// window covers [windowStart, windowEnd) -- window_start <= windowStart AND
+// window_end >= windowEnd -- newest first (ORDER BY window_start DESC,
+// window_end ASC, the order processcapacity.SortNewestFirst defines). The
+// matching headers are read and the cursor closed BEFORE any constraint query
+// runs: inside a UnitOfWork every query shares one connection, which cannot
+// interleave a second query with an open result set.
+func (r *ProcessCapacityRepo) FindCovering(
+	ctx context.Context,
+	processType processcapacity.ProcessType,
+	location string,
+	windowStart, windowEnd time.Time,
+) ([]*processcapacity.ProcessCapacity, error) {
+	if _, err := processcapacity.NewCapacityWindow(windowStart, windowEnd); err != nil {
+		return nil, err
+	}
+	q := queryFor(ctx, r.pool)
+	rows, err := q.Query(ctx, `
+		SELECT window_start, window_end, native_unit FROM process_capacity
+		WHERE process_type = $1 AND location = $2 AND window_start <= $3 AND window_end >= $4
+		ORDER BY window_start DESC, window_end ASC
+	`, string(processType), location, windowStart, windowEnd)
+	if err != nil {
+		return nil, err
+	}
+	type header struct {
+		start, end time.Time
+		nativeUnit string
+	}
+	var headers []header
+	for rows.Next() {
+		var h header
+		if err := rows.Scan(&h.start, &h.end, &h.nativeUnit); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		headers = append(headers, h)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	covering := make([]*processcapacity.ProcessCapacity, 0, len(headers))
+	for _, h := range headers {
+		pc, err := loadPC(ctx, q, processType, location, h.start, h.end, h.nativeUnit)
+		if err != nil {
+			return nil, err
+		}
+		covering = append(covering, pc)
+	}
+	return covering, nil
+}
+
+// loadPC rebuilds the aggregate identified by (processType, location, window)
+// from its constraint rows, in registration order.
+func loadPC(
+	ctx context.Context,
+	q querier,
+	processType processcapacity.ProcessType,
+	location string,
+	windowStart, windowEnd time.Time,
+	nativeUnit string,
+) (*processcapacity.ProcessCapacity, error) {
 	window, err := processcapacity.NewCapacityWindow(windowStart, windowEnd)
 	if err != nil {
 		return nil, err
@@ -128,6 +194,5 @@ func (r *ProcessCapacityRepo) FindByProcessLocationWindow(
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
 	return pc, nil
 }

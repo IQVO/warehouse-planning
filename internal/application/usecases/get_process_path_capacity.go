@@ -3,6 +3,7 @@ package usecases
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -51,11 +52,12 @@ type GetProcessPathCapacityResult struct {
 // processcapacity.ComposeProcessPathCapacity).
 //
 // Capacity is composed AT READ TIME (ADR 0002): per step the candidates are
-// the ProcessCapacity constraints registered at exactly (process, location,
-// window) plus a derived STATION constraint = the stations tallied across the
-// site's zones x the operator-declared StationStandard. Nothing derived is
-// ever stored, so late declarations and facility changes are picked up on the
-// next read.
+// the constraints of the ProcessCapacity aggregates of (process, location)
+// whose window COVERS the requested window (ADR 0003: newest window start wins
+// per constraint type), plus a derived STATION constraint = the stations
+// tallied across the site's zones x the operator-declared StationStandard.
+// Nothing derived is ever stored, so late declarations and facility changes
+// are picked up on the next read.
 type GetProcessPathCapacity struct {
 	ProcessPaths      ports.ProcessPathRepository
 	ProcessCapacities ports.ProcessCapacityRepository
@@ -64,12 +66,14 @@ type GetProcessPathCapacity struct {
 }
 
 // Handle loads the ProcessPath identified by cmd.ProcessPathID, gathers each
-// step's registered ProcessCapacity for cmd's location and window, its
+// step's covering ProcessCapacity aggregates for cmd's location and window, its
 // tallied station count and its StationStandard, builds the WorkloadProfile
 // from cmd's factors, and delegates to
 // processcapacity.ComposeProcessPathCapacity. Returns ErrProcessPathNotFound
-// if no ProcessPath is registered under cmd.ProcessPathID. A step with no
-// candidate at all is left without a registered capacity on purpose --
+// if no ProcessPath is registered under cmd.ProcessPathID and
+// processcapacity.ErrInvalidWindow when the window's end is not after its
+// start (a covering lookup of an inverted window would match nonsense). A step
+// with no candidate at all is left without a covering capacity on purpose --
 // ComposeProcessPathCapacity itself returns the explicit
 // ErrMissingStepCapacity, so this use case never special-cases "not found"
 // per step.
@@ -80,6 +84,10 @@ func (uc *GetProcessPathCapacity) Handle(ctx context.Context, cmd GetProcessPath
 	}
 	if path == nil {
 		return GetProcessPathCapacityResult{}, ErrProcessPathNotFound
+	}
+
+	if _, err := processcapacity.NewCapacityWindow(cmd.WindowStart, cmd.WindowEnd); err != nil {
+		return GetProcessPathCapacityResult{}, err
 	}
 
 	profile, err := processcapacity.NewWorkloadProfile(cmd.UnitsPerOrder, cmd.PackagesPerOrder)
@@ -99,6 +107,11 @@ func (uc *GetProcessPathCapacity) Handle(ctx context.Context, cmd GetProcessPath
 	}
 
 	composed, err := processcapacity.ComposeProcessPathCapacity(*path, inputs, profile)
+	if errors.Is(err, processcapacity.ErrMissingStepCapacity) {
+		// Say WHY the step has no data: the window is not covered (ADR 0003).
+		return GetProcessPathCapacityResult{}, fmt.Errorf("no registered capacity window at %s covers [%s, %s) and no station constraint applies: %w",
+			cmd.Location, cmd.WindowStart.UTC().Format(time.RFC3339), cmd.WindowEnd.UTC().Format(time.RFC3339), err)
+	}
 	if err != nil {
 		return GetProcessPathCapacityResult{}, err
 	}
@@ -111,18 +124,19 @@ func (uc *GetProcessPathCapacity) Handle(ctx context.Context, cmd GetProcessPath
 	}, nil
 }
 
-// stepInput gathers one step's candidates: the registered ProcessCapacity at
-// exactly (step, location, window), the site's tallied station count for the
+// stepInput gathers one step's candidates: the ProcessCapacity aggregates of
+// (step, location) covering the window (ProcessCapacityRepository.FindCovering),
+// the site's tallied station count for the
 // step's activity (the step name, upper-cased like the tally keys) and -- only
 // when stations exist -- the declared StationStandard.
 func (uc *GetProcessPathCapacity) stepInput(ctx context.Context, step processcapacity.ProcessType, cmd GetProcessPathCapacityCommand) (processcapacity.StepInput, error) {
 	input := processcapacity.StepInput{Location: cmd.Location}
 
-	pc, err := uc.ProcessCapacities.FindByProcessLocationWindow(ctx, step, cmd.Location, cmd.WindowStart, cmd.WindowEnd)
+	covering, err := uc.ProcessCapacities.FindCovering(ctx, step, cmd.Location, cmd.WindowStart, cmd.WindowEnd)
 	if err != nil {
 		return processcapacity.StepInput{}, err
 	}
-	input.Registered = pc
+	input.Covering = covering
 
 	count, err := uc.Tally.StationCount(ctx, cmd.Location, strings.ToUpper(string(step)))
 	if err != nil {

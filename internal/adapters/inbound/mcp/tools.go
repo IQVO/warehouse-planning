@@ -193,8 +193,8 @@ func (d Deps) registerProcessPath(ctx context.Context, in registerProcessPathInp
 type getPathCapacityInput struct {
 	ID               string   `json:"id" jsonschema:"the registered process path's id"`
 	Location         string   `json:"location" jsonschema:"the warehouse location every step's capacity is looked up under, e.g. FC01"`
-	WindowStart      string   `json:"window_start" jsonschema:"window start, RFC3339 timestamp; every step must have capacity registered for exactly this window"`
-	WindowEnd        string   `json:"window_end" jsonschema:"window end, RFC3339 timestamp"`
+	WindowStart      string   `json:"window_start" jsonschema:"window start, RFC3339 timestamp; a registered capacity window applies to a step when it COVERS [window_start, window_end), not only when equal"`
+	WindowEnd        string   `json:"window_end" jsonschema:"window end, RFC3339 timestamp; must be after window_start"`
 	UnitsPerOrder    *float64 `json:"units_per_order,omitempty" jsonschema:"workload conversion factor: UNIT per ORDER; required if any step is measured in UNIT"`
 	PackagesPerOrder *float64 `json:"packages_per_order,omitempty" jsonschema:"workload conversion factor: PACKAGE per ORDER; required if any step is measured in PACKAGE"`
 }
@@ -254,7 +254,7 @@ func (d Deps) getProcessPathCapacity(ctx context.Context, in getPathCapacityInpu
 type createPlanInput struct {
 	WarehouseID      string   `json:"warehouse_id" jsonschema:"the warehouse the plan is for, e.g. WH-1"`
 	Location         string   `json:"location" jsonschema:"the location whose step capacities are used, e.g. FC01"`
-	WindowStart      string   `json:"window_start" jsonschema:"plan window start, RFC3339 timestamp; every step needs capacity registered for exactly this window"`
+	WindowStart      string   `json:"window_start" jsonschema:"plan window start, RFC3339 timestamp; a registered capacity window applies to a step when it COVERS [window_start, window_end), not only when equal"`
 	WindowEnd        string   `json:"window_end" jsonschema:"plan window end, RFC3339 timestamp; must be after window_start"`
 	PathID           string   `json:"path_id" jsonschema:"the registered process path to evaluate"`
 	AssignedDemand   *float64 `json:"assigned_demand" jsonschema:"the demand assigned to the window, in ORDERS; required (never silently zero) and must not be negative"`
@@ -538,8 +538,9 @@ func (d Deps) registerTools(server *mcp.Server) {
 
 	addTool(server, &mcp.Tool{
 		Name: "get_process_path_capacity",
-		Description: "Compute a registered process path's end-to-end capacity at a location and exact window, normalized to ORDER per hour, and the bottleneck step. " +
-			"Each step's capacity is the minimum of its registered constraints and a derived STATION constraint (stations tallied at the site x the declared station standard); step_breakdown reports each step's rate and binding constraint, " +
+		Description: "Compute a registered process path's end-to-end capacity at a location and window, normalized to ORDER per hour, and the bottleneck step. " +
+			"The window is matched by coverage: a registered constraint window applies when it covers the requested window (the newest window start wins per constraint type; other types still apply). " +
+			"Each step's capacity is the minimum of its covering registered constraints and a derived STATION constraint (stations tallied at the site x the declared station standard); step_breakdown reports each step's rate and binding constraint, " +
 			"warnings flags stations tallied without a declared standard. Every step needs a registered or derived capacity; units_per_order / packages_per_order convert UNIT and PACKAGE steps. Read-only.",
 		Annotations: readOnly,
 	}, d.getProcessPathCapacity)
@@ -548,6 +549,7 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Name: "create_capacity_plan",
 		Description: "Evaluate assigned demand (orders) against a process path's capacity over a window and store a DRAFT capacity plan, returning " +
 			"path capacity (ORDER/hour), capacity over the window, shortage (orders, 0 if none) and the bottleneck step. " +
+			"The window is matched by coverage: a registered constraint window applies to a step when it covers the plan window (newest window start wins per constraint type). " +
 			"Writes the plan and queues its integration events in the transactional outbox; each call creates a new plan.",
 		Annotations: idempotent(false),
 	}, d.createCapacityPlan)

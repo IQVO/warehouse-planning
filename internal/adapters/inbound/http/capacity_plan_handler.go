@@ -14,8 +14,8 @@ import (
 // ProcessPath against the demand assigned to a location and window and
 // stores the resulting DRAFT plan (201). The demand arrives in the body --
 // a documented Phase 4 simplification (see CreateCapacityPlanCommand);
-// every step's ProcessCapacity must have been registered for exactly
-// [window_start, window_end), as in Phase 2.
+// every step's registered ProcessCapacity window must COVER
+// [window_start, window_end) (docs/adr/0003).
 func (s *Server) handleCreateCapacityPlan(w http.ResponseWriter, r *http.Request) {
 	var req createCapacityPlanRequest
 	if !decodeJSON(w, r, &req) {

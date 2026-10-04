@@ -73,7 +73,7 @@ func problemCatalog() []struct {
 		{processcapacity.ErrNonPositiveConversionFactor, problemInfo{"non-positive-conversion-factor", "A WorkloadProfile conversion factor must be positive"}},
 		{processcapacity.ErrMissingConversionFactor, problemInfo{"missing-conversion-factor", "The WorkloadProfile has no conversion factor for one of the path's steps' units"}},
 		{processcapacity.ErrUnsupportedNormalizationUnit, problemInfo{"unsupported-normalization-unit", "This step's native unit cannot be normalized to ORDER"}},
-		{processcapacity.ErrMissingStepCapacity, problemInfo{"missing-step-capacity", "No ProcessCapacity is registered for one of the path's steps at this location and window"}},
+		{processcapacity.ErrMissingStepCapacity, problemInfo{"missing-step-capacity", "No registered ProcessCapacity window covers one of the path's steps at this location and window"}},
 		{usecases.ErrProcessPathNotFound, problemInfo{"process-path-not-found", "No ProcessPath is registered under this id"}},
 		{capacityplan.ErrNegativeDemand, problemInfo{"negative-assigned-demand", "Assigned demand must not be negative"}},
 		{capacityplan.ErrRequiredField, problemInfo{"missing-required-field", "warehouse_id, location and path_id are required"}},

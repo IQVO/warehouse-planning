@@ -144,6 +144,10 @@ func (f *fakeFailingRepo) FindByProcessLocationWindow(context.Context, processca
 	return nil, f.findErr
 }
 
+func (f *fakeFailingRepo) FindCovering(context.Context, processcapacity.ProcessType, string, time.Time, time.Time) ([]*processcapacity.ProcessCapacity, error) {
+	return nil, f.findErr
+}
+
 func TestRegisterProcessCapacityConstraint_PropagatesRepositoryErrors(t *testing.T) {
 	start, end := pickZoneAWindowTimes()
 	ctx := context.Background()

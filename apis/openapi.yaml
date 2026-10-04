@@ -42,7 +42,11 @@ paths:
         by (process_type, location, window_start, window_end), creating the
         aggregate on first registration. Returns the recomputed effective
         rate (the minimum across every registered constraint) and which
-        constraint is binding.
+        constraint is binding. The window is the aggregate's identity: this
+        endpoint (like GET /process-capacities) uses EXACT-key semantics.
+        When path capacity or a capacity plan is computed, a registered
+        window applies to the requested planning window if it COVERS it
+        (docs/adr/0003).
       requestBody:
         required: true
         content:
@@ -82,8 +86,11 @@ paths:
         Returns the effective rate (the minimum across every registered
         constraint), which constraint is binding, and the full list of
         registered constraints for the ProcessCapacity identified by
-        (process_type, location, window_start, window_end). 404 if nothing
-        has been registered for that identity yet.
+        (process_type, location, window_start, window_end). This lookup keeps
+        EXACT-key semantics (it reads one registered aggregate; it does NOT
+        match by coverage -- path capacity and capacity plans do, see
+        docs/adr/0003). 404 if nothing has been registered for that
+        identity yet.
       parameters:
         - name: process_type
           in: query
@@ -170,14 +177,21 @@ paths:
       tags: [process-paths]
       description: >
         Loads the ProcessPath identified by id, loads each of its steps'
-        ProcessCapacity for the given location and window, normalizes each
+        ProcessCapacity for the given location and window (matched by
+        COVERAGE, see below), normalizes each
         step's effective rate into ORDER/period via the WorkloadProfile
         factors supplied on the request (Phase 2 simplification: there is
         no dedicated WorkloadProfile persistence yet), and returns the
         minimum normalized rate plus which step is the bottleneck.
 
-        Each step's candidate constraints are (a) the ProcessCapacity
-        constraints registered at exactly (process, location, window) and (b)
+        Each step's candidate constraints are (a) the constraints of the
+        ProcessCapacity aggregates of (process, location) whose window
+        COVERS [window_start, window_end) -- registered window start <=
+        window_start AND registered window end >= window_end, so an equal
+        window covers it -- taking, per constraint type, the one from the
+        covering window with the LATEST start (tie: the narrower window);
+        older or wider covering windows' constraints of the same type are
+        shadowed, other types still apply (docs/adr/0003), and (b)
         a DERIVED STATION constraint = the stations facility-layout tallied
         across the zones of the site (zone ids starting with `<location>-`) x
         the declared StationStandard, when both a station count above zero
@@ -201,12 +215,14 @@ paths:
         - name: window_start
           in: query
           required: true
+          description: Planning window start; a registered window applies to a step when it covers [window_start, window_end).
           schema:
             type: string
             format: date-time
         - name: window_end
           in: query
           required: true
+          description: Planning window end (exclusive); must be after window_start.
           schema:
             type: string
             format: date-time
@@ -236,7 +252,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProcessPathCapacityResponse"
         "400":
-          description: Malformed window_start/window_end/units_per_order/packages_per_order.
+          description: Malformed window_start/window_end/units_per_order/packages_per_order, or a window whose end is not after its start.
           content:
             application/problem+json:
               schema:
@@ -249,8 +265,8 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
         "422":
           description: >
-            A path step has neither a registered ProcessCapacity for this
-            location/window nor a derived STATION constraint, or the WorkloadProfile is missing a needed
+            A path step has neither a registered ProcessCapacity whose window covers
+            the requested window at this location nor a derived STATION constraint, or the WorkloadProfile is missing a needed
             conversion factor / has an invalid one / cannot normalize a
             step's native unit.
           content:
@@ -273,9 +289,10 @@ paths:
         (path_capacity x window hours) and shortage
         (max(0, assigned_demand - capacity_over_window), never negative).
         The window is both the plan's planning window AND the window every
-        step's ProcessCapacity is looked up under: each step's
-        ProcessCapacity must have been registered for EXACTLY this
-        window_start/window_end (no overlap matching), as in Phase 2.
+        step's ProcessCapacity is looked up for: a registered window applies
+        to a step when it COVERS [window_start, window_end), exactly as in
+        GET /process-paths/{id}/capacity (docs/adr/0003). The plan stores
+        its own requested window.
         assigned_demand arrives in the request -- a documented Phase 4
         simplification (the final demand ingestion from order-management /
         network-fulfillment is a later decision; this context never makes a
@@ -610,10 +627,12 @@ components:
           type: string
           format: date-time
           example: "2026-10-05T08:00:00Z"
+          description: Start of the registered window (part of the aggregate's identity; exact key).
         window_end:
           type: string
           format: date-time
           example: "2026-10-05T09:00:00Z"
+          description: End of the registered window (exclusive; part of the aggregate's identity).
         constraint_type:
           type: string
           enum: [LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT]
@@ -763,10 +782,12 @@ components:
           type: string
           format: date-time
           example: "2026-10-05T08:00:00Z"
+          description: Plan window start. A registered capacity window applies when it covers [window_start, window_end).
         window_end:
           type: string
           format: date-time
           example: "2026-10-05T16:00:00Z"
+          description: Plan window end (exclusive); must be after window_start.
         path_id:
           type: string
           description: id of a registered ProcessPath.

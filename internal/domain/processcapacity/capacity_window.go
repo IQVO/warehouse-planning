@@ -35,3 +35,22 @@ func (w CapacityWindow) End() time.Time { return w.end }
 
 // Duration returns the window's length (end - start).
 func (w CapacityWindow) Duration() time.Duration { return w.end.Sub(w.start) }
+
+// Covers reports whether w covers other: w starts no later than other and
+// ends no earlier than other, so [other.start, other.end) lies entirely
+// inside [w.start, w.end). A window covers itself (both bounds are
+// inclusive of equality). This is the rule a registered constraint's window
+// uses to apply to a planning window (docs/adr/0003).
+func (w CapacityWindow) Covers(other CapacityWindow) bool {
+	return !w.start.After(other.start) && !w.end.Before(other.end)
+}
+
+// compareNewestFirst orders windows newest first: the LATER start comes
+// first; on equal starts the NARROWER window (earlier end) comes first.
+// Negative when a precedes b.
+func compareNewestFirst(a, b CapacityWindow) int {
+	if c := b.start.Compare(a.start); c != 0 {
+		return c
+	}
+	return a.end.Compare(b.end)
+}
