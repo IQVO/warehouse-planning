@@ -134,18 +134,15 @@ type adapters struct {
 // database (mirroring the fleet's DATABASE_URL-empty-means-in-memory
 // convention, e.g. inventory-storage's cmd/inventory).
 //
-// ports.ProcessPathRepository has NO Postgres implementation yet (a
-// Phase 1/2 gap this phase did not set out to close) -- it is always the
-// in-memory adapter here, so /process-paths' read model does not survive
-// a restart even when DATABASE_URL is set. This is a known limitation,
-// not an oversight: closing it is tracked as follow-up work, not part of
-// Phase 3's Kafka-ingestion scope.
+// ProcessPaths persist in Postgres (migration 0004) when DATABASE_URL is
+// set, so declared paths survive a pod restart; without a database the
+// in-memory repo is used exactly as before.
 func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logger *slog.Logger) (adapters, func(), error) {
 	noop := func() {}
-	pathRepo := memory.NewProcessPathRepo()
 
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not configured; using in-memory adapters")
+		pathRepo := memory.NewProcessPathRepo()
 		pcRepo, processed, tallyRepo := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
 		planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 		return adapters{
@@ -183,7 +180,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 
 	return adapters{
 		processCapacities: postgres.NewProcessCapacityRepo(pool),
-		processPaths:      pathRepo,
+		processPaths:      postgres.NewProcessPathRepo(pool),
 		processedEvents:   postgres.NewProcessedEventRepo(pool),
 		storageTally:      postgres.NewStorageTallyRepo(pool),
 		uow:               postgres.NewUnitOfWork(pool),
