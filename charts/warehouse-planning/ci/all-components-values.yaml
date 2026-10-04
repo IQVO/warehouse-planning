@@ -23,5 +23,9 @@ gatewayApi:
 autoscaling:
   api:
     enabled: true
+  frontend:
+    enabled: true
 mcp:
+  enabled: true
+frontend:
   enabled: true

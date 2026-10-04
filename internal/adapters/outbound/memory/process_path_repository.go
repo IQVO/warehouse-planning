@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
@@ -39,4 +40,17 @@ func (r *ProcessPathRepo) FindByID(_ context.Context, id string) (*processpath.P
 		return nil, nil
 	}
 	return &path, nil
+}
+
+// List returns every stored ProcessPath ordered by id (empty, non-nil when
+// none is stored).
+func (r *ProcessPathRepo) List(_ context.Context) ([]processpath.ProcessPath, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]processpath.ProcessPath, 0, len(r.store))
+	for _, path := range r.store {
+		out = append(out, path)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID() < out[j].ID() })
+	return out, nil
 }

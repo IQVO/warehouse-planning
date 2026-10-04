@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -84,6 +85,39 @@ func (s *Server) handleGetCapacityPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toCapacityPlanResponse(plan))
+}
+
+// handleListCapacityPlans backs GET /capacity-plans?location=&limit=: the most
+// recently created plans, newest first, each in GET /capacity-plans/{id}'s
+// shape. location is optional (omitted = every location, and the location
+// field of the body is omitted too). limit defaults to 20 and is capped at
+// 100; a limit that is not a positive integer is a 400 malformed-limit. 200
+// with an empty list when nothing matches. The route exists only when the
+// ListCapacityPlans use case is wired.
+func (s *Server) handleListCapacityPlans(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	location := q.Get("location")
+
+	limit := 0 // 0 = the use case's default
+	if raw := q.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-limit", "limit must be a positive integer"}, "limit must be a positive integer (at most "+strconv.Itoa(usecases.MaxCapacityPlanListLimit)+")", r.URL.Path)
+			return
+		}
+		limit = parsed
+	}
+
+	plans, err := s.ListCapacityPlans.Handle(r.Context(), location, limit)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	out := make([]capacityPlanResponse, 0, len(plans))
+	for _, p := range plans {
+		out = append(out, toCapacityPlanResponse(p))
+	}
+	writeJSON(w, http.StatusOK, capacityPlansResponse{Location: location, CapacityPlans: out})
 }
 
 func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {

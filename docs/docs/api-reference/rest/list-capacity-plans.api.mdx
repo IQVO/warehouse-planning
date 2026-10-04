@@ -1,0 +1,71 @@
+---
+id: list-capacity-plans
+title: "List the most recent CapacityPlans"
+description: "The most recently created plans, newest first (ties broken by id, descending), each in exactly the shape of GET /capacity-plans/{id}. `location` restricts the list to one location; omitted means every location (and the response then carries no `location`). `limit` defaults to 20 and is capped at 100: a larger value is served as 100, a value that is not a positive integer is rejected with 400 malformed-limit. 200 with an empty list when nothing matches. Read-only; there is no MCP tool for it."
+sidebar_label: "List the most recent CapacityPlans"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"List the most recent CapacityPlans"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/capacity-plans"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The most recently created plans, newest first (ties broken by id, descending), each in exactly the shape of GET /capacity-plans/\{id\}. `location` restricts the list to one location; omitted means every location (and the response then carries no `location`). `limit` defaults to 20 and is capped at 100: a larger value is served as 100, a value that is not a positive integer is rejected with 400 malformed-limit. 200 with an empty list when nothing matches. Read-only; there is no MCP tool for it.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./list-capacity-plans.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./list-capacity-plans.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./list-capacity-plans.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

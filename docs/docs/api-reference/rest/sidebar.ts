@@ -38,6 +38,12 @@ const sidebar: SidebarsConfig = {
       items: [
         {
           type: "doc",
+          id: "api-reference/rest/list-process-paths",
+          label: "List the registered ProcessPaths",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
           id: "api-reference/rest/register-process-path",
           label: "Register (seed) a ProcessPath read model",
           className: "api-method post",
@@ -58,6 +64,12 @@ const sidebar: SidebarsConfig = {
         id: "api-reference/rest/capacity-plans",
       },
       items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/list-capacity-plans",
+          label: "List the most recent CapacityPlans",
+          className: "api-method get",
+        },
         {
           type: "doc",
           id: "api-reference/rest/create-capacity-plan",

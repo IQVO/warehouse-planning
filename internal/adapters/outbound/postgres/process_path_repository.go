@@ -62,3 +62,37 @@ func (r *ProcessPathRepo) FindByID(ctx context.Context, id string) (*processpath
 	}
 	return &path, nil
 }
+
+// List returns every stored ProcessPath ordered by id. Steps come back in
+// their declared order (text[]), exactly as FindByID returns them.
+func (r *ProcessPathRepo) List(ctx context.Context) ([]processpath.ProcessPath, error) {
+	rows, err := queryFor(ctx, r.pool).Query(ctx, `SELECT id, name, steps FROM process_paths ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]processpath.ProcessPath, 0)
+	for rows.Next() {
+		var (
+			id, name string
+			steps    []string
+		)
+		if err := rows.Scan(&id, &name, &steps); err != nil {
+			return nil, err
+		}
+		types := make([]processpath.ProcessType, 0, len(steps))
+		for _, s := range steps {
+			types = append(types, processpath.ProcessType(s))
+		}
+		path, err := processpath.NewProcessPath(id, name, types)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
