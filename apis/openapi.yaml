@@ -32,6 +32,11 @@ tags:
     description: Operator-declared station standards and the storage/station read model of a site (ADR 0002).
   - name: demand
     description: Expected demand of a site, read from the local read model fed by order-management's order events (ADR 0004).
+  - name: reports
+    description: >
+      Read-only analytics reports (ADR 0005) served by the separate planning-reports binary on port 8092,
+      from the analytical database the planning-projector builds from this service's analytics topic.
+      Not part of the OLTP API on port 8080.
 paths:
   /process-capacities:
     post:
@@ -641,8 +646,291 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+  /reports/bottleneck-frequency:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-analytics-reports)
+    get:
+      operationId: getBottleneckFrequencyReport
+      summary: How often each bottleneck step (and binding constraint) bound a PUBLISHED plan, by site
+      tags: [reports]
+      description: >
+        For the plans PUBLISHED in the half-open range [from, to) (by the CloudEvents time of
+        CapacityPlanPublished: from inclusive, to exclusive), counts, per site (warehouse_id + location),
+        how many had each bottleneck_step bound by each binding_constraint (LABOR, STATION, ...; empty
+        for a plan created before the constraint was recorded), and `share`: that count as a fraction of
+        the site's published plans in the range. Rows are ordered by site, then count descending. Drafts
+        never count. Built from the analytics stream only (ADR 0005). `from` / `to` are optional RFC 3339
+        timestamps: both omitted means the 30 days ending now; only `to` means the 30 days before it;
+        only `from` means from..now; the range must be non-empty and at most 366 days. 200 with `rows: []`
+        when nothing matches.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+      responses:
+        "200":
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BottleneckFrequencyReport"
+        "400":
+          description: from or to is not RFC 3339, the range is empty or inverted, or it exceeds 366 days.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /reports/shortage-trend:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-analytics-reports)
+    get:
+      operationId: getShortageTrendReport
+      summary: Published plans with shortage and total shortage by site per day
+      tags: [reports]
+      description: >
+        For the plans PUBLISHED in [from, to) (from inclusive, to exclusive), per site and UTC day of the
+        publication: how many were published (ALL of them, with or without shortage, so the rate is
+        meaningful), how many had a shortage (> 0), the total shortage in orders, and `shortage_rate`
+        (plans_with_shortage / plans_published). Days without a published plan are omitted. Ordered by
+        day, then site. `from` / `to` as in /reports/bottleneck-frequency. 200 with `days: []` when
+        nothing matches.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+      responses:
+        "200":
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShortageTrendReport"
+        "400":
+          description: from or to is not RFC 3339, the range is empty or inverted, or it exceeds 366 days.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /reports/plan-throughput:
+    servers:
+      - url: http://localhost:8092
+        description: planning-reports (cluster-internal Service <release>-analytics-reports)
+    get:
+      operationId: getPlanThroughputReport
+      summary: Plans created vs published per day, and create-to-publish latency by site
+      tags: [reports]
+      description: >
+        `days`: per site and UTC day, the plans created (by the CloudEvents time of CapacityPlanCreated) and
+        the plans published (by CapacityPlanPublished) in [from, to) (from inclusive, to exclusive).
+        `latency`: per site, over the plans published in the range whose creation was also observed, the
+        median and 95th percentile (continuous, linear interpolation) of published - created, in seconds.
+        Ordered by day, then site. `from` / `to` as in /reports/bottleneck-frequency. 200 with empty arrays
+        when nothing matches.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+      responses:
+        "200":
+          description: The report (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanThroughputReport"
+        "400":
+          description: from or to is not RFC 3339, the range is empty or inverted, or it exceeds 366 days.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          description: The analytical database query failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 components:
+  parameters:
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: RFC 3339; inclusive. Defaults to `to` minus 30 days.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-05T00:00:00Z"
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: RFC 3339; exclusive. Defaults to now.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-07T00:00:00Z"
   schemas:
+    ReportSite:
+      type: object
+      required: [warehouse_id, location]
+      properties:
+        warehouse_id:
+          type: string
+          example: WH-1
+        location:
+          type: string
+          description: The planning location (site code).
+          example: SIM1
+    BottleneckFrequencyRow:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [bottleneck_step, binding_constraint, plans, share]
+          properties:
+            bottleneck_step:
+              type: string
+              example: REBIN
+            binding_constraint:
+              type: string
+              description: The constraint type binding the step (LABOR, STATION, ...); empty when unknown.
+              example: LABOR
+            plans:
+              type: integer
+              minimum: 1
+              example: 3
+            share:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              description: plans / all published plans of this site in the range.
+              example: 0.75
+    BottleneckFrequencyReport:
+      type: object
+      required: [from, to, rows]
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: The effective inclusive start.
+        to:
+          type: string
+          format: date-time
+          description: The effective exclusive end.
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/BottleneckFrequencyRow"
+    ShortageTrendDay:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [day, plans_published, plans_with_shortage, total_shortage, shortage_rate]
+          properties:
+            day:
+              type: string
+              format: date
+              description: UTC calendar day of the publication.
+              example: "2026-10-05"
+            plans_published:
+              type: integer
+              minimum: 1
+              example: 8
+            plans_with_shortage:
+              type: integer
+              minimum: 0
+              example: 2
+            total_shortage:
+              type: number
+              format: double
+              description: Sum of the plans' shortage, in orders.
+              example: 5600
+            shortage_rate:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              example: 0.25
+    ShortageTrendReport:
+      type: object
+      required: [from, to, days]
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShortageTrendDay"
+    PlanThroughputDay:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [day, plans_created, plans_published]
+          properties:
+            day:
+              type: string
+              format: date
+              example: "2026-10-05"
+            plans_created:
+              type: integer
+              minimum: 0
+              example: 5
+            plans_published:
+              type: integer
+              minimum: 0
+              example: 4
+    PlanLatency:
+      allOf:
+        - $ref: "#/components/schemas/ReportSite"
+        - type: object
+          required: [plans, median_seconds, p95_seconds]
+          properties:
+            plans:
+              type: integer
+              minimum: 1
+              description: Published plans in the range whose creation was also observed.
+              example: 4
+            median_seconds:
+              type: number
+              format: double
+              example: 390
+            p95_seconds:
+              type: number
+              format: double
+              example: 1620
+    PlanThroughputReport:
+      type: object
+      required: [from, to, days, latency]
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanThroughputDay"
+        latency:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanLatency"
     ExpectedDemandResponse:
       type: object
       required: [location, window_start, window_end, orders, released_lines, source, as_of]
