@@ -10,14 +10,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	ce "github.com/cloudevents/sdk-go/v2/event"
 	"github.com/cucumber/godog"
 
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
+	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
@@ -54,6 +58,13 @@ type world struct {
 	// planID is the id of the capacity plan the last successful create
 	// returned; the publish/get steps act on it.
 	planID string
+
+	// facility is the REAL facility-layout consumer over the in-memory tally:
+	// the Given steps feed it LocationSlotRegistered CloudEvents through
+	// HandleMessage, exactly the bytes the Kafka loop would hand it. slotSeq
+	// keeps every slot's locationCode and event id unique.
+	facility *inboundkafka.StorageCapacityConsumer
+	slotSeq  int
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -62,9 +73,15 @@ func (w *world) start() {
 	repo := memory.NewProcessCapacityRepo()
 	pathRepo := memory.NewProcessPathRepo()
 	planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	standards, tallyRepo, processed := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo(), memory.NewProcessedEventRepo()
 	uow := memory.NewUnitOfWork(repo, planRepo, outboxRepo)
 	encoder := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
+	w.facility = &inboundkafka.StorageCapacityConsumer{
+		Tally: tallyRepo, ProcessedEvents: processed, UoW: memory.NewUnitOfWork(tallyRepo, processed),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w.slotSeq = 0
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
@@ -75,6 +92,10 @@ func (w *world) start() {
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:       planRepo,
+
+		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
+		StationStandards:       standards,
+		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: tallyRepo},
 	}
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
@@ -334,6 +355,191 @@ func (w *world) theProcessPathCapacityResponseReports(rate float64, unit, _ stri
 	return nil
 }
 
+// ----------------------------------------------------- station capacity ----
+
+// facilityRegistered feeds n LocationSlotRegistered CloudEvents (one per
+// slot, role/payload as facility-layout publishes them) through the real
+// consumer's HandleMessage into the tally.
+func (w *world) facilityRegistered(payload func(code string) map[string]any, zone string, n int) error {
+	for i := 0; i < n; i++ {
+		w.slotSeq++
+		code := fmt.Sprintf("%s-%03d", zone, w.slotSeq)
+		data := payload(code)
+		data["locationCode"], data["zoneId"] = code, zone
+
+		e := ce.New(ce.CloudEventsVersionV1)
+		e.SetID(fmt.Sprintf("bdd-evt-%d", w.slotSeq))
+		e.SetSource("/warehouse/facility-layout")
+		e.SetType("com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered")
+		e.SetSubject(code)
+		e.SetTime(time.Now().UTC())
+		e.SetDataSchema("urn:warehouse:facility-layout:events:LocationSlotRegistered:v1")
+		if err := e.SetData("application/json", data); err != nil {
+			return err
+		}
+		value, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		if err := w.facility.HandleMessage(context.Background(), value); err != nil {
+			return fmt.Errorf("facility consumer rejected slot %s: %w", code, err)
+		}
+	}
+	return nil
+}
+
+func (w *world) facilityRegisteredWorkCenterSlots(n int, activity, zone string) error {
+	return w.facilityRegistered(func(string) map[string]any {
+		return map[string]any{"role": "WorkCenter", "activities": []string{activity}}
+	}, zone, n)
+}
+
+func (w *world) facilityRegisteredStorageSlots(n int, locationType, zone string) error {
+	return w.facilityRegistered(func(string) map[string]any {
+		return map[string]any{"locationType": locationType}
+	}, zone, n)
+}
+
+func (w *world) iDeclareAStationStandard(ctx context.Context, quantity float64, unit, processType, location string) error {
+	return w.record(ctx, http.MethodPut, fmt.Sprintf("/station-standards/%s/%s", location, processType), map[string]any{
+		"quantity": quantity, "unit": unit, "period_seconds": 3600,
+	})
+}
+
+func (w *world) iLookUpTheStorageCapacity(ctx context.Context, location string) error {
+	return w.record(ctx, http.MethodGet, "/storage-capacity?location="+location, nil)
+}
+
+// theStepBreakdownIs handles `the step breakdown is "PICK:3200:LABOR,..."`.
+func (w *world) theStepBreakdownIs(raw string) error {
+	var body struct {
+		Steps []struct {
+			Step              string  `json:"step"`
+			NormalizedRate    float64 `json:"normalized_rate"`
+			BindingConstraint string  `json:"binding_constraint"`
+		} `json:"step_breakdown"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	var got []string
+	for _, s := range body.Steps {
+		got = append(got, fmt.Sprintf("%s:%v:%s", s.Step, s.NormalizedRate, s.BindingConstraint))
+	}
+	if strings.Join(got, ",") != raw {
+		return fmt.Errorf("expected step breakdown %s, got %s (body %s)", raw, strings.Join(got, ","), string(w.body))
+	}
+	return nil
+}
+
+func (w *world) theResponseHasWarnings(expected int) error {
+	var body struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	if body.Warnings == nil || len(body.Warnings) != expected {
+		return fmt.Errorf("expected %d warnings (as a JSON array), got %v in %s", expected, body.Warnings, string(w.body))
+	}
+	return nil
+}
+
+func (w *world) theWarningMentions(fragment string) error {
+	var body struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	for _, warning := range body.Warnings {
+		if strings.Contains(warning, fragment) {
+			return nil
+		}
+	}
+	return fmt.Errorf("no warning mentions %q: %v", fragment, body.Warnings)
+}
+
+// theCapacityPlanIsBoundBy asserts the plan's bottleneck_constraint in the
+// last response AND as stored (GET), so the read side agrees.
+func (w *world) theCapacityPlanIsBoundBy(ctx context.Context, constraint string) error {
+	check := func(body []byte, source string) error {
+		var plan struct {
+			BottleneckConstraint string `json:"bottleneck_constraint"`
+		}
+		if err := json.Unmarshal(body, &plan); err != nil {
+			return fmt.Errorf("%s: not valid JSON (%w): %s", source, err, string(body))
+		}
+		if plan.BottleneckConstraint != constraint {
+			return fmt.Errorf("%s: expected bottleneck_constraint %s, got %s", source, constraint, string(body))
+		}
+		return nil
+	}
+	if err := check(w.body, "response"); err != nil {
+		return err
+	}
+	status0, body0 := w.status, w.body
+	defer func() { w.status, w.body = status0, body0 }()
+	if err := w.record(ctx, http.MethodGet, "/capacity-plans/"+w.planID, nil); err != nil {
+		return err
+	}
+	return check(w.body, "GET")
+}
+
+// theStorageCapacityLists handles `the storage capacity lists N <activity>
+// stations in zone "Z"` and `... N <locationType> storage positions in zone "Z"`.
+func (w *world) theStorageCapacityListsStations(n int, activity, zone string) error {
+	var body struct {
+		Stations []struct {
+			ZoneID   string `json:"zone_id"`
+			Activity string `json:"activity"`
+			Stations int    `json:"stations"`
+		} `json:"stations"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	for _, s := range body.Stations {
+		if s.ZoneID == zone && s.Activity == activity && s.Stations == n {
+			return nil
+		}
+	}
+	return fmt.Errorf("no entry of %d %s stations in zone %s in %s", n, activity, zone, string(w.body))
+}
+
+func (w *world) theStorageCapacityListsPositions(n int, locationType, zone string) error {
+	var body struct {
+		Positions []struct {
+			ZoneID       string `json:"zone_id"`
+			LocationType string `json:"location_type"`
+			Positions    int    `json:"positions"`
+		} `json:"storage_positions"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	for _, p := range body.Positions {
+		if p.ZoneID == zone && p.LocationType == locationType && p.Positions == n {
+			return nil
+		}
+	}
+	return fmt.Errorf("no entry of %d %s storage positions in zone %s in %s", n, locationType, zone, string(w.body))
+}
+
+func (w *world) theStorageCapacityListsNothing() error {
+	var body struct {
+		Positions []any `json:"storage_positions"`
+		Stations  []any `json:"stations"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	if body.Positions == nil || body.Stations == nil || len(body.Positions) != 0 || len(body.Stations) != 0 {
+		return fmt.Errorf("expected empty storage_positions and stations arrays, got %s", string(w.body))
+	}
+	return nil
+}
+
 // ------------------------------------------------------------- wiring ------
 
 // InitializeScenario registers the step definitions and gives every
@@ -361,6 +567,18 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^I create a capacity plan for warehouse "([^"]*)" at "([^"]*)" on path "([^"]*)" for the window "([^"]*)" to "([^"]*)" with assigned demand (-?\d+(?:\.\d+)?), units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iCreateACapacityPlan)
 	sc.Step(`^I publish the capacity plan$`, w.iPublishTheCapacityPlan)
 	sc.Step(`^I publish the capacity plan "([^"]*)"$`, w.iPublishTheCapacityPlanWithID)
+
+	sc.Step(`^facility-layout registered (\d+) ([A-Za-z]+) work-center slots? in zone "([^"]*)"$`, w.facilityRegisteredWorkCenterSlots)
+	sc.Step(`^facility-layout registered (\d+) storage slots? of type "([^"]*)" in zone "([^"]*)"$`, w.facilityRegisteredStorageSlots)
+	sc.Step(`^I declare a station standard of (\d+(?:\.\d+)?) (UNIT|LINE|ORDER|PACKAGE) per HOUR for ([A-Z-]+) at ([A-Z0-9-]+)$`, w.iDeclareAStationStandard)
+	sc.Step(`^I look up the storage capacity of "([^"]*)"$`, w.iLookUpTheStorageCapacity)
+	sc.Step(`^the step breakdown is "([^"]*)"$`, w.theStepBreakdownIs)
+	sc.Step(`^the response has (\d+) warnings?$`, w.theResponseHasWarnings)
+	sc.Step(`^a warning mentions "([^"]*)"$`, w.theWarningMentions)
+	sc.Step(`^the capacity plan is bound by ([A-Z]+)$`, w.theCapacityPlanIsBoundBy)
+	sc.Step(`^the storage capacity lists (\d+) ([A-Z]+) stations in zone "([^"]*)"$`, w.theStorageCapacityListsStations)
+	sc.Step(`^the storage capacity lists (\d+) ([A-Za-z]+) storage positions in zone "([^"]*)"$`, w.theStorageCapacityListsPositions)
+	sc.Step(`^the storage capacity lists nothing$`, w.theStorageCapacityListsNothing)
 
 	sc.Step(`^the response status is (\d+)$`, w.theResponseStatusIs)
 	sc.Step(`^the effective capacity response reports (\d+(?:\.\d+)?) (UNIT|LINE|ORDER|PACKAGE) per (HOUR) bound by (LABOR|LOCATION|EQUIPMENT|STATION|CONVEYOR|BUFFER|REPLENISHMENT)$`, w.theEffectiveCapacityResponseReports)
