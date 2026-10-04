@@ -1,0 +1,72 @@
+---
+id: get-process-path-capacity
+title: "Get a ProcessPath's normalized, end-to-end capacity"
+description: "Loads the ProcessPath identified by id, loads each of its steps' ProcessCapacity for the given location and window (matched by COVERAGE, see below), normalizes each step's effective rate into ORDER/period via the WorkloadProfile factors supplied on the request (Phase 2 simplification: there is no dedicated WorkloadProfile persistence yet), and returns the minimum normalized rate plus which step is the bottleneck."
+sidebar_label: "Get a ProcessPath's normalized, end-to-end capacity"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Get a ProcessPath's normalized, end-to-end capacity"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/process-paths/{id}/capacity"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Loads the ProcessPath identified by id, loads each of its steps' ProcessCapacity for the given location and window (matched by COVERAGE, see below), normalizes each step's effective rate into ORDER/period via the WorkloadProfile factors supplied on the request (Phase 2 simplification: there is no dedicated WorkloadProfile persistence yet), and returns the minimum normalized rate plus which step is the bottleneck.
+Each step's candidate constraints are (a) the constraints of the ProcessCapacity aggregates of (process, location) whose window COVERS [window_start, window_end) -- registered window start &lt; window_start AND registered window end >= window_end, so an equal window covers it -- taking, per constraint type, the one from the covering window with the LATEST start (tie: the narrower window); older or wider covering windows' constraints of the same type are shadowed, other types still apply (docs/adr/0003), and (b) a DERIVED STATION constraint = the stations facility-layout tallied across the zones of the site (zone ids starting with `<location>-`) x the declared StationStandard, when both a station count above zero and a standard exist. EVERY candidate is normalized to ORDER/hour before the minimum is taken. With stations but no declared standard the step uses (a) only and `warnings` says so. `step_breakdown` and `warnings` are additive fields.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-process-path-capacity.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-process-path-capacity.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-process-path-capacity.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

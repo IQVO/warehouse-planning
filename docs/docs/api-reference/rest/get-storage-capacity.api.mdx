@@ -1,0 +1,71 @@
+---
+id: get-storage-capacity
+title: "Storage positions and stations of a site (read model)"
+description: "The facility-layout tally of one site: storage positions per zone and locationType and work-center station counts per zone and activity, over the zones whose id starts with `<location>-`. It is a READ MODEL, not a throughput (storage positions are not process capacity), and it has no 'consumed' figure: stock is never read from inventory-storage. 200 with empty lists when nothing is tallied for the site."
+sidebar_label: "Storage positions and stations of a site (read model)"
+hide_title: true
+hide_table_of_contents: true
+api: eJztVk1vG0cM/SvEXGqjqw8bARpsihaO7RZG49i1nPaQGAk1y9VOPDuzmeHKVgT994L7IcuW4tyKHnpaYHZIPr4h+bhUvqKAbLw7y1SqZsQT9gFndIwVasMLlSjGWVTpexW5uTjQ/a+bRGUUdTCVnKtUXRcEOWpjDS8GFhe+ZmC0dgE+B+8IomFKIbYhoPLRiGWEigJ8lQvoMrBeN4GuF1V7cOfD7UCTYwrQgQDta8dPDFGzmRteJODnFIALav5FuCt8JDCZWAeOcGe4gE8/94F+GXwawhmDiYBwdXp0AucXJ6dvEnCeAYGL4OtZUdUMe9vQMVBzrwpeU4zQs7OfNJgMQ4ERnIcPSnsX65KyDwpyM6tDS4W+lcCOBHIgzCAPvgTj5uTYh8WgCzmEw/G4RU5lxQuwJkoqBTmJXxg3Ez9Ct6EMct8SIIwPPziVqAoDlsQU5DGXymFJKlU9BypRRp7wS01BHj3Ql9oEylTKoaZERV1QiSpdKl5UYhg5GDdTq0TRPZaVlbPJ2fmBWt2Iday8ixTF4HA8ls92qQi2H+KOchDiHj/0UCVCH5Nj8YVVZU0LfPQ5isPlNkI//UyaJfMgVc6mhbPOeCuX7VQS1YH7uAa3YYYhoHBlmMr4/cBSix9N9v24g8n1xdXg6Py1AOjhfmxtnrU15aQgm4vZLrzGMc0obNocvlitVk2a+K9ld3E5Gfx9LCD7hn3e6PLo+A+1G+OOjA4OVm1KbLiN+XigXXWlqdpbL3YVZ8+5NFRpYjRu9kwBVsFPLZU/fr8QH0e5+u0Yfno5/gk6B5ARo7HDLWq/9fK5DyWySlUdjHrIeEeLCnX1LuJWAkqi7jQzLjI6vcvnBsGXLfyT1k/Hfklc+E5SmuHDhUrVqGunBw1JVKQw74dSHaxKVcFcpaORvIItfOT05fjluJkrxuW+AdOFvsNAha8jDSqLzrW0PGb5GB1wYSKs765HtczHjMpGOmI0M0cZsAfDCczMnBwYjqDrEMgxWJz6kKzFKQEZkFVJjpN+ViWgvZvTwodmgk3rPKcgZ5EDGsfxV7gsMBIcAN1XPlIEh2zmBJctor5GIdDMiFFThOJLoGpfVjVTBpTnpBu7gEyvOqeHzSUnNWHNV8p6p5fIxVqV+ssvoI91adFF2FsT0BEyj0OoNi0TiIUPjDNKYOqZLTnSt/udtlqTk15oS0CiWxEs4Zx66RQRDeii9Lt3aMHXPPX3sBeJAOPCaazMcIGl3R/CpB/8XeC0p3dD3EQhny4ahQR0flOufS6cmAD+zr0CdNBuOz4MMtIWA2V9tAmjyzBksLdhXj3sG/syCuQBfKSsVeE3R68vrtaP47l4/NZwdN3uEtdn56ewl3kdR5iF0Xg8Pux2g0aft8Rv9HTH8Tlgo5XNroHtklD6jGwr7NI9ba2PhwfDcTeoUDeDqpP57UaBUmCicdJ7yUbnxXQ0mhku6ulQ+3J09udfF6MdfSbSZDTJJH0I8+7tm7Pj07eT05NmQlQ+colu48LkOa3fTHXvIcv9pz29fJjE/6+c/+WVs9MMpnseVRaNk6ppKm3ZKcJ7taUIN4mSoS//lsspRnoX7Golx+1uKjqRmYhTK9tpjjbSM/Wxd9UtsvvwLUC3tHi8CM/R1nKtkZw5BiOxVPr+ZpWogjCj0IBo7Y60poo3rLZ2U/GylsPfT6/VavUPtTu8HQ==
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Storage positions and stations of a site (read model)"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/storage-capacity"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The facility-layout tally of one site: storage positions per zone and locationType and work-center station counts per zone and activity, over the zones whose id starts with `<location>-`. It is a READ MODEL, not a throughput (storage positions are not process capacity), and it has no "consumed" figure: stock is never read from inventory-storage. 200 with empty lists when nothing is tallied for the site.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-storage-capacity.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-storage-capacity.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-storage-capacity.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

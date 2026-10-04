@@ -1,0 +1,69 @@
+---
+id: create-capacity-plan
+title: "Create a DRAFT CapacityPlan and compute its shortage"
+description: "Evaluates the ProcessPath path_id against assigned_demand (orders) for the warehouse's location over [window_start, window_end): loads each step's ProcessCapacity, normalizes it with the WorkloadProfile factors supplied in the body (same shape and validation as GET /process-paths/{id}/capacity -- there is no WorkloadProfile persistence yet), and computes path_capacity (ORDER per HOUR), bottleneck_step, capacity_over_window (path_capacity x window hours) and shortage (max(0, assigned_demand - capacity_over_window), never negative). The window is both the plan's planning window AND the window every step's ProcessCapacity is looked up for: a registered window applies to a step when it COVERS [window_start, window_end), exactly as in GET /process-paths/{id}/capacity (docs/adr/0003). The plan stores its own requested window. assigned_demand arrives in the request -- a documented Phase 4 simplification (the final demand ingestion from order-management / network-fulfillment is a later decision; this context never makes a live cross-context call). The plan is saved and its CapacityPlanCreated event is queued in the transactional outbox in ONE database transaction."
+sidebar_label: "Create a DRAFT CapacityPlan and compute its shortage"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "post api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Create a DRAFT CapacityPlan and compute its shortage"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"post"}
+  path={"/capacity-plans"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Evaluates the ProcessPath path_id against assigned_demand (orders) for the warehouse's location over [window_start, window_end): loads each step's ProcessCapacity, normalizes it with the WorkloadProfile factors supplied in the body (same shape and validation as GET /process-paths/\{id\}/capacity -- there is no WorkloadProfile persistence yet), and computes path_capacity (ORDER per HOUR), bottleneck_step, capacity_over_window (path_capacity x window hours) and shortage (max(0, assigned_demand - capacity_over_window), never negative). The window is both the plan's planning window AND the window every step's ProcessCapacity is looked up for: a registered window applies to a step when it COVERS [window_start, window_end), exactly as in GET /process-paths/\{id\}/capacity (docs/adr/0003). The plan stores its own requested window. assigned_demand arrives in the request -- a documented Phase 4 simplification (the final demand ingestion from order-management / network-fulfillment is a later decision; this context never makes a live cross-context call). The plan is saved and its CapacityPlanCreated event is queued in the transactional outbox in ONE database transaction.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./create-capacity-plan.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./create-capacity-plan.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      
