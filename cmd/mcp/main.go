@@ -10,7 +10,8 @@
 // What this binary deliberately does NOT do: it never starts the outbox
 // relay and never dials Kafka. create_capacity_plan/publish_capacity_plan
 // insert their CloudEvents into the transactional outbox inside the
-// UnitOfWork (outboundkafka.NewEncoder only builds envelopes in memory);
+// UnitOfWork (outboundkafka.NewFanoutEncoder only builds envelopes in memory,
+// one integration and one analytics message per event);
 // the relay that drains the outbox runs in cmd/api only.
 package main
 

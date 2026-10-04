@@ -148,6 +148,14 @@ see `integration-events.md`):
 Order on a shortage plan: Created (at creation), then Published,
 ShortageDetected, BottleneckDetected (at publish).
 
+`CapacityPlanPublished` also carries `BottleneckConstraint` (the plan's binding
+constraint at the bottleneck step; empty for a plan created before it was
+recorded). The INTEGRATION payload does not serialize it: only the analytics
+stream does (ADR 0005, `integration-events.md`). The same four events are written
+to both the integration and the analytics topic by the outbox; the analytical
+side (`internal/analytics/report`, `analyticsstore`) is a projection built from
+them and the domain never imports it.
+
 Vocabulary only, NOT implemented or published yet (nothing raises them):
 `ProcessCapacityRegistered` (a native constraint was registered) and
 `ProcessCapacityChanged` (the effective rate changed).

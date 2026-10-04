@@ -61,9 +61,14 @@ capacity.
   the same use cases and repositories as REST, never dials Kafka and never
   starts the outbox relay: the relay in `cmd/api` drains the outbox rows that
   MCP create and publish calls insert.
+- `cmd/planning-projector` (admin `:8091`, `/healthz` `/readyz`) is the analytics
+  read side's only writer: it consumes `warehouse.warehouse-planning.analytics`
+  and projects into the separate analytical database (ADR 0005).
+  `cmd/planning-reports` (`:8092`, `/healthz`) serves the three read-only
+  `/reports/...` endpoints from it.
 - Without `DATABASE_URL` both binaries fall back to in-memory repositories.
 - A Helm chart (`charts/warehouse-planning`) deploys the `api` component, and
-  optionally the `mcp` component (off by default).
+  optionally the `mcp` and the analytics components (off by default).
 
-Not delivered yet (tracked deferrals): an analytics projector and reports
-(there is no analytics stream), and a frontend remote.
+Not delivered yet (tracked deferrals): metrics for the analytics processes (they
+expose no `/metrics`).

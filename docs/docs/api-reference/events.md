@@ -6,8 +6,20 @@ sidebar_position: 99
 
 # Events
 
-Summary of `apis/asyncapi.yaml` (AsyncAPI 2.6.0, version 0.4.0). The file is the
+Summary of `apis/asyncapi.yaml` (AsyncAPI 2.6.0, version 0.5.0). The file is the
 authority for payload fields.
+
+## Analytics stream (ADR 0005)
+
+The four published events below are ALSO written to
+`warehouse.warehouse-planning.analytics` in the same outbox transaction, with the
+**same `type` and `id`** and
+`dataschema=urn:warehouse:warehouse-planning:analytics:<EventName>:v1`. The
+analytics payloads equal the integration payloads plus additive analytics-only
+fields: `CapacityPlanPublished.data.binding_constraint` (the constraint type
+binding the bottleneck step; `""` when unknown). Only this service's
+`planning-projector` consumes the topic; poison messages go to
+`warehouse.warehouse-planning.analytics.dlq`.
 
 ## Envelope
 
