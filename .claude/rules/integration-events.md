@@ -94,8 +94,38 @@ times RFC 3339 UTC) are documented field by field in `apis/asyncapi.yaml`.
 
 NOT implemented (do not list them as published): `ProcessCapacityRegistered`
 and `ProcessCapacityChanged` exist as domain-model vocabulary only -- nothing
-raises or publishes them yet. No analytics-topic stream
-(`warehouse.warehouse-planning.analytics`) exists yet either.
+raises or publishes them yet.
+
+### The analytics stream (ADR 0005)
+
+The same four events are ALSO written to `warehouse.warehouse-planning.analytics`
+(`outboundkafka.AnalyticsTopic`), consumed ONLY by this service's own
+`cmd/planning-projector` (DLQ `warehouse.warehouse-planning.analytics.dlq`). Rules:
+
+- **Same type, same id, other dataschema.** `FanoutEncoder` (what `cmd/api` and
+  `cmd/mcp` give the use cases) turns each domain event into TWO outbox rows --
+  integration first, analytics second -- under ONE CloudEvents id,
+  `dataschema=urn:warehouse:warehouse-planning:analytics:<EventName>:v1`. Both rows
+  are inserted by the use case's single `UnitOfWork`; never write the analytics
+  topic from anywhere else. `outbox_events` is unique on `(event_id, topic)`
+  (migration `0007`), not on `event_id`.
+- **The integration bytes never change** for analytics' sake: their golden tests
+  (`encoder_test.go`) stay as they are. Analytics-only fields go ONLY into the
+  analytics payload, additively, documented in `apis/asyncapi.yaml`: today
+  `binding_constraint` on `CapacityPlanPublished` (the domain event carries
+  `BottleneckConstraint`; only `analytics_encoder.go` serializes it). Pinned by
+  `analytics_encoder_test.go` (exact JSON per event, all attributes).
+- **The projector** (`internal/adapters/inbound/kafka/analytics_consumer.go`) is a
+  fixed-group, at-least-once consumer: group from env `ANALYTICS_CONSUMER_GROUP`,
+  dedupe on the CloudEvents `id` in the SAME analytical-database transaction as the
+  write (`analyticsstore.Projection.Apply`), offset committed after success. Not
+  CloudEvents -> skipped with a rate-limited WARN; other type -> ignored; known
+  type with an unusable payload or a deterministic store rejection -> DLQ at once;
+  transient failure -> retried on the same message, never dead-lettered.
+- The analytical database is SEPARATE (`ANALYTICS_DATABASE_URL`,
+  `warehouse_planning_analytics`, migrations in `analytics/migrations/`, applied by
+  the projector). The OLTP domain, application layer and OLTP adapters must not
+  import `internal/analytics` or `analyticsstore` (arch-test).
 
 ### Publishing: the transactional outbox
 
@@ -109,7 +139,8 @@ joining the ctx transaction exactly like the other repos). The shape mirrors
   implemented by `internal/adapters/outbound/kafka.Encoder`): the CloudEvents
   `id` is minted there and persisted, so a relay retry republishes the SAME
   bytes and id. `outbox_events.event_type` stores the FULL `type` (filter
-  SQL on the full string). Other columns: `event_id` (unique), `topic`,
+  SQL on the full string). Other columns: `event_id` (unique PER TOPIC: the
+  analytics row of an occurrence shares its id), `topic`,
   `subject`, `key`, `dataschema`, `value` (the encoded bytes), `headers`
   (JSONB, always incl. `content-type`), `created_at`, `published_at`,
   `attempts`, `last_error`.

@@ -109,37 +109,54 @@ var _ ports.EventEncoder = (*Encoder)(nil)
 func (e *Encoder) Encode(events ...capacityplan.Event) ([]outbox.Message, error) {
 	out := make([]outbox.Message, 0, len(events))
 	for _, ev := range events {
-		data, err := payloadFor(ev)
+		msg, err := e.encodeOne(ev, e.NewID())
 		if err != nil {
 			return nil, err
 		}
-		id := e.NewID()
-		value, err := cloudevents.New(cloudevents.Spec{
-			ID:        id,
-			Entity:    Entity,
-			EventName: ev.EventName(),
-			Subject:   ev.AggregateID(),
-			Time:      ev.OccurredAt(),
-			Stream:    cloudevents.StreamEvents,
-			Version:   schemaVersion,
-			Data:      data,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("encode %s: %w", ev.EventName(), err)
-		}
-		ct := cloudevents.ContentTypeHeader()
-		out = append(out, outbox.Message{
-			EventID:    id,
-			Topic:      e.topic(),
-			EventType:  cloudevents.Type(Entity, ev.EventName()),
-			Subject:    ev.AggregateID(),
-			Key:        []byte(ev.AggregateID()),
-			DataSchema: cloudevents.DataSchema(cloudevents.StreamEvents, ev.EventName(), schemaVersion),
-			Value:      value,
-			Headers:    []outbox.Header{{Key: ct.Key, Value: string(ct.Value)}},
-		})
+		out = append(out, msg)
 	}
 	return out, nil
+}
+
+// encodeOne encodes one occurrence under the given CloudEvents id. The id is
+// a parameter so FanoutEncoder can stamp the SAME id on the integration and
+// the analytics message of one occurrence.
+func (e *Encoder) encodeOne(ev capacityplan.Event, id string) (outbox.Message, error) {
+	data, err := payloadFor(ev)
+	if err != nil {
+		return outbox.Message{}, err
+	}
+	return buildMessage(ev, id, e.topic(), cloudevents.StreamEvents, data)
+}
+
+// buildMessage builds the structured-mode CloudEvent and wraps it into the
+// outbox row shape; integration and analytics messages differ only in topic,
+// stream (hence dataschema) and payload.
+func buildMessage(ev capacityplan.Event, id, topic, stream string, data any) (outbox.Message, error) {
+	value, err := cloudevents.New(cloudevents.Spec{
+		ID:        id,
+		Entity:    Entity,
+		EventName: ev.EventName(),
+		Subject:   ev.AggregateID(),
+		Time:      ev.OccurredAt(),
+		Stream:    stream,
+		Version:   schemaVersion,
+		Data:      data,
+	})
+	if err != nil {
+		return outbox.Message{}, fmt.Errorf("encode %s: %w", ev.EventName(), err)
+	}
+	ct := cloudevents.ContentTypeHeader()
+	return outbox.Message{
+		EventID:    id,
+		Topic:      topic,
+		EventType:  cloudevents.Type(Entity, ev.EventName()),
+		Subject:    ev.AggregateID(),
+		Key:        []byte(ev.AggregateID()),
+		DataSchema: cloudevents.DataSchema(stream, ev.EventName(), schemaVersion),
+		Value:      value,
+		Headers:    []outbox.Header{{Key: ct.Key, Value: string(ct.Value)}},
+	}, nil
 }
 
 func (e *Encoder) topic() string {

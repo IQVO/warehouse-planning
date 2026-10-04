@@ -10,7 +10,8 @@
 // What this binary deliberately does NOT do: it never starts the outbox
 // relay and never dials Kafka. create_capacity_plan/publish_capacity_plan
 // insert their CloudEvents into the transactional outbox inside the
-// UnitOfWork (outboundkafka.NewEncoder only builds envelopes in memory);
+// UnitOfWork (outboundkafka.NewFanoutEncoder only builds envelopes in memory,
+// one integration and one analytics message per event);
 // the relay that drains the outbox runs in cmd/api only.
 package main
 
@@ -134,7 +135,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		ProcessPaths: pathRepo, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tallyRead,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
-	encoder := outboundkafka.NewEncoder()
+	encoder := outboundkafka.NewFanoutEncoder()
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
 		ProcessCapacities:                 pcRepo,

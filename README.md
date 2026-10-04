@@ -25,12 +25,35 @@ no support guarantee.
 
 ## Deployment
 
-- **Image**: root `Dockerfile` builds every `cmd/*` directory (`api` and `mcp`) into `/app/<name>`; `ENTRYPOINT` is `./api`. Migrations are copied to `/app/migrations`.
-- **Chart**: `charts/warehouse-planning` (OLTP `api` component; optional `mcp` and `frontend` components, both off by default). It refuses to render without `database.url` or `database.existingSecret`. Run `helm lint charts/warehouse-planning --set database.url=postgres://u@example.invalid:5432/db` and `python3 charts/warehouse-planning/tests/test_service_selectors.py`.
+- **Image**: root `Dockerfile` builds every `cmd/*` directory (`api`, `mcp`, `planning-projector` and `planning-reports`) into `/app/<name>`; `ENTRYPOINT` is `./api`. OLTP migrations are copied to `/app/migrations`, the analytical ones to `/app/analytics/migrations`.
+- **Chart**: `charts/warehouse-planning` (OLTP `api` component; optional `mcp`, `frontend` and analytics (`analytics-projector`, `analytics-reports`) components, all off by default). It refuses to render without `database.url` or `database.existingSecret`. Run `helm lint charts/warehouse-planning --set database.url=postgres://u@example.invalid:5432/db` and `python3 charts/warehouse-planning/tests/test_service_selectors.py`.
 - **MCP**: `cmd/mcp` serves 10 tools over Streamable HTTP on `:8090` (`/` and `/mcp`, `GET /healthz`, no auth); see `.claude/rules/mcp.md`. Enable in the chart with `mcp.enabled=true`.
 - **Frontend remote** (`web/`, Module Federation container `capacity_mfe`): the operator screens (capacity overview, path capacity, capacity plans) that `warehouse-console` lazy-loads. Served by its own nginx workload (chart `frontend.enabled=true`, image `warehouse/warehouse-planning-frontend`) at `http://localhost/mfes/warehouse-planning/` behind the Nginx web gateway, and reads `apiOrigin` from the console's `/config.json` to call this service through Kong at `/api/warehouse-planning`. See `web/` and `.claude/rules/frontend.md`.
 - **Kind cluster**: wired by `warehouse-infra` (`local.services`); ArgoCD deploys the chart from this repo's `develop`.
-- **Not deployed yet (tracked deferrals)**: analytics projector/reports (no analytics stream yet).
+- **Analytics read side** (ADR 0005): the four capacity-plan events are also written to `warehouse.warehouse-planning.analytics` in the same outbox transaction; `cmd/planning-projector` (admin `:8091`) projects them into a SEPARATE analytical database and `cmd/planning-reports` (`:8092`, read-only) serves `GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput}`. Chart: `analytics.enabled=true` (default `false`) renders both components; the analytical DSN comes from `analytics.databaseUrl` or `analytics.existingSecret`.
+
+## Analytics read side
+
+```bash
+# 1. OLTP service fanning events onto both topics (relay publishes them)
+export EVENT_PUBLISHER=kafka KAFKA_BROKERS=localhost:9092 DATABASE_URL=...   # see Makefile for the local Postgres
+go run ./cmd/api
+
+# 2. Projector: the only writer of the analytical database (applies analytics/migrations itself)
+export ANALYTICS_DATABASE_URL='postgres://projector@localhost:5432/warehouse_planning_analytics?sslmode=disable'  # password via PGPASSWORD
+export ANALYTICS_CONSUMER_GROUP=warehouse-planning-analytics
+go run ./cmd/planning-projector
+
+# 3. Reports: read-only
+export ANALYTICS_DATABASE_URL='postgres://reports_ro@localhost:5432/warehouse_planning_analytics?sslmode=disable'
+go run ./cmd/planning-reports
+curl 'http://localhost:8092/reports/shortage-trend?from=2026-10-01T00:00:00Z&to=2026-10-08T00:00:00Z'
+```
+
+`from` / `to` are optional RFC 3339 (from inclusive, to exclusive, default the 30
+days ending now, at most 366 days). The `-tags=integration` suite starts real
+Postgres and Kafka with testcontainers and covers the whole path (plan created and
+published -> outbox -> relay -> Kafka -> projector -> analytical DB -> report).
 
 ## Frontend remote (`web/`)
 

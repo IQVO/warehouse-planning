@@ -1,0 +1,99 @@
+{{- if .Values.analytics.enabled }}
+{{- include "warehouse-planning.requireAnalyticsConfig" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "warehouse-planning.projectorFullname" . }}
+  labels:
+    {{- include "warehouse-planning.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analytics-projector
+spec:
+  {{- if not .Values.autoscaling.projector.enabled }}
+  replicas: {{ .Values.analytics.projector.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "warehouse-planning.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: analytics-projector
+  template:
+    metadata:
+      labels:
+        {{- include "warehouse-planning.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: analytics-projector
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "warehouse-planning.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with $.Values.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ . }}
+      {{- end }}
+      containers:
+        - name: projector
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/planning-projector"]
+          ports:
+            - name: admin
+              containerPort: 8091
+              protocol: TCP
+          env:
+            # Env contract verified against cmd/planning-projector/main.go.
+            - name: ADMIN_ADDR
+              value: {{ .Values.analytics.projector.adminAddr | quote }}
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.brokers | quote }}
+            # The FIXED consumer group (never a literal in the binary's reader
+            # config): a stable id lets a rescheduled pod resume from its
+            # committed offsets.
+            - name: ANALYTICS_CONSUMER_GROUP
+              value: {{ .Values.analytics.projector.consumerGroup | quote }}
+            - name: ANALYTICS_MIGRATIONS_PATH
+              value: {{ .Values.analytics.migrationsPath | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: ANALYTICS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "warehouse-planning.analyticsSecretName" . }}
+                  key: ANALYTICS_DATABASE_URL
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            # /readyz flips to 503 as the first step of graceful shutdown, so a
+            # draining pod stops being ready without failing liveness.
+            httpGet:
+              path: /readyz
+              port: admin
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.analytics.projector.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

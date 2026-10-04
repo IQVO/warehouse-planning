@@ -1,0 +1,61 @@
+---
+id: get-reports-freshness
+title: "How far the analytics projection is behind"
+description: "The freshness lag of the projection all three reports read: `as_of` is the CloudEvents time of the newest event the projector has applied and `lag_seconds` is now minus `as_of` (never negative). Both are null until the first event is applied. A growing lag means the projector is down or behind, not that a report is wrong: it catches up when the projector does."
+sidebar_label: "How far the analytics projection is behind"
+hide_title: true
+hide_table_of_contents: true
+api: eJztVttuGzcQ/ZUBn2x0LSlGiqTrooXjOK2BNHFtpy+pkYzI2V0mXHJDzkpWBf17MXuR5UvSPvWpT5aX5Jy5njNrFRqKyDb4M6NyVRJfUBMip1eRUuUpJZUpxjKp/L2K/ZG6zpShpKNt5KHK1VVFUIwPwGEJoQCuCJoYPpGWW4DOAVeRCAYzEAlNDh8xfQjFR7Cpe3HiQmtOF+Q5AduaRkuelpQYSE52TYcIFSbApnGWDKA38NFh+SGRDt6kzq4PS6itb9MWbM/TgiJ4KpHtgvYn8CJwBRgJfOsctJ6t62AKG7ewdoszgWMoY1haX3bh1oQ+3XPLJjBh6SFEmFNlvcnAB/EdGXBIglxaxuDLHCyDRtYVJWgbWFbk79kzgdLkT68yFSk1wSdKKl+rw9lM/nyrIHtdTIUlZxIsK+tIPKnE+SWmEYLM/kRlSgfP5FlsdsHqrjumn5IYXqukK6pRfvGqIZWrMJfHnVdfWhvJSKd0aVaZ2qmEdE0Tpd3Y9p73l24tJY7WlypTRYg1ssqVQaYD6QKVKYkB545UzrGl+x34r9pmKN5RX+MuxT54mqjNXU9vXfJtPad4x6XQihMP/amtt3Vbq3x23zdpvwPoos3Aehhg7rpxW46xxVSm6AbrRiCeTg43m0yxZflPPZjRzUaOv/9aK6BHt2Kr0YFBxjkmgi8txRUUaF2P9ZW6NzHMHdXf/XP978JevDqBZ89nz2AwAIYYrROku13Qm/lGE7TRqtvY71/cZCoxcrtbNeuZSopy1qM++sz6xOj1YzZ3Un3eu/+yt7PpE10TV2HgSwkIuVK5mg7ENi12uDNRXFAU+lyrNjqVq4q5yadTFzS6KiTOn89+OHyQv8ah99aXByNb7mnXJqZ4INFFjw4uKS6sJvgxkiNM9NN4d19triW+InSxDZEsMVIV2kQHo+0HoCcopCOcNN6V8mnhEBkmQ7XwK6ZkS08GOIDlDEq7IA+WE+g2Rhk0h/MQM5AQxXIGQg1NTZ4zkGp133TwC1qF2HH2vC0KivItcUTrOf0M55X06ROgmyYkSuA7robz3qMTbFBbXkGk0sqjXmW86VzVoW5aJgNUFCJAC4KITEeD0cOeHKTFnP2LzGj0HLkCPVgeLz+FEevcCc3vbRMwJGSRJtDsvswgVSEylpTBPDA78qQ/78OyConA2YL0SjvqaSmBI1yQiGNoywoQOKJP2MkmOggtz8MN7CUiwLTyGhs7WWHt9idw2SdzC5yP6U3A6DpFLGKooUBtneXVgcNVaBkqAfRhxGxaHgjTRghLfwTood8MQjwwpB1GMiPaJaM3GA3s7TxvKI7Y+6JqUoCQyMDScgWvj1+8vdgWJ3B1t9ZwfAUXp8cv4erst1PYM0GnKZo4nc1mh/vZ9l3iELEkaEKyfZDTERN0aMVQKAAhWaZOy7HbMaAOhlwvnTKLfa/PJk8ms4H3UHe857F+fFCgFjfRepnkbGeOUz6dlpardj7RoZ6e/f7H2+kjcyb6YjX5RDsw7968Pjs5fXN5+rIjnCYkrtHvXPg1LKHA2IU+MnjaXalsGjaL+4O8vmXz/3ez/3Y3G5SE6YanjUPrpfhdw6wHnbjdozN1qxTXmRIxkOP1WgT6XXSbjXzuhFrl768ztcBo+53j/fUmUxWhodhJy2daqVwda02NKNICXStuPNjgRBi26vXL6ZXabP4GVAFC3A==
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"How far the analytics projection is behind"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/reports/freshness"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The freshness lag of the projection all three reports read: `as_of` is the CloudEvents time of the newest event the projector has applied and `lag_seconds` is now minus `as_of` (never negative). Both are null until the first event is applied. A growing lag means the projector is down or behind, not that a report is wrong: it catches up when the projector does.
+
+
+<ParamsDetails>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-reports-freshness.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-reports-freshness.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

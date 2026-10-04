@@ -32,7 +32,10 @@ use cases the REST adapter calls:
   Postgres dial.
 - It does NOT start the outbox relay and does NOT dial Kafka. Create/publish
   insert their CloudEvents into the outbox inside the UnitOfWork (same as
-  REST); the relay in `cmd/api` drains them.
+  REST, two rows per event: integration and analytics topic, ADR 0005); the
+  relay in `cmd/api` drains them.
+- The analytics reports (`cmd/planning-reports`) have NO MCP tool: the surface
+  stays at 11 and a report is not an operation on the planning aggregates.
 
 ## Tools (11; budget is 11)
 

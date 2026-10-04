@@ -134,6 +134,40 @@ const sidebar: SidebarsConfig = {
         },
       ],
     },
+    {
+      type: "category",
+      label: "reports",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/reports",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/get-bottleneck-frequency-report",
+          label: "How often each bottleneck step (and binding constraint) bound a PUBLISHED plan, by site",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-shortage-trend-report",
+          label: "Published plans with shortage and total shortage by site per day",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-plan-throughput-report",
+          label: "Plans created vs published per day, and create-to-publish latency by site",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-reports-freshness",
+          label: "How far the analytics projection is behind",
+          className: "api-method get",
+        },
+      ],
+    },
   ],
 };
 

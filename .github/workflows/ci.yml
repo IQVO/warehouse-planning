@@ -102,7 +102,7 @@ jobs:
           set -euo pipefail
           go test ./... -race \
             -coverprofile=coverage.out \
-            -coverpkg=./internal/domain/...,./internal/application/...
+            -coverpkg=./internal/domain/...,./internal/application/...,./internal/analytics/...
 
       - name: Coverage gate
         env:
@@ -185,9 +185,9 @@ jobs:
           go-version-file: go.mod
       - name: Install gremlins
         run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
-      - name: Mutation testing (fast subset — processcapacity, capacityplan, processpath, demand)
+      - name: Mutation testing (fast subset — processcapacity, capacityplan, processpath, demand, analytics report)
         run: |
-          for pkg in ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath ./internal/domain/demand; do
+          for pkg in ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath ./internal/domain/demand ./internal/analytics/report; do
             echo "==> gremlins unleash $pkg"
             gremlins unleash "$pkg" || exit 1
           done

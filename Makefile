@@ -18,7 +18,7 @@ GREMLINS_VERSION   := v0.6.0
 GOVULNCHECK        ?= govulncheck
 
 COVERAGE_OUT       := coverage.out
-COVERAGE_PKGS      := ./internal/domain/...,./internal/application/...
+COVERAGE_PKGS      := ./internal/domain/...,./internal/application/...,./internal/analytics/...
 COVERAGE_THRESHOLD := 90
 
 # The fast mutation subset — kept in sync with the `mutation-fast` CI job.
@@ -26,7 +26,7 @@ COVERAGE_THRESHOLD := 90
 # settings. Pick your richest, most behaviourally-dense aggregate here —
 # not necessarily the biggest package, the one with the most branching
 # domain logic (see HARNESS.md's mutation-testing section).
-MUTATION_FAST_PKGS := ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath ./internal/domain/demand
+MUTATION_FAST_PKGS := ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath ./internal/domain/demand ./internal/analytics/report
 # The exhaustive scheduled run — kept in sync with the `mutation` CI job.
 MUTATION_FULL_PKG  := ./internal/domain
 

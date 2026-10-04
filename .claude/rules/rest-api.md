@@ -218,7 +218,20 @@ Errors (`application/problem+json`):
   `location` or `path_id`).
 
 Create and publish each queue their CloudEvents in the transactional outbox in
-the same database transaction as the plan (see `integration-events.md`).
+the same database transaction as the plan (see `integration-events.md`): each
+event as two rows, on the integration topic and on the analytics topic (ADR 0005).
+
+### Analytics reports (`cmd/planning-reports`, `:8092`, NOT this router)
+
+Three read-only reports live in a SEPARATE binary over the analytical database
+(`ANALYTICS_DATABASE_URL`), never in `inboundhttp.NewRouter`:
+`GET /reports/bottleneck-frequency`, `GET /reports/shortage-trend`,
+`GET /reports/plan-throughput`, `GET /reports/freshness` (the projection lag), plus `GET /healthz`. Optional `from` / `to`
+(RFC 3339; from inclusive, to exclusive; default the 30 days ending now; max 366
+days; bad range -> `400 invalid-report-range`); failures are
+`500 report-store-error` (cause not echoed); empty results are empty arrays. No
+auth, no write routes (405). Handler: `inboundhttp.NewReportsRouter`; contract:
+`apis/openapi.yaml` (tag `reports`) and ADR 0005.
 
 ### `GET /capacity-plans?location=&limit=`
 

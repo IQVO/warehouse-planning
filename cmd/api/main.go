@@ -71,7 +71,9 @@ func run() error {
 		ProcessPaths: pathRepo, ProcessCapacities: pcRepo,
 		StationStandards: ad.stationStandards, Tally: ad.tallyReader,
 	}
-	encoder := outboundkafka.NewEncoder()
+	// ADR 0005: every domain event is enqueued twice in the same unit of
+	// work, on the integration topic and on the analytics topic.
+	encoder := outboundkafka.NewFanoutEncoder()
 	expectedDemand := &usecases.GetExpectedDemand{Demand: ad.orderDemand}
 	server := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,

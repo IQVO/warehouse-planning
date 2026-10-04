@@ -1,0 +1,71 @@
+---
+id: get-bottleneck-frequency-report
+title: "How often each bottleneck step (and binding constraint) bound a PUBLISHED plan, by site"
+description: "For the plans PUBLISHED in the half-open range [from, to) (by the CloudEvents time of CapacityPlanPublished: from inclusive, to exclusive), counts, per site (warehouse_id + location), how many had each bottleneck_step bound by each binding_constraint (LABOR, STATION, ...; empty for a plan created before the constraint was recorded), and `share`: that count as a fraction of the site's published plans in the range. Rows are ordered by site, then count descending. Drafts never count. Built from the analytics stream only (ADR 0005). `from` / `to` are optional RFC 3339 timestamps: both omitted means the 30 days ending now; only `to` means the 30 days before it; only `from` means from..now; the range must be non-empty and at most 366 days. 200 with `rows: []` when nothing matches."
+sidebar_label: "How often each bottleneck step (and binding constraint) bound a PUBLISHED plan, by site"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"How often each bottleneck step (and binding constraint) bound a PUBLISHED plan, by site"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/reports/bottleneck-frequency"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+For the plans PUBLISHED in the half-open range [from, to) (by the CloudEvents time of CapacityPlanPublished: from inclusive, to exclusive), counts, per site (warehouse_id + location), how many had each bottleneck_step bound by each binding_constraint (LABOR, STATION, ...; empty for a plan created before the constraint was recorded), and `share`: that count as a fraction of the site's published plans in the range. Rows are ordered by site, then count descending. Drafts never count. Built from the analytics stream only (ADR 0005). `from` / `to` are optional RFC 3339 timestamps: both omitted means the 30 days ending now; only `to` means the 30 days before it; only `from` means from..now; the range must be non-empty and at most 366 days. 200 with `rows: []` when nothing matches.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-bottleneck-frequency-report.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-bottleneck-frequency-report.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-bottleneck-frequency-report.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

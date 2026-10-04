@@ -115,7 +115,11 @@ func TestMCPAgainstPostgres_Section43PersistsPlanAndOutbox(t *testing.T) {
 		t.Fatalf("capacity_plans row: status=%q err=%v", status, err)
 	}
 	var outboxRows int
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM outbox_events`).Scan(&outboxRows); err != nil || outboxRows != 4 {
-		t.Fatalf("outbox_events rows = %d (err %v), want 4 (Created, Published, ShortageDetected, BottleneckDetected)", outboxRows, err)
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM outbox_events`).Scan(&outboxRows); err != nil || outboxRows != 8 {
+		t.Fatalf("outbox_events rows = %d (err %v), want 8 (Created, Published, ShortageDetected, BottleneckDetected, each on the integration AND the analytics topic: ADR 0005)", outboxRows, err)
+	}
+	var analyticsRows int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE topic = 'warehouse.warehouse-planning.analytics'`).Scan(&analyticsRows); err != nil || analyticsRows != 4 {
+		t.Fatalf("analytics-topic rows = %d (err %v), want 4", analyticsRows, err)
 	}
 }
