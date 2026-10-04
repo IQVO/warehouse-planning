@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 
 coverage.out
+.claude/settings.local.json

@@ -1,3 +1,11 @@
+---
+paths:
+  - "internal/domain/**"
+  - "internal/application/**"
+  - "features/**"
+  - "features_test.go"
+---
+
 # Domain model: ubiquitous language, aggregates, events, use cases
 
 ## Ubiquitous Language (use these exact names)
@@ -186,6 +194,6 @@ Vocabulary only, NOT implemented or published yet (nothing raises them):
   publishes serialize.
 
 Full phased delivery plan, worked examples (reproduced here as test
-fixtures) and acceptance criteria: see the maintainer's
-`warehouse-planning-bc-plan.md` design doc (referenced from this repo's
-README).
+fixtures) and acceptance criteria: the maintainer's out-of-repo
+`warehouse-planning-bc-plan.md` design doc (cited in ADR 0001; it is not
+checked in here).

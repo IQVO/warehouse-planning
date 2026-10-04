@@ -1,5 +1,19 @@
-<!-- TEMPLATE (warehouse-harness-template v2): fill in for THIS repo. -->
+---
+paths:
+  - "internal/adapters/inbound/http/**"
+  - "apis/openapi*.yaml"
+  - "apis/openapi/**"
+---
+
 # REST API (inbound adapter)
+
+Routes are wired in `NewRouter` (`internal/adapters/inbound/http/process_capacity_handler.go`);
+the worked recipe for adding one is `.claude/skills/how-to-add-a-rest-endpoint/SKILL.md`.
+This service does NOT implement the fleet `Idempotency-Key` middleware
+(`.claude/rules/fleet/idempotency-and-outbox.md` says resource-creating POSTs
+require it, but no POST here does, in code, `apis/openapi.yaml` or tests).
+Do not add it as a drive-by change: it alters the contract for every client.
+Raise it with the user first.
 
 Phase 1 (current):
 
@@ -39,10 +53,11 @@ Kept in sync with `apis/openapi.yaml` as each endpoint ships (the
 
 ## `POST /process-paths` request/response shape
 
-Seeds a ProcessPath read model (id/name/ordered, non-empty steps). There
-is no event-driven sync from process-path-management yet (a later phase)
--- this is the only way a ProcessPath becomes known to this service for
-now.
+Declares a ProcessPath (id/name/ordered, non-empty steps). There is no
+event-driven sync from process-path-management (deliberately: its ProcessPath
+carries no physical step sequence, ADR 0001 Addendum, 2026-10-03), so this
+context owns its own ProcessPath and this endpoint is the only way a
+ProcessPath becomes known to this service.
 
 ```json
 // request
