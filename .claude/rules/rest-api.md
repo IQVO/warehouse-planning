@@ -46,6 +46,11 @@ now.
 
 422 (`application/problem+json`) if `steps` is empty.
 
+Persistence: with `DATABASE_URL` set the path is stored in Postgres
+(`process_paths`, migration `0004`; `steps` is a `text[]` column, which keeps
+step ORDER) and survives a restart; without it the in-memory repo is used.
+Re-registering an existing `id` replaces name and steps wholesale in both.
+
 ## `GET /process-paths/{id}/capacity` request/response shape
 
 Query parameters:

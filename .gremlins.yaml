@@ -41,6 +41,14 @@ unleash:
     # which would leave an equivalent `>` -> `>=` mutant (both yield 0 at
     # the boundary); the `shortage > 0` event gate is pinned by the exact
     # 8000 boundary test. The threshold (99) is unchanged -- not lowered.
+    # Re-measured 2026-10-03 (Task: widen mutation-fast), local gremlins
+    # v0.6.0, one `gremlins unleash <pkg>` per package exactly as the CI
+    # `mutation-fast` job and `make mutation-fast` now loop them:
+    # processcapacity 21/21 killed, capacityplan 14/14 killed, processpath
+    # 1/1 killed -- efficacy 100.00% and mutant coverage 100.00% in each.
+    # The threshold (99) is unchanged -- not lowered -- and is still
+    # strictly below every measured value.
+    #
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we
     # already achieve" approach -- never copied from a sibling repo.

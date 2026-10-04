@@ -172,8 +172,12 @@ jobs:
           go-version-file: go.mod
       - name: Install gremlins
         run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
-      - name: Mutation testing (fast subset — processcapacity aggregate)
-        run: gremlins unleash ./internal/domain/processcapacity
+      - name: Mutation testing (fast subset — processcapacity, capacityplan, processpath)
+        run: |
+          for pkg in ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath; do
+            echo "==> gremlins unleash $pkg"
+            gremlins unleash "$pkg" || exit 1
+          done
 
   mutation:
     runs-on: ubuntu-latest
