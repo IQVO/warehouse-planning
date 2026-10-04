@@ -105,6 +105,10 @@ func run() error {
 		// Expected demand (ADR 0004): the read model fed by the order
 		// demand consumer; GET /demand and the plan's default demand read it.
 		GetExpectedDemand: expectedDemand,
+
+		// Console remote list reads (REST only; no MCP tool).
+		ListProcessPaths:  &usecases.ListProcessPaths{Paths: ad.pathLister},
+		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: ad.planLister},
 	}
 	httpServer := &http.Server{
 		Addr:              httpAddr,
@@ -161,6 +165,12 @@ type adapters struct {
 	// orderDemand is the expected-demand read model (ADR 0004), written by
 	// the order demand consumer and read by GET /demand and plan creation.
 	orderDemand ports.OrderDemandRepository
+
+	// pathLister and planLister are the list-read sides of processPaths and
+	// capacityPlans (the same repositories), behind GET /process-paths and
+	// GET /capacity-plans.
+	pathLister ports.ProcessPathLister
+	planLister ports.CapacityPlanLister
 }
 
 // buildAdapters wires the Postgres adapters when DATABASE_URL is set, or
@@ -193,6 +203,8 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 			outbox:        outboxRepo,
 			outboxStore:   outboxRepo,
 			orderDemand:   demandRepo,
+			pathLister:    pathRepo,
+			planLister:    planRepo,
 		}, noop, nil
 	}
 
@@ -217,19 +229,22 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 	logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
 	outboxRepo := postgres.NewOutboxRepo(pool)
 	tallyRepo := postgres.NewStorageTallyRepo(pool)
+	pathRepo, planRepo := postgres.NewProcessPathRepo(pool), postgres.NewCapacityPlanRepo(pool)
 
 	return adapters{
 		processCapacities: postgres.NewProcessCapacityRepo(pool),
-		processPaths:      postgres.NewProcessPathRepo(pool),
+		processPaths:      pathRepo,
 		processedEvents:   postgres.NewProcessedEventRepo(pool),
 		storageTally:      tallyRepo,
 		tallyReader:       tallyRepo,
 		stationStandards:  postgres.NewStationStandardRepo(pool),
 		uow:               postgres.NewUnitOfWork(pool),
-		capacityPlans:     postgres.NewCapacityPlanRepo(pool),
+		capacityPlans:     planRepo,
 		outbox:            outboxRepo,
 		outboxStore:       outboxRepo,
 		orderDemand:       postgres.NewOrderDemandRepo(pool),
+		pathLister:        pathRepo,
+		planLister:        planRepo,
 	}, pool.Close, nil
 }
 

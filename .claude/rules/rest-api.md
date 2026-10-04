@@ -41,6 +41,13 @@ Station capacity (current, docs/adr/0002):
 Kept in sync with `apis/openapi.yaml` as each endpoint ships (the
 `docs-api-drift` CI job fails if generated docs disagree with the spec).
 
+Console remote list reads (current; REST only, **no MCP tools**: the MCP tool
+surface is capped by `internal/adapters/inbound/mcp/governance_test.go` and is
+unchanged):
+
+- `GET /process-paths`                     -> `ListProcessPaths`
+- `GET /capacity-plans?location=&limit=`   -> `ListCapacityPlans`
+
 ## Conventions
 
 - Error shape: RFC 7807 `application/problem+json`, matching the rest of
@@ -72,6 +79,22 @@ Persistence: with `DATABASE_URL` set the path is stored in Postgres
 (`process_paths`, migration `0004`; `steps` is a `text[]` column, which keeps
 step ORDER) and survives a restart; without it the in-memory repo is used.
 Re-registering an existing `id` replaces name and steps wholesale in both.
+
+### `GET /process-paths`
+
+Lists every registered ProcessPath (the console remote's path picker; there is
+no other way to discover a path id). Ordered by `id`; `steps` keep their
+declared order. `200` with an empty list when none is registered, never an
+error and never `null`:
+
+```json
+{ "process_paths": [ { "id": "pick-rebin-pack", "name": "Pick-Rebin-Pack", "steps": ["PICK", "REBIN", "PACK"] } ] }
+```
+
+Read through the separate `ports.ProcessPathLister` (implemented by the memory
+and Postgres repos next to `ProcessPathRepository`, which is deliberately not
+widened: test fakes of that interface exist). The route is registered only when
+`Server.ListProcessPaths` is wired (always in `cmd/api`).
 
 ## `GET /process-paths/{id}/capacity` request/response shape
 
@@ -196,6 +219,27 @@ Errors (`application/problem+json`):
 
 Create and publish each queue their CloudEvents in the transactional outbox in
 the same database transaction as the plan (see `integration-events.md`).
+
+### `GET /capacity-plans?location=&limit=`
+
+The most recently created plans, newest first (`created_at` descending, ties by
+`id` descending), each item exactly the `GET /capacity-plans/{id}` shape:
+
+```json
+{ "location": "SIM1", "capacity_plans": [ { "id": "...", "status": "DRAFT", "...": "..." } ] }
+```
+
+- `location` (optional): restrict to one location; omitted = every location and
+  the body then carries no `location` field.
+- `limit` (optional): default **20**, capped at **100** (a larger value is
+  served as 100). Not a positive integer (`0`, `-1`, `abc`, `1.5`) is
+  `400 malformed-limit` (`application/problem+json`).
+- `200` with `"capacity_plans": []` when nothing matches (never `null`).
+- Read through `ports.CapacityPlanLister.ListRecent` (memory + Postgres repos;
+  `CapacityPlanRepository` itself is not widened, test fakes embed it). It never
+  locks a row. No dedicated index: the table is small and `(location,
+  created_at)` is a plain scan + sort; add one in a migration if it grows.
+  Registered only when `Server.ListCapacityPlans` is wired (always in `cmd/api`).
 
 ## Station capacity (docs/adr/0002)
 

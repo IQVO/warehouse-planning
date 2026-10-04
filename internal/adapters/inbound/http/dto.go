@@ -49,6 +49,12 @@ type processPathResponse struct {
 	Steps []string `json:"steps"`
 }
 
+// processPathsResponse is GET /process-paths' body: every registered path,
+// ordered by id.
+type processPathsResponse struct {
+	ProcessPaths []processPathResponse `json:"process_paths"`
+}
+
 // processPathCapacityResponse is GET /process-paths/{id}/capacity's
 // response body: the WorkloadProfile-normalized rate (always ORDER) and
 // which step is the bottleneck.
@@ -119,6 +125,14 @@ type capacityPlanResponse struct {
 	// recorded) and Warnings (never null) are additive, see ADR 0002.
 	BottleneckConstraint string   `json:"bottleneck_constraint"`
 	Warnings             []string `json:"warnings"`
+}
+
+// capacityPlansResponse is GET /capacity-plans' body: the most recent plans,
+// newest first, each in capacityPlanResponse's shape. Location echoes the
+// filter and is omitted when none was given.
+type capacityPlansResponse struct {
+	Location      string                 `json:"location,omitempty"`
+	CapacityPlans []capacityPlanResponse `json:"capacity_plans"`
 }
 
 // declareStationStandardRequest is PUT /station-standards/{location}/

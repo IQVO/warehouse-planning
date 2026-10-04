@@ -138,6 +138,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
   /process-paths:
+    get:
+      operationId: listProcessPaths
+      summary: List the registered ProcessPaths
+      tags: [process-paths]
+      description: >
+        Every ProcessPath registered with POST /process-paths, ordered by id,
+        each with its ordered steps. 200 with an empty list when none is
+        registered. Read-only; there is no MCP tool for it.
+      responses:
+        "200":
+          description: The registered paths (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathsResponse"
     post:
       operationId: registerProcessPath
       summary: Register (seed) a ProcessPath read model
@@ -276,6 +291,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
   /capacity-plans:
+    get:
+      operationId: listCapacityPlans
+      summary: List the most recent CapacityPlans
+      tags: [capacity-plans]
+      description: >
+        The most recently created plans, newest first (ties broken by id,
+        descending), each in exactly the shape of GET /capacity-plans/{id}.
+        `location` restricts the list to one location; omitted means every
+        location (and the response then carries no `location`). `limit`
+        defaults to 20 and is capped at 100: a larger value is served as 100,
+        a value that is not a positive integer is rejected with 400
+        malformed-limit. 200 with an empty list when nothing matches.
+        Read-only; there is no MCP tool for it.
+      parameters:
+        - name: location
+          in: query
+          required: false
+          schema:
+            type: string
+          example: SIM1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+      responses:
+        "200":
+          description: The plans, newest first (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityPlansResponse"
+        "400":
+          description: limit is not a positive integer (malformed-limit).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
     post:
       operationId: createCapacityPlan
       summary: Create a DRAFT CapacityPlan and compute its shortage
@@ -826,6 +883,25 @@ components:
           type: array
           items:
             type: string
+    ProcessPathsResponse:
+      type: object
+      properties:
+        process_paths:
+          type: array
+          description: Every registered path, ordered by id.
+          items:
+            $ref: "#/components/schemas/ProcessPathResponse"
+    CapacityPlansResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          description: The location filter, when one was given.
+        capacity_plans:
+          type: array
+          description: Most recently created first.
+          items:
+            $ref: "#/components/schemas/CapacityPlanResponse"
     ProcessPathCapacityResponse:
       type: object
       properties:

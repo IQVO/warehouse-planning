@@ -72,6 +72,10 @@ type world struct {
 	// orderSeq keeps every event id unique and increases the event time.
 	orders   *inboundkafka.OrderDemandConsumer
 	orderSeq int
+
+	// planClock is the creation time of the last capacity plan; see
+	// nextPlanTime.
+	planClock time.Time
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -99,6 +103,7 @@ func (w *world) start() {
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	w.orderSeq = 0
+	w.planClock = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
@@ -107,9 +112,14 @@ func (w *world) start() {
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
 			Demand: expectedDemand,
+			// Each plan is created one minute after the previous one, so
+			// "newest first" in the list scenarios never hangs on a clock tie.
+			Now: w.nextPlanTime,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:       planRepo,
+		ListProcessPaths:    &usecases.ListProcessPaths{Paths: pathRepo},
+		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: planRepo},
 
 		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
 		StationStandards:       standards,
@@ -624,4 +634,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the process path capacity response reports (\d+(?:\.\d+)?) (ORDER) per (HOUR) bound by ([A-Z-]+)$`, w.theProcessPathCapacityResponseReports)
 
 	registerDemandSteps(sc, w)
+	registerListSteps(sc, w)
 }
