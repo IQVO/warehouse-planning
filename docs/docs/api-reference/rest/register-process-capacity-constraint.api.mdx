@@ -1,0 +1,69 @@
+---
+id: register-process-capacity-constraint
+title: "Register (or upsert) one capacity constraint"
+description: "Upserts one named constraint (LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER or REPLENISHMENT) on the ProcessCapacity identified by (process_type, location, window_start, window_end), creating the aggregate on first registration. Returns the recomputed effective rate (the minimum across every registered constraint) and which constraint is binding. The window is the aggregate's identity: this endpoint (like GET /process-capacities) uses EXACT-key semantics. When path capacity or a capacity plan is computed, a registered window applies to the requested planning window if it COVERS it (docs/adr/0003)."
+sidebar_label: "Register (or upsert) one capacity constraint"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "post api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Register (or upsert) one capacity constraint"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"post"}
+  path={"/process-capacities"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Upserts one named constraint (LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER or REPLENISHMENT) on the ProcessCapacity identified by (process_type, location, window_start, window_end), creating the aggregate on first registration. Returns the recomputed effective rate (the minimum across every registered constraint) and which constraint is binding. The window is the aggregate's identity: this endpoint (like GET /process-capacities) uses EXACT-key semantics. When path capacity or a capacity plan is computed, a registered window applies to the requested planning window if it COVERS it (docs/adr/0003).
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./register-process-capacity-constraint.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./register-process-capacity-constraint.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

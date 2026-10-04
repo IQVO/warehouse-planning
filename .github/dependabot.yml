@@ -1,0 +1,26 @@
+version: 2
+
+updates:
+  # docs/ is a separate npm workspace (Docusaurus site). Dependabot only sees
+  # it through this entry; keep the scoped overrides in docs/package.json when
+  # bumping (see the fleet npm-overrides recipe).
+  - package-ecosystem: "npm"
+    directory: "/docs"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "npm"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "npm"
+      - "docs"
+    groups:
+      npm-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"

@@ -1,0 +1,71 @@
+---
+id: get-effective-process-capacity
+title: "Get the effective capacity for a process, location and window"
+description: "Returns the effective rate (the minimum across every registered constraint), which constraint is binding, and the full list of registered constraints for the ProcessCapacity identified by (process_type, location, window_start, window_end). This lookup keeps EXACT-key semantics (it reads one registered aggregate; it does NOT match by coverage -- path capacity and capacity plans do, see docs/adr/0003). 404 if nothing has been registered for that identity yet."
+sidebar_label: "Get the effective capacity for a process, location and window"
+hide_title: true
+hide_table_of_contents: true
+api: eJztV9tuGzcQ/ZUBnyx0dUniIsHmoXAVNTCa2q6jFEVTwxiRs7uMueSGnJWtCvr3gru6rC3lgiDpQ5EnQcvhnOFczyyFq8gja2dPlUhFTjzJMpKs53ThnaQQxlih1LwQiWDMg0jfiqo96cv2SFMQV4lQFKTXVdQlUnFJXHsbgAsC2qgEj0xwFL+V2uqyLgGldyEAzckvwFOuA5MnBdLZwB615V4Ct4WWRecT6AAzbZW2eQJoVYOS1caA0YHBZYc1Bcicb2QfvA20Iss606RgtoCj9QOveVFRAsbJxkMJ3Gqr3O11YPS8/UdW9QYwLXQA49xNXcENURVg8ufJeNq/oQUEKtGylgGONIMnVAGcpa6RmOeecmR6DppBOQpwdj6FElkW0STp5uQxJ+j3oUIuQG5Mj8/f/qkM2gDKJRCIQDkZhqj8cDQaPekN4Hh0DDoD67jQNocCA8yIbNeO1kHIa4/wAhbEg7+tSESFHkti8jEHlsJiSSIVXVeJROgY+/c1+Zgvnt7X2pMSKfuaEhFkQSWKdCka6VQE9trmYpUIusOyMvHbxen4V7FKtgAb73815f2/zs8m/ZMuRjeuX4qTiMz5ElmkQiFTn3VJYrUPQlZ9ZYirqCFUzgYK8dLj0Sj+3K/HbVnvkqWNtQ6wjuEu05ukau0diERIZ5ksR6VYVUa3QsN3IWpe7pvrZu9IRkdWPraXpkGkS7FtA9exDXTkbV3OyN97nqtnJubTNnRPfhyNYii3Omqr+ZCLdsF+c3Y6jeFfd4rrXSP4+L1X5+OT6en5WbzbaR6dS+g9xsBppjJ8+uE7JW2ZHMrR9zU29fY5blkl4vDrV4moyGunrgNJZ1X4LG2rRLDm5unjraUTy34hVt3DbQpt2ublOuui2CoRx4fy7jc0EZDUveY53BXDRxKs8m5mqPzh04n2YPb8Moanz0ZPYa0AFDFqM9gLzOFodFxUey12Hjjg7sDIddfN2jLl5ONZi3rwmraB0cpDOjsOv2jNf9Hq2Tj5eN/JZ25vou319C+v8+9heBiGVSJK4sKtKVMzHLkQqRgeoEaJCOTnm7FZeyNSUTBX6XAY42AKFzh9Nno2ErGTa5u5xpw1+C16KlwdqB9nu20dc9/PY7RtfLeym0g3XEdF9qEAQ9C5JQXsQHMCuZ6TBc0BZO09WQaDM+e7dCeOpaokywlEBzffpLNzWjjfpM6szjLyXYb1E1wUGAgeAd1VLlAAi83UOZyffpeG0VTpyqpmUg8Y4/O10seNkI1ZYfQ/pDZKL7qEaCN8DBusi4YUHW0dsHbIPAzuU6kEQuE8Y04JzByzIUvypge3hQsERmckF9JQ5KqRSxrCOQEX3tV5AQjs0QaU8UFowNU8c3dwFHkYhoWVWOnBAkvTG8Dr1plb4HTj3gCMxkQWmnlXQoZSG82LvsGFqxmKCGjdBrOqG6rLBWkP7tY+B7TQ8nnn+4qkwVj+a7TXjFahV5F+b69X5DfYvUiqYwBcaJo1F/Dq5Ofzy21wHBf3Yw0nU7icnLyA6elvEzjqss3HvR0vD+wa5lq5oNtHDjeYIF0dFbkMEIJmAvQE2FBkKJ0i01LPWD1tro8GjwajdatC2bSqDb3aKxQoo5mobay9pFN5IR0Oc81FPRtIVw5Pf//jfHigzlaJMFpSHHA7mDdnr07Hk7PXkxdNj6hc4BJtR+Al8YOl5x7hwo924Ye1vdz15O8b1f9uo1qPHKY7HlYGtW2YnW9mVTtQPrRrx5kRT5fLGQZ6481qFT+3C0UcM0oHnJm4UmRoAn0krY4u19tHDz5k0g0t9je9OZo6ijZ71DeA6+x93xrqwfr3H8G1i+AO7Cr+8TqiifTt1SoRBaEi38SzvXkiJVVdE/fWsahlS01eTqZitfoXmk9HcA==
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Get the effective capacity for a process, location and window"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/process-capacities"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns the effective rate (the minimum across every registered constraint), which constraint is binding, and the full list of registered constraints for the ProcessCapacity identified by (process_type, location, window_start, window_end). This lookup keeps EXACT-key semantics (it reads one registered aggregate; it does NOT match by coverage -- path capacity and capacity plans do, see docs/adr/0003). 404 if nothing has been registered for that identity yet.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-effective-process-capacity.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-effective-process-capacity.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-effective-process-capacity.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

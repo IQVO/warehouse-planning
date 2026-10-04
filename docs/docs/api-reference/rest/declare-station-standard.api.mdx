@@ -1,0 +1,71 @@
+---
+id: declare-station-standard
+title: "Declare the throughput of ONE station of a process at a site"
+description: "Upserts the StationStandard keyed by (location, process_type): the throughput of a single station in the process's natural unit, e.g. 180 PACKAGE per 3600 s for PACK at SIM1. The count of stations comes from facility-layout; count x standard is composed with the step's registered constraints when a path capacity or capacity plan is computed (nothing derived is stored, so a late declaration applies on the next read). `location` is the site (building) code, the first dash-separated segment of the facility zone ids."
+sidebar_label: "Declare the throughput of ONE station of a process at a site"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "put api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Declare the throughput of ONE station of a process at a site"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"put"}
+  path={"/station-standards/{location}/{process_type}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Upserts the StationStandard keyed by (location, process_type): the throughput of a single station in the process's natural unit, e.g. 180 PACKAGE per 3600 s for PACK at SIM1. The count of stations comes from facility-layout; count x standard is composed with the step's registered constraints when a path capacity or capacity plan is computed (nothing derived is stored, so a late declaration applies on the next read). `location` is the site (building) code, the first dash-separated segment of the facility zone ids.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./declare-station-standard.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./declare-station-standard.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./declare-station-standard.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

@@ -1,0 +1,71 @@
+---
+id: publish-capacity-plan
+title: "Publish a DRAFT CapacityPlan"
+description: "Moves the plan DRAFT -> PUBLISHED, saves it and queues, in the same database transaction, CapacityPlanPublished plus -- only when the plan has a shortage -- CapacityShortageDetected and BottleneckDetected in the transactional outbox. A relay publishes them to Kafka as CloudEvents (see asyncapi.yaml). Publishing twice is never silent: the second call is a 409 and queues nothing."
+sidebar_label: "Publish a DRAFT CapacityPlan"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "post api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Publish a DRAFT CapacityPlan"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"post"}
+  path={"/capacity-plans/{id}/publish"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Moves the plan DRAFT -&gt; PUBLISHED, saves it and queues, in the same database transaction, CapacityPlanPublished plus -- only when the plan has a shortage -- CapacityShortageDetected and BottleneckDetected in the transactional outbox. A relay publishes them to Kafka as CloudEvents (see asyncapi.yaml). Publishing twice is never silent: the second call is a 409 and queues nothing.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./publish-capacity-plan.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./publish-capacity-plan.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./publish-capacity-plan.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      
