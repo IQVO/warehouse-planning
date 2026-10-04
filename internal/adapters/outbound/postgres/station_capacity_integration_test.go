@@ -142,9 +142,10 @@ func TestMigration0005_AppliesOn0004_DeletesLegacyDerivedRows_AndRollsBack(t *te
 		t.Fatalf("re-applying migrations: %v", err)
 	}
 
-	// Down drops only what 0005 added.
-	if err := migrator(t, databaseURL).Steps(-1); err != nil {
-		t.Fatalf("down 0005: %v", err)
+	// Down drops only what 0005 added. Migrate(4) rather than Steps(-1): later
+	// migrations (0006 and on) sit above 0005, and they are rolled back first.
+	if err := migrator(t, databaseURL).Migrate(4); err != nil {
+		t.Fatalf("down to 0004: %v", err)
 	}
 	if scalar[bool](t, pool, `SELECT to_regclass('station_standards') IS NOT NULL`) {
 		t.Error("station_standards still exists after the down migration")
