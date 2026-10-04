@@ -72,6 +72,12 @@ type CapacityPlanPublished struct {
 	CapacityOverWindow float64
 	Shortage           float64
 	BottleneckStep     processcapacity.ProcessType
+
+	// BottleneckConstraint is the constraint type binding the bottleneck
+	// step at creation (LABOR, STATION, ...); empty for a plan created before
+	// it was recorded. The integration payload does NOT carry it: only the
+	// analytics stream does (bottleneck-frequency report, ADR 0005).
+	BottleneckConstraint processcapacity.ConstraintType
 }
 
 // EventName implements Event.

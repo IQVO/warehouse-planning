@@ -84,7 +84,8 @@ type CapacityPlan struct {
 	// bottleneckConstraint is the constraint type binding the bottleneck
 	// step (LABOR, STATION, ...) and warnings are the composition warnings
 	// raised when the path capacity was computed. Both are informational
-	// read-model fields: no published event carries them.
+	// read-model fields: no INTEGRATION event carries them; the constraint
+	// rides on CapacityPlanPublished for the analytics stream only.
 	bottleneckConstraint processcapacity.ConstraintType
 	warnings             []string
 
@@ -243,6 +244,8 @@ func (c *CapacityPlan) Publish(now time.Time) error {
 		CapacityOverWindow: c.capacityOverWindow,
 		Shortage:           c.shortage,
 		BottleneckStep:     c.bottleneckStep,
+
+		BottleneckConstraint: c.bottleneckConstraint,
 	})
 	if c.shortage > 0 {
 		c.record(CapacityShortageDetected{

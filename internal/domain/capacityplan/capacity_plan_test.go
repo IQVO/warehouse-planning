@@ -453,3 +453,39 @@ func TestCreate_RecordsBottleneckConstraintAndWarnings(t *testing.T) {
 		t.Fatalf("Rehydrate lost the composition outcome: %s %q", again.BottleneckConstraint(), again.Warnings())
 	}
 }
+
+// The bottleneck's binding constraint travels on CapacityPlanPublished (and
+// only there: it feeds the analytics bottleneck-frequency report, ADR 0005).
+// A plan rebuilt from storage publishes the constraint it was stored with, a
+// plan created before the constraint was recorded publishes an empty one, and
+// the shortage/bottleneck events never carry it.
+func TestPublish_CarriesTheBottleneckConstraintOnThePublishedEventOnly(t *testing.T) {
+	plan := Rehydrate(RehydrateParams{
+		ID: planID, WarehouseID: warehouseID, Location: "SIM1", Window: mustWindow(t, windowStart, windowEnd),
+		ProcessPathID: pathID, AssignedDemand: 20000, PathCapacity: 1800, BottleneckStep: "PACK",
+		CapacityOverWindow: 14400, Shortage: 5600, Status: StatusDraft, CreatedAt: createdAt,
+		BottleneckConstraint: processcapacity.ConstraintStation,
+	})
+	if err := plan.Publish(publishedAt); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	events := plan.PullEvents()
+	published, ok := events[0].(CapacityPlanPublished)
+	if !ok || published.BottleneckConstraint != processcapacity.ConstraintStation {
+		t.Fatalf("published event = %#v, want BottleneckConstraint STATION", events[0])
+	}
+	if len(events) != 3 || events[1].(CapacityShortageDetected).BottleneckStep != "PACK" {
+		t.Fatalf("events = %#v", events)
+	}
+
+	legacy := Rehydrate(RehydrateParams{
+		ID: planID, WarehouseID: warehouseID, Location: "SIM1", Window: mustWindow(t, windowStart, windowEnd),
+		ProcessPathID: pathID, BottleneckStep: "PACK", Status: StatusDraft, CreatedAt: createdAt,
+	})
+	if err := legacy.Publish(publishedAt); err != nil {
+		t.Fatalf("Publish legacy: %v", err)
+	}
+	if got := legacy.PullEvents()[0].(CapacityPlanPublished).BottleneckConstraint; got != "" {
+		t.Fatalf("legacy plan published constraint %q, want empty", got)
+	}
+}
