@@ -26,13 +26,13 @@ COVERAGE_THRESHOLD := 90
 # settings. Pick your richest, most behaviourally-dense aggregate here —
 # not necessarily the biggest package, the one with the most branching
 # domain logic (see HARNESS.md's mutation-testing section).
-MUTATION_FAST_PKG  := ./internal/domain/processcapacity
+MUTATION_FAST_PKGS := ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath
 # The exhaustive scheduled run — kept in sync with the `mutation` CI job.
 MUTATION_FULL_PKG  := ./internal/domain
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build vet fmt fmt-check lint test coverage integration bdd arch-test mutation mutation-full vuln check check-all
+.PHONY: help build vet fmt fmt-check lint test coverage integration bdd arch-test mutation mutation-fast mutation-full vuln check check-all
 
 help:
 	@echo "warehouse-planning — local quality gate (targets mirror .github/workflows/ci.yml)"
@@ -49,7 +49,8 @@ help:
 	@echo "                 (needs a running Postgres; not in check)"
 	@echo "  bdd            go test ./... -run TestFeatures -v — godog/Gherkin acceptance"
 	@echo "  arch-test      go test ./internal/architecture/... -v — hexagonal fitness"
-	@echo "  mutation       gremlins on $(MUTATION_FAST_PKG) — the fast blocking subset"
+	@echo "  mutation-fast  gremlins on each of $(MUTATION_FAST_PKGS) — the fast blocking subset"
+	@echo "  mutation       alias of mutation-fast"
 	@echo "  mutation-full  gremlins on $(MUTATION_FULL_PKG) — the exhaustive scheduled run"
 	@echo "  vuln           govulncheck ./... — supply-chain / stdlib CVE sensor"
 	@echo ""
@@ -113,14 +114,21 @@ bdd:
 arch-test:
 	$(GO) test ./internal/architecture/... -v
 
-mutation:
+mutation: mutation-fast
+
+# Loops the packages (one gremlins run each, like the CI job) so a surviving
+# mutant in ANY of them fails the target.
+mutation-fast:
 	@if ! command -v $(GREMLINS) >/dev/null 2>&1; then \
 		echo "gremlins is not installed (or not on PATH)."; \
 		echo "Install the exact version CI pins:"; \
 		echo "  go install github.com/go-gremlins/gremlins/cmd/gremlins@$(GREMLINS_VERSION)"; \
 		exit 1; \
 	fi
-	$(GREMLINS) unleash $(MUTATION_FAST_PKG)
+	@for pkg in $(MUTATION_FAST_PKGS); do \
+		echo "==> gremlins unleash $$pkg"; \
+		$(GREMLINS) unleash $$pkg || exit 1; \
+	done
 
 mutation-full:
 	@if ! command -v $(GREMLINS) >/dev/null 2>&1; then \
