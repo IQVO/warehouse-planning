@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
@@ -61,6 +62,34 @@ func (r *CapacityPlanRepo) FindByID(_ context.Context, id string) (*capacityplan
 		return nil, nil
 	}
 	return capacityplan.Rehydrate(state), nil
+}
+
+// ListRecent returns up to limit plans, newest first (created_at, then id,
+// both descending), optionally restricted to one location. Like FindByID it
+// returns fresh copies.
+func (r *CapacityPlanRepo) ListRecent(_ context.Context, location string, limit int) ([]*capacityplan.CapacityPlan, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	matching := make([]capacityplan.RehydrateParams, 0, len(r.store))
+	for _, state := range r.store {
+		if location == "" || state.Location == location {
+			matching = append(matching, state)
+		}
+	}
+	sort.Slice(matching, func(i, j int) bool {
+		if !matching[i].CreatedAt.Equal(matching[j].CreatedAt) {
+			return matching[i].CreatedAt.After(matching[j].CreatedAt)
+		}
+		return matching[i].ID > matching[j].ID
+	})
+	if limit >= 0 && len(matching) > limit {
+		matching = matching[:limit]
+	}
+	out := make([]*capacityplan.CapacityPlan, 0, len(matching))
+	for _, state := range matching {
+		out = append(out, capacityplan.Rehydrate(state))
+	}
+	return out, nil
 }
 
 // Snapshot implements Snapshotter.

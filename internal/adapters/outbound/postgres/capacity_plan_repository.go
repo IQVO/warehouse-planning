@@ -56,16 +56,57 @@ func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPla
 // two concurrent publishes of the same DRAFT plan serialize and the second
 // observes PUBLISHED.
 func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacityplan.CapacityPlan, error) {
-	query := `
-		SELECT warehouse_id, location, window_start, window_end, process_path_id,
-		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
-		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source
-		FROM capacity_plans WHERE id = $1`
+	query := `SELECT ` + planColumns + ` FROM capacity_plans WHERE id = $1`
 	q := queryFor(ctx, r.pool)
 	if _, inTx := q.(pgx.Tx); inTx {
 		query += " FOR UPDATE"
 	}
 
+	plan, err := scanPlan(q.QueryRow(ctx, query, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return plan, nil
+}
+
+// ListRecent returns up to limit plans, newest first (created_at DESC, id
+// DESC so the order is total), optionally restricted to one location. It
+// never locks a row: a list is a plain read, in or out of a UnitOfWork.
+func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, limit int) ([]*capacityplan.CapacityPlan, error) {
+	rows, err := queryFor(ctx, r.pool).Query(ctx, `
+		SELECT `+planColumns+` FROM capacity_plans
+		WHERE ($1::text = '' OR location = $1::text)
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2`, location, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*capacityplan.CapacityPlan, 0)
+	for rows.Next() {
+		plan, err := scanPlan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, plan)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// planColumns is the column list scanPlan expects, in order.
+const planColumns = `id, warehouse_id, location, window_start, window_end, process_path_id,
+		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
+		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source`
+
+// scanPlan rehydrates one capacity_plans row selected with planColumns.
+func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
 	var (
 		p                      capacityplan.RehydrateParams
 		windowStart, windowEnd time.Time
@@ -74,15 +115,11 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 		demandSource           string
 		publishedAt            *time.Time
 	)
-	p.ID = id
-	err := q.QueryRow(ctx, query, id).Scan(
-		&p.WarehouseID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
+	err := row.Scan(
+		&p.ID, &p.WarehouseID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
 		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
 		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
 		return nil, err
 	}
 

@@ -50,6 +50,13 @@ type Server struct {
 	// the route unregistered (the router's 404), so a Server built without
 	// it behaves exactly as before the model existed.
 	GetExpectedDemand *usecases.GetExpectedDemand
+
+	// ListProcessPaths backs GET /process-paths and ListCapacityPlans backs
+	// GET /capacity-plans (the console remote's list reads). Either left nil
+	// leaves its route unregistered, so a Server built without them behaves
+	// exactly as before the lists existed.
+	ListProcessPaths  *usecases.ListProcessPaths
+	ListCapacityPlans *usecases.ListCapacityPlans
 }
 
 // DefaultServiceName labels this service for logs/telemetry when the
@@ -87,6 +94,12 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/storage-capacity", s.handleGetStorageCapacity)
 	if s.GetExpectedDemand != nil {
 		r.Get("/demand", s.handleGetExpectedDemand)
+	}
+	if s.ListProcessPaths != nil {
+		r.Get("/process-paths", s.handleListProcessPaths)
+	}
+	if s.ListCapacityPlans != nil {
+		r.Get("/capacity-plans", s.handleListCapacityPlans)
 	}
 
 	return r

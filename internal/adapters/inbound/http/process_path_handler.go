@@ -38,6 +38,23 @@ func (s *Server) handleRegisterProcessPath(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, toProcessPathResponse(path))
 }
 
+// handleListProcessPaths backs GET /process-paths: every registered
+// ProcessPath ordered by id. 200 with an empty list when none is registered
+// (never an error). The route exists only when the ListProcessPaths use case
+// is wired.
+func (s *Server) handleListProcessPaths(w http.ResponseWriter, r *http.Request) {
+	paths, err := s.ListProcessPaths.Handle(r.Context())
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	out := make([]processPathResponse, 0, len(paths))
+	for _, path := range paths {
+		out = append(out, toProcessPathResponse(path))
+	}
+	writeJSON(w, http.StatusOK, processPathsResponse{ProcessPaths: out})
+}
+
 func toProcessPathResponse(path processpath.ProcessPath) processPathResponse {
 	steps := path.Steps()
 	out := make([]string, 0, len(steps))
