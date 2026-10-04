@@ -124,3 +124,17 @@ func TestBuildAdapters_InMemoryWiresPhase4Ports(t *testing.T) {
 		t.Fatalf("Phase 4 ports not wired: %+v", ad)
 	}
 }
+
+func TestMigrationsDatabaseURL(t *testing.T) {
+	const pooled = "postgres://u@pgbouncer.example:6432/db"
+	const direct = "postgres://u@postgres.example:5432/db"
+
+	t.Setenv("MIGRATIONS_DATABASE_URL", "")
+	if got := migrationsDatabaseURL(pooled); got != pooled {
+		t.Errorf("unset MIGRATIONS_DATABASE_URL: got %q, want the DATABASE_URL %q", got, pooled)
+	}
+	t.Setenv("MIGRATIONS_DATABASE_URL", direct)
+	if got := migrationsDatabaseURL(pooled); got != direct {
+		t.Errorf("set MIGRATIONS_DATABASE_URL: got %q, want the direct DSN %q", got, direct)
+	}
+}
