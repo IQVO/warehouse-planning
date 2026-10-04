@@ -22,6 +22,15 @@ domain events, use cases. Read it before writing any domain code.
 
 See `.claude/rules/rest-api.md`.
 
+## MCP
+
+`cmd/mcp` is this context's MCP server (ADR-0008, additive inbound adapter
+in `internal/adapters/inbound/mcp/`): official Go SDK, Streamable HTTP only
+on :8090 at `/` and `/mcp`, open `/healthz`. It calls the same use cases
+and Postgres repos as REST, has no auth, never starts the outbox relay and
+never dials Kafka (the `cmd/api` relay drains the outbox rows its create
+and publish tools insert). Tool list and arguments: `.claude/rules/mcp.md`.
+
 ## Events: CloudEvents 1.0 is MANDATORY
 
 Every Kafka message this service produces or consumes (integration
@@ -59,12 +68,35 @@ catalogue: `warehouse-docs` `docs/strategic-design/event-standard-cloudevents.md
 
 ### Published types
 
-FILL IN as each phase ships (see `.claude/rules/integration-events.md`).
+Topic `warehouse.warehouse-planning.events`, key = capacity plan id,
+`subject` = capacity plan id, written through the transactional outbox
+(`outbox_events`, relay in `cmd/api`, `EVENT_PUBLISHER=kafka|log`):
+
+- `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated`
+- `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished`
+- `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected`
+- `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected`
+
+Payload shapes: `apis/asyncapi.yaml`. There is no analytics stream yet.
+The `<entity>` segment is lowercase with no separators (fleet standard).
 
 ### Consumed types
 
-FILL IN once Phase 3 confirms the exact upstream event contracts
-(`workforce-management`, `facility-layout`, `process-path-management`).
+Confirmed against the producers' own `apis/asyncapi.yaml` (see ADR 0001
+Addendum and `.claude/rules/integration-events.md`):
+
+- `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted`
+  on `warehouse.workforce.events` (LABOR constraint).
+- `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`
+  and `...LocationSlotDecommissioned` on `warehouse.facility.events`
+  (storage/station tallies).
+
+`process-path-management` is deliberately not consumed: its `ProcessPath`
+has no physical step sequence, so this context owns its own `ProcessPath`.
+
+Delivery is at-least-once: each message is handled in one unit of work
+(claim + tally/constraint write), the offset is committed only after
+success, and transient failures retry the same message with backoff.
 
 ## Consumer group id
 
@@ -80,9 +112,9 @@ This service has no auth on REST or MCP, matching the fleet-wide
 ## Cross-context integration rule
 
 No live REST/MCP calls to sibling bounded contexts at request time.
-Capacity-relevant facts from `workforce-management`, `facility-layout` and
-`process-path-management` are consumed as published Kafka events and kept
-as local read models — the same rule already established in
+Capacity-relevant facts from `workforce-management` and `facility-layout`
+are consumed as published Kafka events and kept as local read models — the
+same rule already established in
 `process-path-management`/`labor-performance`, generalized here because a
 capacity decision must stay available and fast even if an upstream
 context is degraded. See `docs/adr/0001-warehouse-planning-bounded-context.md`.
