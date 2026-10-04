@@ -72,6 +72,7 @@ func run() error {
 		StationStandards: ad.stationStandards, Tally: ad.tallyReader,
 	}
 	encoder := outboundkafka.NewEncoder()
+	expectedDemand := &usecases.GetExpectedDemand{Demand: ad.orderDemand}
 	server := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
 		ProcessCapacities:                 pcRepo,
@@ -85,6 +86,7 @@ func run() error {
 			Outbox:       ad.outbox,
 			Encoder:      encoder,
 			UnitOfWork:   ad.uow,
+			Demand:       expectedDemand,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans:      ad.capacityPlans,
@@ -99,6 +101,10 @@ func run() error {
 		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: ad.stationStandards},
 		StationStandards:       ad.stationStandards,
 		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: ad.tallyReader},
+
+		// Expected demand (ADR 0004): the read model fed by the order
+		// demand consumer; GET /demand and the plan's default demand read it.
+		GetExpectedDemand: expectedDemand,
 	}
 	httpServer := &http.Server{
 		Addr:              httpAddr,
@@ -107,6 +113,16 @@ func run() error {
 	}
 
 	consumers, closeConsumers := startKafkaConsumers(register, ad.processedEvents, ad.storageTally, ad.uow, logger)
+
+	// The order-demand consumer (ADR 0004) is OFF unless DEMAND_CONSUMER_GROUP
+	// is set; it shares the unit of work and processed-event guard above.
+	demandConsumers, closeDemand, err := startDemandConsumer(ad, logger)
+	if err != nil {
+		closeConsumers()
+		return err
+	}
+	consumers = append(consumers, demandConsumers...)
+	closeConsumers = joinClosers(closeConsumers, closeDemand)
 
 	// The outbox relay runs next to the consumers. It never dials Kafka at
 	// boot (the writer connects lazily on its first send), so a broker
@@ -141,6 +157,10 @@ type adapters struct {
 	capacityPlans ports.CapacityPlanRepository
 	outbox        ports.OutboxRepository
 	outboxStore   outboxrelay.Store
+
+	// orderDemand is the expected-demand read model (ADR 0004), written by
+	// the order demand consumer and read by GET /demand and plan creation.
+	orderDemand ports.OrderDemandRepository
 }
 
 // buildAdapters wires the Postgres adapters when DATABASE_URL is set, or
@@ -159,6 +179,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		pathRepo := memory.NewProcessPathRepo()
 		pcRepo, processed, tallyRepo := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
 		planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+		demandRepo := memory.NewOrderDemandRepo()
 		return adapters{
 			processCapacities: pcRepo,
 			processPaths:      pathRepo,
@@ -167,10 +188,11 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 			tallyReader:       tallyRepo,
 			stationStandards:  memory.NewStationStandardRepo(),
 			// Participants make the in-memory UoW roll back on error too.
-			uow:           memory.NewUnitOfWork(pcRepo, processed, tallyRepo, planRepo, outboxRepo),
+			uow:           memory.NewUnitOfWork(pcRepo, processed, tallyRepo, planRepo, outboxRepo, demandRepo),
 			capacityPlans: planRepo,
 			outbox:        outboxRepo,
 			outboxStore:   outboxRepo,
+			orderDemand:   demandRepo,
 		}, noop, nil
 	}
 
@@ -207,6 +229,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		capacityPlans:     postgres.NewCapacityPlanRepo(pool),
 		outbox:            outboxRepo,
 		outboxStore:       outboxRepo,
+		orderDemand:       postgres.NewOrderDemandRepo(pool),
 	}, pool.Close, nil
 }
 

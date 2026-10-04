@@ -44,6 +44,12 @@ type Server struct {
 	DeclareStationStandard *usecases.DeclareStationStandard
 	StationStandards       ports.StationStandardRepository
 	GetStorageCapacity     *usecases.GetStorageCapacity
+
+	// GetExpectedDemand backs GET /demand (docs/adr/0004): the expected
+	// demand read model fed by order-management's order events. Nil leaves
+	// the route unregistered (the router's 404), so a Server built without
+	// it behaves exactly as before the model existed.
+	GetExpectedDemand *usecases.GetExpectedDemand
 }
 
 // DefaultServiceName labels this service for logs/telemetry when the
@@ -79,6 +85,9 @@ func NewRouter(s *Server) http.Handler {
 	r.Put("/station-standards/{location}/{process_type}", s.handleDeclareStationStandard)
 	r.Get("/station-standards", s.handleListStationStandards)
 	r.Get("/storage-capacity", s.handleGetStorageCapacity)
+	if s.GetExpectedDemand != nil {
+		r.Get("/demand", s.handleGetExpectedDemand)
+	}
 
 	return r
 }

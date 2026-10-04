@@ -115,6 +115,23 @@ config:
   # STORAGE_CAPACITY_CONSUMER_GROUP (reads warehouse.facility.events)
   storageCapacityConsumerGroup: "warehouse-planning-storage-capacity"
 
+# Order-demand consumer (docs/adr/0004): order-management's OrderAllocated /
+# OrderPartiallyAllocated events (warehouse.order-management.events) into the
+# local expected-demand read model. OFF by default and entirely absent from the
+# rendered manifest while consumerGroup is empty, so a default render is
+# byte-identical to a chart without this block.
+demand:
+  # DEMAND_CONSUMER_GROUP: the Kafka consumer group id. Empty = the feature is
+  # OFF (no consumer is started; GET /demand still answers, from an empty
+  # model). Use a STABLE id so a rescheduled pod resumes from its committed
+  # offsets. Requires kafka.enabled=true and siteId (the chart refuses to
+  # render otherwise).
+  consumerGroup: ""
+  # DEMAND_SITE_ID: order-management's orders carry no fulfillment site, so ALL
+  # consumed demand is attributed to this ONE site code (e.g. SIM1) -- the same
+  # `location` the labor and facility data use.
+  siteId: ""
+
 # The chart refuses to render unless database.url or database.existingSecret
 # is set (templates/_helpers.tpl: warehouse-planning.requireDatabase).
 database:

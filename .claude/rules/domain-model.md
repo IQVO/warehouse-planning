@@ -57,6 +57,19 @@ paths:
   segment of the facility zone ids of that site (`SIM1-OPS-WC`,
   `SIM1-STOR-AMB`). The zones of a site are the tally zones whose id starts
   with `<location>-`; a zone with no matching site contributes nothing.
+- **Expected demand (order)** — the local read model of orders
+  order-management has promised (`internal/domain/demand`, docs/adr/0004): one
+  `demand.Order` per order id (`location` = the ONE configured site
+  `DEMAND_SITE_ID`, `promise_at` = the order's `promise_date`, `released_lines`,
+  `as_of` = the CloudEvents `time`), fed only by Kafka. An order is demand in
+  `[start, end)` when `promise_at >= start AND promise_at < end`
+  (`Order.CountsIn`: start counts, end does not); last writer wins per order id
+  on `as_of`, later-or-equal replaces (`Order.Supersedes`). `Summary.Orders` is
+  what a plan defaults its `assigned_demand` to when the caller omits it; zero
+  orders is NO DATA (`Summary.HasData`), never zero demand. There are no units
+  and no cancellation netting: order-management does not publish them.
+- **DemandSource** — where a plan's `assigned_demand` came from: `request`
+  (stated) or `orders` (defaulted from the read model); stored on the plan.
 - **ProcessPathCapacity** — the normalized, end-to-end throughput of a
   ProcessPath: the minimum of its steps' effective capacities after
   WorkloadProfile normalization, plus which step is the bottleneck and which
@@ -160,7 +173,11 @@ Vocabulary only, NOT implemented or published yet (nothing raises them):
   Positions are NOT process throughput (they stay the StorageCapacityPool
   idea of design doc sections 14-17) and there is no "consumed" figure --
   stock must never be read from inventory-storage (design doc rule 1).
-- `CreateCapacityPlan` (Phase 4) — resolves the path capacity through
+- `CreateCapacityPlan` (Phase 4; demand defaulting since ADR 0004) — when the
+  request OMITS `assigned_demand` (`DemandFromOrders`) it first resolves the
+  demand from `GetExpectedDemand` (orders expected at the plan's location in
+  its window; none -> `ErrMissingAssignedDemand`, today's 422, never zero) and
+  records `DemandSource`; an explicit figure is used untouched. Then it resolves the path capacity through
   `GetProcessPathCapacity` (the same read-time composition; each step's
   registered ProcessCapacity must COVER the plan's window (ADR 0003; the
   plan keeps the REQUESTED window, and `capacity_over_window` / shortage use

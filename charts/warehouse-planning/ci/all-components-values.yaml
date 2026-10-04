@@ -8,6 +8,9 @@ config:
 kafka:
   enabled: true
   brokers: "kafka.warehouse-systems.svc.cluster.local:9092"
+demand:
+  consumerGroup: "warehouse-planning-demand"
+  siteId: "SIM1"
 gatewayApi:
   enabled: true
   parentRefs:

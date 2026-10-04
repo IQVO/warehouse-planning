@@ -99,3 +99,21 @@ kafka.enabled is true -- so that combination would crash-loop. Fail at render.
 {{- fail "config.eventPublisher is \"kafka\" but kafka.enabled is false — the binary exits at boot (EVENT_PUBLISHER=kafka requires KAFKA_BROKERS). Set kafka.enabled=true and kafka.brokers." -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+The order-demand consumer (docs/adr/0004) is OFF while demand.consumerGroup is
+empty. When it is set the binary needs the ONE site its demand is attributed to
+(DEMAND_SITE_ID; a group without a site refuses to boot) and a broker
+(KAFKA_BROKERS, only rendered when kafka.enabled is true; without it the
+consumer would be silently disabled). Fail at render instead.
+*/}}
+{{- define "warehouse-planning.requireDemandConfig" -}}
+{{- if .Values.demand.consumerGroup -}}
+{{- if not .Values.demand.siteId -}}
+{{- fail "demand.consumerGroup is set but demand.siteId is not — order-management orders carry no site, so the site demand is attributed to must be configured (the binary refuses to boot without DEMAND_SITE_ID)." -}}
+{{- end -}}
+{{- if not .Values.kafka.enabled -}}
+{{- fail "demand.consumerGroup is set but kafka.enabled is false — the order-demand consumer would be silently disabled (no KAFKA_BROKERS). Set kafka.enabled=true and kafka.brokers." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

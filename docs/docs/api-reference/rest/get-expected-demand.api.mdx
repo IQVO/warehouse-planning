@@ -1,0 +1,71 @@
+---
+id: get-expected-demand
+title: "Expected demand of a site over a window (order-management read model)"
+description: "The orders order-management has promised at a site for a window, read from the LOCAL read model this service builds from order-management's published OrderAllocated / OrderPartiallyAllocated CloudEvents (docs/adr/0004; never a live call). `orders` counts the distinct orders whose promise cutoff (the event's promise_date) falls in the half-open window [window_start, window_end): a cutoff exactly at window_start counts, one exactly at window_end belongs to the next window. An order is counted once, at the promise of its latest event (last writer wins on the CloudEvents time). `released_lines` sums the lines their latest allocation pass released; it is NOT units -- order-management's events carry no quantities. order-management orders carry no fulfillment site, so every consumed order is attributed to the ONE site configured on this service (DEMAND_SITE_ID); any other location reads 0. Cancellations are not published on the integration topic and are not netted, and an OrderRepromised event carries no new cutoff, so it is ignored. 200 with orders 0 and as_of null when nothing is known -- an empty answer that POST /capacity-plans never turns into a zero-demand plan."
+sidebar_label: "Expected demand of a site over a window (order-management read model)"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Expected demand of a site over a window (order-management read model)"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/demand"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The orders order-management has promised at a site for a window, read from the LOCAL read model this service builds from order-management's published OrderAllocated / OrderPartiallyAllocated CloudEvents (docs/adr/0004; never a live call). `orders` counts the distinct orders whose promise cutoff (the event's promise_date) falls in the half-open window [window_start, window_end): a cutoff exactly at window_start counts, one exactly at window_end belongs to the next window. An order is counted once, at the promise of its latest event (last writer wins on the CloudEvents time). `released_lines` sums the lines their latest allocation pass released; it is NOT units -- order-management's events carry no quantities. order-management orders carry no fulfillment site, so every consumed order is attributed to the ONE site configured on this service (DEMAND_SITE_ID); any other location reads 0. Cancellations are not published on the integration topic and are not netted, and an OrderRepromised event carries no new cutoff, so it is ignored. 200 with orders 0 and as_of null when nothing is known -- an empty answer that POST /capacity-plans never turns into a zero-demand plan.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-expected-demand.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-expected-demand.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-expected-demand.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

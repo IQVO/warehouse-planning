@@ -85,14 +85,15 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 	noop := func() {}
 
 	var (
-		pcRepo    ports.ProcessCapacityRepository
-		standards ports.StationStandardRepository
-		tallyRead ports.StorageTallyReader
-		pathRepo  ports.ProcessPathRepository
-		planRepo  ports.CapacityPlanRepository
-		outboxRep ports.OutboxRepository
-		uow       ports.UnitOfWork
-		closeFn   = noop
+		pcRepo     ports.ProcessCapacityRepository
+		standards  ports.StationStandardRepository
+		tallyRead  ports.StorageTallyReader
+		pathRepo   ports.ProcessPathRepository
+		planRepo   ports.CapacityPlanRepository
+		demandRepo ports.OrderDemandRepository
+		outboxRep  ports.OutboxRepository
+		uow        ports.UnitOfWork
+		closeFn    = noop
 	)
 
 	if databaseURL == "" {
@@ -100,6 +101,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		pc, plans, outboxRepo := memory.NewProcessCapacityRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 		pcRepo, pathRepo, planRepo, outboxRep = pc, memory.NewProcessPathRepo(), plans, outboxRepo
 		standards, tallyRead = memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
+		demandRepo = memory.NewOrderDemandRepo()
 		// Participants make the in-memory UoW roll back on error too.
 		uow = memory.NewUnitOfWork(pc, plans, outboxRepo)
 	} else {
@@ -123,6 +125,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		pcRepo, pathRepo = postgres.NewProcessCapacityRepo(pool), postgres.NewProcessPathRepo(pool)
 		standards, tallyRead = postgres.NewStationStandardRepo(pool), postgres.NewStorageTallyRepo(pool)
 		planRepo, outboxRep = postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool)
+		demandRepo = postgres.NewOrderDemandRepo(pool)
 		uow = postgres.NewUnitOfWork(pool)
 		closeFn = pool.Close
 	}
@@ -130,6 +133,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 	pathCapacity := &usecases.GetProcessPathCapacity{
 		ProcessPaths: pathRepo, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tallyRead,
 	}
+	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
 	encoder := outboundkafka.NewEncoder()
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
@@ -138,6 +142,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
+			Demand: expectedDemand,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
@@ -147,6 +152,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
 		StationStandards:       standards,
 		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: tallyRead},
+		GetExpectedDemand:      expectedDemand,
 	}, closeFn, nil
 }
 

@@ -35,7 +35,8 @@ func NewServer(deps Deps) *mcp.Server {
 				"(get_effective_process_capacity); declare a process path (register_process_path) and read " +
 				"its end-to-end ORDER/HOUR capacity and bottleneck step (get_process_path_capacity); evaluate " +
 				"assigned demand against it with create_capacity_plan (DRAFT), then publish_capacity_plan " +
-				"(once only) and read it back with get_capacity_plan. Every step of a path needs a capacity " +
+				"(once only) and read it back with get_capacity_plan. Read the orders order-management expects at a site " +
+				"in a window with get_expected_demand (create_capacity_plan uses it when assigned_demand is omitted). Every step of a path needs a capacity " +
 				"registered for EXACTLY the same location and [window_start, window_end).",
 		},
 	)

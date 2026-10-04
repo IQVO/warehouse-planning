@@ -65,6 +65,13 @@ type world struct {
 	// keeps every slot's locationCode and event id unique.
 	facility *inboundkafka.StorageCapacityConsumer
 	slotSeq  int
+
+	// orders is the REAL order-demand consumer over the in-memory expected-
+	// demand read model: the Given steps feed it order-management CloudEvents
+	// through HandleMessage, exactly the bytes the Kafka loop would hand it.
+	// orderSeq keeps every event id unique and increases the event time.
+	orders   *inboundkafka.OrderDemandConsumer
+	orderSeq int
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -82,6 +89,16 @@ func (w *world) start() {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	w.slotSeq = 0
+	demandRepo, demandProcessed := memory.NewOrderDemandRepo(), memory.NewProcessedEventRepo()
+	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
+	w.orders = &inboundkafka.OrderDemandConsumer{
+		Record: &usecases.RecordOrderDemand{
+			UoW: memory.NewUnitOfWork(demandRepo, demandProcessed), ProcessedEvents: demandProcessed, Demand: demandRepo,
+		},
+		Location: "SIM1",
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w.orderSeq = 0
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
@@ -89,6 +106,7 @@ func (w *world) start() {
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
+			Demand: expectedDemand,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:       planRepo,
@@ -96,6 +114,7 @@ func (w *world) start() {
 		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
 		StationStandards:       standards,
 		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: tallyRepo},
+		GetExpectedDemand:      expectedDemand,
 	}
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
@@ -603,4 +622,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the capacity plan is (DRAFT|PUBLISHED) with path capacity (\d+(?:\.\d+)?) (ORDER) per HOUR, capacity over window (\d+(?:\.\d+)?), shortage (\d+(?:\.\d+)?) and bottleneck ([A-Z-]+)$`, w.theCapacityPlanIs)
 	sc.Step(`^the outbox event types are ([A-Za-z, ]+)$`, w.theOutboxEventTypesAre)
 	sc.Step(`^the process path capacity response reports (\d+(?:\.\d+)?) (ORDER) per (HOUR) bound by ([A-Z-]+)$`, w.theProcessPathCapacityResponseReports)
+
+	registerDemandSteps(sc, w)
 }

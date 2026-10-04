@@ -40,14 +40,14 @@ func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPla
 		INSERT INTO capacity_plans (
 			id, warehouse_id, location, window_start, window_end, process_path_id,
 			assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
-			status, created_at, published_at, bottleneck_constraint, warnings)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			status, created_at, published_at, bottleneck_constraint, warnings, demand_source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			published_at = EXCLUDED.published_at
 	`, p.ID(), p.WarehouseID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
 		p.AssignedDemand(), p.PathCapacity(), string(p.BottleneckStep()), p.CapacityOverWindow(), p.Shortage(),
-		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings)
+		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings, string(p.DemandSource()))
 	return err
 }
 
@@ -59,7 +59,7 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 	query := `
 		SELECT warehouse_id, location, window_start, window_end, process_path_id,
 		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
-		       status, created_at, published_at, bottleneck_constraint, warnings
+		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source
 		FROM capacity_plans WHERE id = $1`
 	q := queryFor(ctx, r.pool)
 	if _, inTx := q.(pgx.Tx); inTx {
@@ -71,13 +71,14 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 		windowStart, windowEnd time.Time
 		bottleneck, status     string
 		bottleneckConstraint   string
+		demandSource           string
 		publishedAt            *time.Time
 	)
 	p.ID = id
 	err := q.QueryRow(ctx, query, id).Scan(
 		&p.WarehouseID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
 		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
-		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings)
+		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -91,6 +92,7 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 	}
 	p.BottleneckStep = processcapacity.ProcessType(bottleneck)
 	p.BottleneckConstraint = processcapacity.ConstraintType(bottleneckConstraint)
+	p.DemandSource = capacityplan.DemandSource(demandSource)
 	p.Status = capacityplan.Status(status)
 	p.CreatedAt = p.CreatedAt.UTC()
 	if publishedAt != nil {

@@ -39,6 +39,7 @@ func statusFor(err error) int {
 		errors.Is(err, processcapacity.ErrMissingStepCapacity),
 		errors.Is(err, processpath.ErrEmptySteps),
 		errors.Is(err, capacityplan.ErrNegativeDemand),
+		errors.Is(err, usecases.ErrMissingAssignedDemand),
 		errors.Is(err, capacityplan.ErrRequiredField):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, processcapacity.ErrUnitMismatch),
@@ -76,6 +77,7 @@ func problemCatalog() []struct {
 		{processcapacity.ErrMissingStepCapacity, problemInfo{"missing-step-capacity", "No registered ProcessCapacity window covers one of the path's steps at this location and window"}},
 		{usecases.ErrProcessPathNotFound, problemInfo{"process-path-not-found", "No ProcessPath is registered under this id"}},
 		{capacityplan.ErrNegativeDemand, problemInfo{"negative-assigned-demand", "Assigned demand must not be negative"}},
+		{usecases.ErrMissingAssignedDemand, problemInfo{"missing-assigned-demand", "assigned_demand is required"}},
 		{capacityplan.ErrRequiredField, problemInfo{"missing-required-field", "warehouse_id, location and path_id are required"}},
 		{capacityplan.ErrAlreadyPublished, problemInfo{"capacity-plan-already-published", "This CapacityPlan has already been published"}},
 		{usecases.ErrCapacityPlanNotFound, problemInfo{"capacity-plan-not-found", "No CapacityPlan exists under this id"}},

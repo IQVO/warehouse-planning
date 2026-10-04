@@ -32,21 +32,25 @@ func (s *Server) handleCreateCapacityPlan(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-end", "window_end must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
 		return
 	}
-	if req.AssignedDemand == nil {
-		writeProblem(w, http.StatusUnprocessableEntity, problemInfo{"missing-assigned-demand", "assigned_demand is required"}, "assigned_demand (orders) must be provided", r.URL.Path)
-		return
-	}
-
-	plan, err := s.CreateCapacityPlan.Handle(r.Context(), usecases.CreateCapacityPlanCommand{
+	// assigned_demand is OPTIONAL (docs/adr/0004): an explicit value always
+	// wins and behaves exactly as before; when it is omitted the use case
+	// defaults it from the expected-demand read model, or answers 422
+	// missing-assigned-demand when there is no order data -- never a silent 0.
+	cmd := usecases.CreateCapacityPlanCommand{
 		WarehouseID:      req.WarehouseID,
 		Location:         req.Location,
 		WindowStart:      windowStart,
 		WindowEnd:        windowEnd,
 		ProcessPathID:    req.PathID,
-		AssignedDemand:   *req.AssignedDemand,
+		DemandFromOrders: req.AssignedDemand == nil,
 		UnitsPerOrder:    req.UnitsPerOrder,
 		PackagesPerOrder: req.PackagesPerOrder,
-	})
+	}
+	if req.AssignedDemand != nil {
+		cmd.AssignedDemand = *req.AssignedDemand
+	}
+
+	plan, err := s.CreateCapacityPlan.Handle(r.Context(), cmd)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -91,6 +95,7 @@ func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {
 		WindowEnd:          p.Window().End().UTC().Format(time.RFC3339),
 		PathID:             p.ProcessPathID(),
 		AssignedDemand:     p.AssignedDemand(),
+		DemandSource:       string(p.DemandSource()),
 		Status:             string(p.Status()),
 		PathCapacity:       p.PathCapacity(),
 		BottleneckStep:     string(p.BottleneckStep()),

@@ -26,7 +26,7 @@ COVERAGE_THRESHOLD := 90
 # settings. Pick your richest, most behaviourally-dense aggregate here —
 # not necessarily the biggest package, the one with the most branching
 # domain logic (see HARNESS.md's mutation-testing section).
-MUTATION_FAST_PKGS := ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath
+MUTATION_FAST_PKGS := ./internal/domain/processcapacity ./internal/domain/capacityplan ./internal/domain/processpath ./internal/domain/demand
 # The exhaustive scheduled run — kept in sync with the `mutation` CI job.
 MUTATION_FULL_PKG  := ./internal/domain
 

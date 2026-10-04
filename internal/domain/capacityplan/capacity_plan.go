@@ -25,6 +25,20 @@ const (
 	StatusPublished Status = "PUBLISHED"
 )
 
+// DemandSource says where a plan's assigned demand came from.
+type DemandSource string
+
+// The two demand sources. DemandSourceRequest is also what a plan created
+// before demand ingestion existed is read back as: every such plan carried
+// an explicit assigned_demand.
+const (
+	// DemandSourceRequest: the caller stated assigned_demand explicitly.
+	DemandSourceRequest DemandSource = "request"
+	// DemandSourceOrders: assigned_demand was omitted and defaulted from the
+	// expected-demand read model fed by order-management's order events.
+	DemandSourceOrders DemandSource = "orders"
+)
+
 var (
 	// ErrAlreadyPublished is returned by Publish on a plan that is already
 	// PUBLISHED -- a double publish is never silently accepted (it would
@@ -56,6 +70,9 @@ type CapacityPlan struct {
 	processPathID string
 
 	assignedDemand float64
+	// demandSource is where assignedDemand came from; informational, no
+	// published event carries it.
+	demandSource DemandSource
 
 	// pathCapacity is the ORDER/HOUR rate of the path (the quantity of
 	// the normalized ProcessPathCapacity expressed per hour).
@@ -90,6 +107,10 @@ type CreateParams struct {
 	PathRate       processcapacity.CapacityRate
 	BottleneckStep processcapacity.ProcessType
 
+	// DemandSource is where AssignedDemand came from; the zero value means
+	// DemandSourceRequest (the demand was stated explicitly).
+	DemandSource DemandSource
+
 	// BottleneckConstraint and Warnings come from the composed path
 	// capacity (processcapacity.ComposeProcessPathCapacity).
 	BottleneckConstraint processcapacity.ConstraintType
@@ -123,6 +144,7 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 		window:             p.Window,
 		processPathID:      p.ProcessPathID,
 		assignedDemand:     p.AssignedDemand,
+		demandSource:       sourceOrRequest(p.DemandSource),
 		pathCapacity:       perHour,
 		bottleneckStep:     p.BottleneckStep,
 		capacityOverWindow: over,
@@ -166,6 +188,9 @@ type RehydrateParams struct {
 	CreatedAt          time.Time
 	PublishedAt        time.Time
 
+	// DemandSource: empty reads back as DemandSourceRequest.
+	DemandSource DemandSource
+
 	BottleneckConstraint processcapacity.ConstraintType
 	Warnings             []string
 }
@@ -180,6 +205,7 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 		window:             p.Window,
 		processPathID:      p.ProcessPathID,
 		assignedDemand:     p.AssignedDemand,
+		demandSource:       sourceOrRequest(p.DemandSource),
 		pathCapacity:       p.PathCapacity,
 		bottleneckStep:     p.BottleneckStep,
 		capacityOverWindow: p.CapacityOverWindow,
@@ -273,6 +299,19 @@ func (c *CapacityPlan) ProcessPathID() string { return c.processPathID }
 
 // AssignedDemand returns the demand, in orders, assigned to the window.
 func (c *CapacityPlan) AssignedDemand() float64 { return c.assignedDemand }
+
+// DemandSource returns where AssignedDemand came from: DemandSourceRequest
+// (stated by the caller) or DemandSourceOrders (defaulted from the
+// order-management demand read model).
+func (c *CapacityPlan) DemandSource() DemandSource { return c.demandSource }
+
+// sourceOrRequest maps the zero value to DemandSourceRequest.
+func sourceOrRequest(s DemandSource) DemandSource {
+	if s == "" {
+		return DemandSourceRequest
+	}
+	return s
+}
 
 // PathCapacity returns the path's ORDER/HOUR rate.
 func (c *CapacityPlan) PathCapacity() float64 { return c.pathCapacity }

@@ -39,6 +39,10 @@ type Deps struct {
 	DeclareStationStandard *usecases.DeclareStationStandard
 	StationStandards       ports.StationStandardRepository
 	GetStorageCapacity     *usecases.GetStorageCapacity
+
+	// GetExpectedDemand backs get_expected_demand (docs/adr/0004): the
+	// expected-demand read model fed by order-management's order events.
+	GetExpectedDemand *usecases.GetExpectedDemand
 }
 
 // --- shared helpers -----------------------------------------------------------
@@ -257,7 +261,7 @@ type createPlanInput struct {
 	WindowStart      string   `json:"window_start" jsonschema:"plan window start, RFC3339 timestamp; a registered capacity window applies to a step when it COVERS [window_start, window_end), not only when equal"`
 	WindowEnd        string   `json:"window_end" jsonschema:"plan window end, RFC3339 timestamp; must be after window_start"`
 	PathID           string   `json:"path_id" jsonschema:"the registered process path to evaluate"`
-	AssignedDemand   *float64 `json:"assigned_demand" jsonschema:"the demand assigned to the window, in ORDERS; required (never silently zero) and must not be negative"`
+	AssignedDemand   *float64 `json:"assigned_demand,omitempty" jsonschema:"OPTIONAL demand assigned to the window, in ORDERS (must not be negative; 0 is a real figure). When given it is used exactly as stated. When omitted, the plan uses the number of orders order-management has promised at this location inside the window (see get_expected_demand) and demand_source is orders; if there are none the call fails with missing-assigned-demand - the demand is never silently zero"`
 	UnitsPerOrder    *float64 `json:"units_per_order,omitempty" jsonschema:"workload conversion factor: UNIT per ORDER; required if any step is measured in UNIT"`
 	PackagesPerOrder *float64 `json:"packages_per_order,omitempty" jsonschema:"workload conversion factor: PACKAGE per ORDER; required if any step is measured in PACKAGE"`
 }
@@ -285,6 +289,10 @@ type capacityPlanOutput struct {
 	CreatedAt          string  `json:"created_at"`
 	PublishedAt        *string `json:"published_at,omitempty"`
 
+	// DemandSource: "request" (assigned_demand stated by the caller) or
+	// "orders" (defaulted from the order-management read model). Additive.
+	DemandSource string `json:"demand_source"`
+
 	// BottleneckConstraint (e.g. LABOR, STATION; empty for plans created
 	// before it was recorded) and Warnings (never null) are additive.
 	BottleneckConstraint string   `json:"bottleneck_constraint"`
@@ -300,6 +308,7 @@ func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
 		WindowEnd:          p.Window().End().UTC().Format(time.RFC3339),
 		PathID:             p.ProcessPathID(),
 		AssignedDemand:     p.AssignedDemand(),
+		DemandSource:       string(p.DemandSource()),
 		Status:             string(p.Status()),
 		PathCapacity:       p.PathCapacity(),
 		BottleneckStep:     string(p.BottleneckStep()),
@@ -322,22 +331,25 @@ func (d Deps) createCapacityPlan(ctx context.Context, in createPlanInput) (capac
 	if err != nil {
 		return capacityPlanOutput{}, err
 	}
-	if in.AssignedDemand == nil {
-		return capacityPlanOutput{}, toolError("missing-assigned-demand", "assigned_demand (orders) must be provided")
-	}
 
 	// The use case saves the plan and inserts its CloudEvents into the
 	// transactional outbox in one UnitOfWork; the relay in cmd/api drains it.
-	plan, err := d.CreateCapacityPlan.Handle(ctx, usecases.CreateCapacityPlanCommand{
+	// An omitted assigned_demand is defaulted from the order-management
+	// demand read model, or rejected (docs/adr/0004); a stated one wins.
+	cmd := usecases.CreateCapacityPlanCommand{
 		WarehouseID:      in.WarehouseID,
 		Location:         in.Location,
 		WindowStart:      windowStart,
 		WindowEnd:        windowEnd,
 		ProcessPathID:    in.PathID,
-		AssignedDemand:   *in.AssignedDemand,
+		DemandFromOrders: in.AssignedDemand == nil,
 		UnitsPerOrder:    in.UnitsPerOrder,
 		PackagesPerOrder: in.PackagesPerOrder,
-	})
+	}
+	if in.AssignedDemand != nil {
+		cmd.AssignedDemand = *in.AssignedDemand
+	}
+	plan, err := d.CreateCapacityPlan.Handle(ctx, cmd)
 	if err != nil {
 		return capacityPlanOutput{}, mapError(err)
 	}
@@ -501,6 +513,52 @@ func (d Deps) getStorageCapacity(ctx context.Context, in getStorageCapacityInput
 	return out, nil
 }
 
+// --- get_expected_demand (read) -----------------------------------------------
+
+type getExpectedDemandInput struct {
+	Location    string `json:"location" jsonschema:"the site code the orders are attributed to, e.g. SIM1 (order-management orders carry no site, so all of them are attributed to one configured site)"`
+	WindowStart string `json:"window_start" jsonschema:"window start, RFC3339 timestamp; inclusive: an order promised exactly at window_start counts"`
+	WindowEnd   string `json:"window_end" jsonschema:"window end, RFC3339 timestamp; exclusive: an order promised exactly at window_end belongs to the next window; must be after window_start"`
+}
+
+// expectedDemandOutput is identical to the REST GET /demand body.
+type expectedDemandOutput struct {
+	Location      string  `json:"location"`
+	WindowStart   string  `json:"window_start"`
+	WindowEnd     string  `json:"window_end"`
+	Orders        int     `json:"orders"`
+	ReleasedLines int     `json:"released_lines"`
+	Source        string  `json:"source"`
+	AsOf          *string `json:"as_of"`
+}
+
+func (d Deps) getExpectedDemand(ctx context.Context, in getExpectedDemandInput) (expectedDemandOutput, error) {
+	if in.Location == "" {
+		return expectedDemandOutput{}, toolError("missing-location", "location is required")
+	}
+	start, end, err := parseWindow(in.WindowStart, in.WindowEnd)
+	if err != nil {
+		return expectedDemandOutput{}, err
+	}
+	summary, err := d.GetExpectedDemand.Handle(ctx, in.Location, start, end)
+	if err != nil {
+		return expectedDemandOutput{}, mapError(err)
+	}
+	out := expectedDemandOutput{
+		Location:      in.Location,
+		WindowStart:   start.UTC().Format(time.RFC3339),
+		WindowEnd:     end.UTC().Format(time.RFC3339),
+		Orders:        summary.Orders,
+		ReleasedLines: summary.ReleasedLines,
+		Source:        "order-management",
+	}
+	if !summary.AsOf.IsZero() {
+		asOf := summary.AsOf.UTC().Format(time.RFC3339)
+		out.AsOf = &asOf
+	}
+	return out, nil
+}
+
 // --- registration -------------------------------------------------------------
 
 // registerTools adds every tool to the server. Read tools are annotated
@@ -548,7 +606,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 	addTool(server, &mcp.Tool{
 		Name: "create_capacity_plan",
 		Description: "Evaluate assigned demand (orders) against a process path's capacity over a window and store a DRAFT capacity plan, returning " +
-			"path capacity (ORDER/hour), capacity over the window, shortage (orders, 0 if none) and the bottleneck step. " +
+			"path capacity (ORDER/hour), capacity over the window, shortage (orders, 0 if none), the bottleneck step and demand_source. " +
+			"assigned_demand is optional: when omitted it defaults to the orders order-management expects at the location in the window (get_expected_demand; demand_source orders) and fails with missing-assigned-demand when there are none; a stated value always wins (demand_source request). " +
 			"The window is matched by coverage: a registered constraint window applies to a step when it covers the plan window (newest window start wins per constraint type). " +
 			"Writes the plan and queues its integration events in the transactional outbox; each call creates a new plan.",
 		Annotations: idempotent(false),
@@ -567,6 +626,13 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Annotations: readOnly,
 	}, d.getCapacityPlan)
 
+	d.registerReadModelTools(server, idempotent, readOnly)
+}
+
+// registerReadModelTools adds the station-capacity tools (ADR 0002) and calls
+// registerDemandTools (ADR 0004). Split from registerTools only to keep each
+// function within the length budget as the surface grows.
+func (d Deps) registerReadModelTools(server *mcp.Server, idempotent func(bool) *mcp.ToolAnnotations, readOnly *mcp.ToolAnnotations) {
 	addTool(server, &mcp.Tool{
 		Name: "declare_station_standard",
 		Description: "Declare the throughput of ONE station of a process at a site (e.g. 180 PACKAGE per 3600 s for PACK at SIM1). Station counts are tallied from facility-layout and carry no throughput of their own; " +
@@ -587,6 +653,22 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"Positions are a count, not a throughput, and no consumed figure exists (stock is never read from inventory-storage). Empty lists when nothing is tallied. Read-only.",
 		Annotations: readOnly,
 	}, d.getStorageCapacity)
+
+	d.registerDemandTools(server, readOnly)
+}
+
+// registerDemandTools adds the expected-demand read tool (docs/adr/0004). It
+// is its own method only to keep registerTools within the function-length
+// budget as the surface grows.
+func (d Deps) registerDemandTools(server *mcp.Server, readOnly *mcp.ToolAnnotations) {
+	addTool(server, &mcp.Tool{
+		Name: "get_expected_demand",
+		Description: "Read the expected demand of a site over a window from the local read model fed by order-management's published order events (OrderAllocated, OrderPartiallyAllocated): " +
+			"orders = distinct orders whose promise cutoff falls in [window_start, window_end) (start inclusive, end exclusive), released_lines = lines their latest allocation pass released (NOT units: the events carry no quantities), " +
+			"source, and as_of = the time of the newest order event the site's model reflects (null when none). order-management orders carry no site, so every order is attributed to the one configured site. " +
+			"Cancellations are not published on the integration topic and are not netted. orders 0 means no data, not zero demand. Read-only.",
+		Annotations: readOnly,
+	}, d.getExpectedDemand)
 }
 
 // addTool registers one tool. A handler error is returned to the SDK as the
