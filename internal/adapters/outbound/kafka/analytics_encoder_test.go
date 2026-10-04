@@ -77,25 +77,32 @@ func TestGolden_AnalyticsTypes(t *testing.T) {
 			if err != nil || len(msgs) != 1 {
 				t.Fatalf("Encode = %d msgs, %v", len(msgs), err)
 			}
-			m := msgs[0]
-			if string(m.Value) != tc.want {
-				t.Errorf("value =\n%s\nwant\n%s", m.Value, tc.want)
-			}
-			if m.Topic != "warehouse.warehouse-planning.analytics" {
-				t.Errorf("Topic = %q", m.Topic)
-			}
-			if wantType := "com.warehouse.wes.warehouse-planning.capacityplan." + tc.name; m.EventType != wantType {
-				t.Errorf("EventType = %q, want %q (the SAME type as the integration topic)", m.EventType, wantType)
-			}
-			if m.EventID != goldenEvtID || m.Subject != goldenPlanID || string(m.Key) != goldenPlanID {
-				t.Errorf("id/subject/key = %q/%q/%q", m.EventID, m.Subject, m.Key)
-			}
-			if wantSchema := "urn:warehouse:warehouse-planning:analytics:" + tc.name + ":v1"; m.DataSchema != wantSchema {
-				t.Errorf("DataSchema = %q, want %q", m.DataSchema, wantSchema)
-			}
-			assertGoldenHeaderAndDecode(t, m)
+			assertAnalyticsGolden(t, tc.name, tc.want, msgs[0])
 		})
 	}
+}
+
+// assertAnalyticsGolden pins every attribute of one analytics message: the
+// exact CloudEvents bytes, topic, the SAME type as the integration topic,
+// id/subject/key, the analytics dataschema and the content-type header.
+func assertAnalyticsGolden(t *testing.T, name, want string, m outbox.Message) {
+	t.Helper()
+	if string(m.Value) != want {
+		t.Errorf("value =\n%s\nwant\n%s", m.Value, want)
+	}
+	if m.Topic != "warehouse.warehouse-planning.analytics" {
+		t.Errorf("Topic = %q", m.Topic)
+	}
+	if wantType := "com.warehouse.wes.warehouse-planning.capacityplan." + name; m.EventType != wantType {
+		t.Errorf("EventType = %q, want %q (the SAME type as the integration topic)", m.EventType, wantType)
+	}
+	if m.EventID != goldenEvtID || m.Subject != goldenPlanID || string(m.Key) != goldenPlanID {
+		t.Errorf("id/subject/key = %q/%q/%q", m.EventID, m.Subject, m.Key)
+	}
+	if wantSchema := "urn:warehouse:warehouse-planning:analytics:" + name + ":v1"; m.DataSchema != wantSchema {
+		t.Errorf("DataSchema = %q, want %q", m.DataSchema, wantSchema)
+	}
+	assertGoldenHeaderAndDecode(t, m)
 }
 
 func TestAnalyticsEncoder_TopicOverrideAndRandomIDs(t *testing.T) {
