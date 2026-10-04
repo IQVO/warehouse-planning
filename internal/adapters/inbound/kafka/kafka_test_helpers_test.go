@@ -123,32 +123,90 @@ func (u *countingUoW) Do(ctx context.Context, fn func(context.Context) error) er
 	return u.inner.Do(ctx, fn)
 }
 
+// flakyTally wraps the in-memory tally and injects an infrastructure error
+// AFTER the real mutation has been applied (failAfterMutation upcoming
+// mutating calls apply their change and then return errInjected), simulating a
+// transient database failure part-way through a message -- e.g. the second
+// bucket's UPDATE of a work-center slot. The embedded repo is still a
+// memory.Snapshotter so the UnitOfWork can roll the half-applied change back.
+type flakyTally struct {
+	*memory.StorageTallyRepo
+	mu                sync.Mutex
+	failAfterMutation int
+	calls             int
+}
+
+// callCount is how many mutating calls (RegisterSlot/DecommissionSlot) were
+// attempted, successful or not.
+func (f *flakyTally) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *flakyTally) failNext(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failAfterMutation = n
+}
+
+func (f *flakyTally) shouldFail() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.failAfterMutation > 0 {
+		f.failAfterMutation--
+		return true
+	}
+	return false
+}
+
+func (f *flakyTally) RegisterSlot(ctx context.Context, code, zone, typ string, keys []string) ([]tally.Update, error) {
+	updates, err := f.StorageTallyRepo.RegisterSlot(ctx, code, zone, typ, keys)
+	if err != nil {
+		return nil, err
+	}
+	if f.shouldFail() {
+		return nil, errInjected
+	}
+	return updates, nil
+}
+
+func (f *flakyTally) DecommissionSlot(ctx context.Context, code string) ([]tally.Update, bool, error) {
+	updates, found, err := f.StorageTallyRepo.DecommissionSlot(ctx, code)
+	if err != nil {
+		return nil, false, err
+	}
+	if f.shouldFail() {
+		return nil, false, errInjected
+	}
+	return updates, found, nil
+}
+
 type storageHarness struct {
 	consumer  *kafkaconsumer.StorageCapacityConsumer
-	pcs       *memory.ProcessCapacityRepo // the real store behind flaky
-	flaky     *flakyPCRepo
 	processed *memory.ProcessedEventRepo
-	tally     *memory.StorageTallyRepo
+	tally     *memory.StorageTallyRepo // the real store behind flaky
+	flaky     *flakyTally
 	uow       *countingUoW
 }
 
-// newStorageHarness wires a StorageCapacityConsumer over transactional
-// in-memory doubles: the UnitOfWork snapshots and, on error, restores the
-// constraint store, the tally AND the processed-event table.
+// newStorageHarness wires a StorageCapacityConsumer -- a pure tally
+// maintainer -- over transactional in-memory doubles: the UnitOfWork
+// snapshots and, on error, restores the tally AND the processed-event table.
 func newStorageHarness() storageHarness {
-	pcs, processed, tallyRepo := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
-	flaky := &flakyPCRepo{ProcessCapacityRepo: pcs}
-	uow := &countingUoW{inner: memory.NewUnitOfWork(pcs, processed, tallyRepo)}
+	processed, tallyRepo := memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
+	flaky := &flakyTally{StorageTallyRepo: tallyRepo}
+	uow := &countingUoW{inner: memory.NewUnitOfWork(tallyRepo, processed)}
 	return storageHarness{
 		consumer: &kafkaconsumer.StorageCapacityConsumer{
-			Register:        &usecases.RegisterProcessCapacityConstraint{Repo: flaky},
-			Tally:           tallyRepo,
+			Tally:           flaky,
 			ProcessedEvents: processed,
 			UoW:             uow,
 			Logger:          testLogger(),
 			Retry:           fastRetry,
 		},
-		pcs: pcs, flaky: flaky, processed: processed, tally: tallyRepo, uow: uow,
+		processed: processed, tally: tallyRepo, flaky: flaky, uow: uow,
 	}
 }
 

@@ -33,12 +33,12 @@ func runUntilCommits(t *testing.T, r *fakeReader, wantCommits int, run func(cont
 	}
 }
 
-// End-to-end through the REAL storage consumer's Run: the constraint step
-// fails twice (transient DB error after the tally step), then succeeds.
+// End-to-end through the REAL storage consumer's Run: the tally step
+// fails twice (transient DB error after the mutation was applied), then succeeds.
 // The offset is committed once, after the success; state is consistent.
 func TestStorageConsumer_Run_TransientFailuresRetriedThenCommittedOnce(t *testing.T) {
 	h := newStorageHarness()
-	h.flaky.failSaveAfter(0, 2)
+	h.flaky.failNext(2)
 	reader := newFakeReader(registeredEvent(t, "evt-1", "LOC-1", "Z", "BULK"))
 	h.consumer.Reader = reader
 
@@ -50,12 +50,11 @@ func TestStorageConsumer_Run_TransientFailuresRetriedThenCommittedOnce(t *testin
 	if got, want := reader.log(), []string{"fetch:0", "commit:0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("reader events = %v, want exactly one fetch and one commit %v", got, want)
 	}
-	if h.flaky.saveCalls != 3 {
-		t.Fatalf("Save attempted %d times, want 3 (fail, fail, succeed) for the SAME message", h.flaky.saveCalls)
+	if h.flaky.callCount() != 3 {
+		t.Fatalf("tally mutated %d times, want 3 (fail, fail, succeed) for the SAME message", h.flaky.callCount())
 	}
-	if h.tally.Count("Z", "LOCATION", "BULK") != 1 || h.constraintQty(t, "Z:BULK") != 1 {
-		t.Fatalf("inconsistent: tally=%d constraint=%v (a failed attempt leaked or the retry double-counted)",
-			h.tally.Count("Z", "LOCATION", "BULK"), h.constraintQty(t, "Z:BULK"))
+	if h.tally.Count("Z", "LOCATION", "BULK") != 1 {
+		t.Fatalf("tally=%d (a failed attempt leaked or the retry double-counted), want 1", h.tally.Count("Z", "LOCATION", "BULK"))
 	}
 	if !h.processed.Has(storageName, "evt-1") {
 		t.Fatal("event not recorded as processed after success")
@@ -103,7 +102,7 @@ func TestStorageConsumer_Run_DeterministicBadMessageCommittedOnceNotRetried(t *t
 	if h.uow.calls.Load() != 1 {
 		t.Fatalf("units of work = %d, want 1 (only the valid message touches the DB)", h.uow.calls.Load())
 	}
-	if h.constraintQty(t, "Z:BULK") != 1 {
+	if h.tally.Count("Z", "LOCATION", "BULK") != 1 {
 		t.Fatal("the good message after the bad one was not applied")
 	}
 }
@@ -113,7 +112,7 @@ func TestStorageConsumer_Run_DeterministicBadMessageCommittedOnceNotRetried(t *t
 // safe either way).
 func TestStorageConsumer_Run_CancelledWhileFailing_DoesNotCommit(t *testing.T) {
 	h := newStorageHarness()
-	h.flaky.failSaveAfter(0, 1<<30)
+	h.flaky.failNext(1 << 30)
 	reader := newFakeReader(registeredEvent(t, "evt-1", "LOC-1", "Z", "BULK"))
 	h.consumer.Reader = reader
 
@@ -123,10 +122,7 @@ func TestStorageConsumer_Run_CancelledWhileFailing_DoesNotCommit(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		h.flaky.mu.Lock()
-		calls := h.flaky.saveCalls
-		h.flaky.mu.Unlock()
-		if calls >= 3 {
+		if h.flaky.callCount() >= 3 {
 			break
 		}
 		if time.Now().After(deadline) {

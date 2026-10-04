@@ -25,15 +25,24 @@ type harness struct {
 	session *sdk.ClientSession
 	outbox  *memory.OutboxRepo
 	deps    inboundmcp.Deps
+	// tally is the facility-layout tally behind the deps, so tests can seed
+	// storage positions / stations the way the facility consumer would.
+	tally *memory.StorageTallyRepo
 }
 
 func newDeps() (inboundmcp.Deps, *memory.OutboxRepo) {
+	deps, outboxRepo, _ := newStack()
+	return deps, outboxRepo
+}
+
+func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo) {
+	standards, tallyRepo := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
 	pc := memory.NewProcessCapacityRepo()
 	paths := memory.NewProcessPathRepo()
 	plans, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	uow := memory.NewUnitOfWork(pc, plans, outboxRepo)
 	encoder := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pc}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pc, StationStandards: standards, Tally: tallyRepo}
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pc},
 		ProcessCapacities:                 pc,
@@ -42,7 +51,10 @@ func newDeps() (inboundmcp.Deps, *memory.OutboxRepo) {
 		CreateCapacityPlan:                &usecases.CreateCapacityPlan{PathCapacity: pathCapacity, Plans: plans, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		PublishCapacityPlan:               &usecases.PublishCapacityPlan{Plans: plans, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:                     plans,
-	}, outboxRepo
+		DeclareStationStandard:            &usecases.DeclareStationStandard{Repo: standards},
+		StationStandards:                  standards,
+		GetStorageCapacity:                &usecases.GetStorageCapacity{Tally: tallyRepo},
+	}, outboxRepo, tallyRepo
 }
 
 func connectSession(t *testing.T, deps inboundmcp.Deps) *sdk.ClientSession {
@@ -65,8 +77,8 @@ func connectSession(t *testing.T, deps inboundmcp.Deps) *sdk.ClientSession {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	deps, outboxRepo := newDeps()
-	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps}
+	deps, outboxRepo, tallyRepo := newStack()
+	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo}
 }
 
 // call invokes a tool and fails the test on a TRANSPORT/protocol error;

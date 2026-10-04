@@ -2,7 +2,6 @@ package processcapacity
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
@@ -14,48 +13,65 @@ import (
 // entirely and understate how constrained the path really is.
 var ErrMissingStepCapacity = errors.New("processcapacity: missing capacity data for step")
 
-// ComputeProcessPathCapacity is a domain SERVICE -- a plain function, not a
+// PathCapacityResult is a composed ProcessPathCapacity: the end-to-end rate
+// (ORDER), the bottleneck step and the constraint type binding it, every
+// step's own composed result in path order, and the warnings raised.
+type PathCapacityResult struct {
+	Rate                 CapacityRate
+	BottleneckStep       ProcessType
+	BottleneckConstraint ConstraintType
+	Steps                []StepResult
+	Warnings             []string
+}
+
+// ComposeProcessPathCapacity is a domain SERVICE -- a plain function, not a
 // stored aggregate -- that computes a ProcessPath's end-to-end,
 // WorkloadProfile-normalized capacity (see domain-model.md's
-// ProcessPathCapacity definition). For each step in path, it looks up that
-// step's ProcessCapacity in capacities, takes its EffectiveRate(),
-// normalizes that rate into ORDER/period via profile, and returns the
-// MINIMUM normalized rate across every step plus which step produced it
-// (the bottleneck).
+// ProcessPathCapacity definition). Each step is composed by
+// ComposeStepCapacity from its StepInput (a step absent from inputs has no
+// capacity data at all); the path's rate is the MINIMUM normalized step rate
+// and its bottleneck is the earliest step producing it, together with that
+// step's binding constraint type.
 //
-// Returns ErrMissingStepCapacity, naming the missing step, if any step in
-// path has no entry in capacities. Propagates any error EffectiveRate or
-// NormalizeToOrderRate returns.
-func ComputeProcessPathCapacity(path processpath.ProcessPath, capacities map[ProcessType]*ProcessCapacity, profile WorkloadProfile) (CapacityRate, ProcessType, error) {
+// Returns ErrMissingStepCapacity, naming the step, for a step with no
+// candidate constraint, and propagates any normalization error.
+func ComposeProcessPathCapacity(path processpath.ProcessPath, inputs map[ProcessType]StepInput, profile WorkloadProfile) (PathCapacityResult, error) {
 	steps := path.Steps()
-
-	var (
-		bottleneckRate CapacityRate
-		bottleneckStep ProcessType
-	)
+	result := PathCapacityResult{Steps: make([]StepResult, 0, len(steps))}
 	for i, pathStep := range steps {
 		step := ProcessType(pathStep)
-
-		pc, ok := capacities[step]
-		if !ok || pc == nil {
-			return CapacityRate{}, "", fmt.Errorf("%w: %s", ErrMissingStepCapacity, step)
-		}
-
-		effective, _, err := pc.EffectiveRate()
+		composed, err := ComposeStepCapacity(step, inputs[step], profile)
 		if err != nil {
-			return CapacityRate{}, "", err
+			return PathCapacityResult{}, err
 		}
-
-		normalized, err := profile.NormalizeToOrderRate(effective)
-		if err != nil {
-			return CapacityRate{}, "", err
-		}
-
-		if i == 0 || normalized.LessThan(bottleneckRate) {
-			bottleneckRate = normalized
-			bottleneckStep = step
+		result.Steps = append(result.Steps, composed)
+		result.Warnings = append(result.Warnings, composed.Warnings...)
+		if i == 0 || composed.Rate.LessThan(result.Rate) {
+			result.Rate = composed.Rate
+			result.BottleneckStep = step
+			result.BottleneckConstraint = composed.Binding
 		}
 	}
+	return result, nil
+}
 
-	return bottleneckRate, bottleneckStep, nil
+// ComputeProcessPathCapacity is ComposeProcessPathCapacity over registered
+// ProcessCapacity constraints alone (no station composition): for each step
+// in path it takes that step's ProcessCapacity from capacities, normalizes
+// every constraint into ORDER via profile and returns the MINIMUM across
+// steps plus which step produced it (the bottleneck). It is the design-doc
+// section 31 worked example's entry point.
+//
+// Returns ErrMissingStepCapacity, naming the missing step, if any step in
+// path has no entry in capacities. Propagates any NormalizeToOrderRate error.
+func ComputeProcessPathCapacity(path processpath.ProcessPath, capacities map[ProcessType]*ProcessCapacity, profile WorkloadProfile) (CapacityRate, ProcessType, error) {
+	inputs := make(map[ProcessType]StepInput, len(capacities))
+	for step, pc := range capacities {
+		inputs[step] = StepInput{Registered: pc}
+	}
+	result, err := ComposeProcessPathCapacity(path, inputs, profile)
+	if err != nil {
+		return CapacityRate{}, "", err
+	}
+	return result.Rate, result.BottleneckStep, nil
 }

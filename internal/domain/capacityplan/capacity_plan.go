@@ -64,6 +64,13 @@ type CapacityPlan struct {
 	capacityOverWindow float64
 	shortage           float64
 
+	// bottleneckConstraint is the constraint type binding the bottleneck
+	// step (LABOR, STATION, ...) and warnings are the composition warnings
+	// raised when the path capacity was computed. Both are informational
+	// read-model fields: no published event carries them.
+	bottleneckConstraint processcapacity.ConstraintType
+	warnings             []string
+
 	status      Status
 	createdAt   time.Time
 	publishedAt time.Time
@@ -82,6 +89,11 @@ type CreateParams struct {
 	AssignedDemand float64
 	PathRate       processcapacity.CapacityRate
 	BottleneckStep processcapacity.ProcessType
+
+	// BottleneckConstraint and Warnings come from the composed path
+	// capacity (processcapacity.ComposeProcessPathCapacity).
+	BottleneckConstraint processcapacity.ConstraintType
+	Warnings             []string
 }
 
 // Create builds a DRAFT CapacityPlan, computes its derived fields and
@@ -117,6 +129,9 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 		shortage:           math.Max(0, p.AssignedDemand-over),
 		status:             StatusDraft,
 		createdAt:          now,
+
+		bottleneckConstraint: p.BottleneckConstraint,
+		warnings:             append([]string(nil), p.Warnings...),
 	}
 	plan.record(CapacityPlanCreated{
 		Header:             Header{PlanID: plan.id, At: now},
@@ -150,6 +165,9 @@ type RehydrateParams struct {
 	Status             Status
 	CreatedAt          time.Time
 	PublishedAt        time.Time
+
+	BottleneckConstraint processcapacity.ConstraintType
+	Warnings             []string
 }
 
 // Rehydrate rebuilds a CapacityPlan from persisted state. It records no
@@ -169,6 +187,9 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 		status:             p.Status,
 		createdAt:          p.CreatedAt,
 		publishedAt:        p.PublishedAt,
+
+		bottleneckConstraint: p.BottleneckConstraint,
+		warnings:             append([]string(nil), p.Warnings...),
 	}
 }
 
@@ -273,3 +294,14 @@ func (c *CapacityPlan) CreatedAt() time.Time { return c.createdAt }
 
 // PublishedAt returns when the plan was published; the zero time while DRAFT.
 func (c *CapacityPlan) PublishedAt() time.Time { return c.publishedAt }
+
+// BottleneckConstraint returns the constraint type binding the bottleneck
+// step (e.g. LABOR, STATION); empty for plans created before it was recorded.
+func (c *CapacityPlan) BottleneckConstraint() processcapacity.ConstraintType {
+	return c.bottleneckConstraint
+}
+
+// Warnings returns the composition warnings raised when the path capacity was
+// computed (e.g. stations tallied without a declared station standard). The
+// result is a copy.
+func (c *CapacityPlan) Warnings() []string { return append([]string(nil), c.warnings...) }

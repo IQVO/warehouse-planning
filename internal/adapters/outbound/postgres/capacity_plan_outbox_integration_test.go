@@ -72,7 +72,7 @@ func newPlanStack(t *testing.T) *planStack {
 
 	s := &planStack{pool: pool, plans: plans, outbox: ob}
 	s.create = &usecases.CreateCapacityPlan{
-		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs},
+		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(pool), Tally: postgres.NewStorageTallyRepo(pool)},
 		Plans:        plans, Outbox: ob, Encoder: enc, UnitOfWork: uow,
 	}
 	s.publish = &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow}

@@ -31,6 +31,8 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, processcapacity.ErrNegativeQuantity),
 		errors.Is(err, processcapacity.ErrNonPositivePeriod),
+		errors.Is(err, processcapacity.ErrNonPositiveStationStandard),
+		errors.Is(err, processcapacity.ErrStationStandardRequiredField),
 		errors.Is(err, processcapacity.ErrNonPositiveConversionFactor),
 		errors.Is(err, processcapacity.ErrMissingConversionFactor),
 		errors.Is(err, processcapacity.ErrUnsupportedNormalizationUnit),
@@ -65,6 +67,8 @@ func problemCatalog() []struct {
 		{processcapacity.ErrNegativeQuantity, problemInfo{"negative-quantity", "Capacity rate quantity must not be negative"}},
 		{processcapacity.ErrNonPositivePeriod, problemInfo{"non-positive-period", "Capacity rate period must be positive"}},
 		{processcapacity.ErrUnitMismatch, problemInfo{"unit-mismatch", "Constraint rate unit does not match this ProcessCapacity's native unit"}},
+		{processcapacity.ErrNonPositiveStationStandard, problemInfo{"non-positive-station-standard", "A station standard's throughput per station must be positive"}},
+		{processcapacity.ErrStationStandardRequiredField, problemInfo{"missing-station-standard-field", "A station standard needs a location and a process type"}},
 		{processpath.ErrEmptySteps, problemInfo{"empty-process-path-steps", "A ProcessPath must have at least one step"}},
 		{processcapacity.ErrNonPositiveConversionFactor, problemInfo{"non-positive-conversion-factor", "A WorkloadProfile conversion factor must be positive"}},
 		{processcapacity.ErrMissingConversionFactor, problemInfo{"missing-conversion-factor", "The WorkloadProfile has no conversion factor for one of the path's steps' units"}},

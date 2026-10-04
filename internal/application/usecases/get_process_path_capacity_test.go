@@ -71,7 +71,7 @@ func TestGetProcessPathCapacity_WorkedExample(t *testing.T) {
 
 	seedPickRebinPackPathCapacity(t, ctx, pcRepo, ppRepo, start, end)
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo}
+	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	result, err := uc.Handle(ctx, GetProcessPathCapacityCommand{
 		ProcessPathID:    "pick-rebin-pack",
 		Location:         "PATH-ZONE-A",
@@ -96,7 +96,7 @@ func TestGetProcessPathCapacity_ProcessPathNotFound(t *testing.T) {
 	ppRepo := memory.NewProcessPathRepo()
 	start, end := pickZoneAWindowTimes()
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo}
+	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	_, err := uc.Handle(context.Background(), GetProcessPathCapacityCommand{
 		ProcessPathID: "nowhere",
 		Location:      "PATH-ZONE-A",
@@ -141,7 +141,7 @@ func TestGetProcessPathCapacity_MissingStepCapacity(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo}
+	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	_, err := uc.Handle(ctx, GetProcessPathCapacityCommand{
 		ProcessPathID:    "pick-only",
 		Location:         "PATH-ZONE-B",
@@ -163,7 +163,7 @@ func TestGetProcessPathCapacity_RejectsInvalidWorkloadProfile(t *testing.T) {
 
 	seedPickRebinPackPathCapacity(t, ctx, pcRepo, ppRepo, start, end)
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo}
+	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	_, err := uc.Handle(ctx, GetProcessPathCapacityCommand{
 		ProcessPathID:    "pick-rebin-pack",
 		Location:         "PATH-ZONE-A",

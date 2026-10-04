@@ -9,17 +9,14 @@ import (
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
 
-	kafkaconsumer "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
-	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+	"github.com/claudioed/warehouse-planning/internal/application/tally"
 )
 
-// These tests prove the atomicity fix (defects 2 and 3): a failure on the
-// SECOND step of a message (the ProcessCapacity constraint upsert, after
-// the tally step already ran) must leave the tally, the constraint and the
-// processed-event claim ALL unchanged, HandleMessage must return a
-// non-nil error, and a retry must then heal everything. On the old code
-// the tally stayed incremented, the claim stayed recorded, and the error
-// was swallowed -- so these fail there.
+// These tests prove the atomic at-least-once behaviour of the facility
+// consumer, now a pure tally maintainer: a failure part-way through a message
+// (injected AFTER the tally mutation was applied) must leave the tally and the
+// processed-event claim BOTH unchanged, HandleMessage must return a non-nil
+// error, and a retry must then heal everything.
 
 const storageName = "storage-capacity-consumer"
 
@@ -51,112 +48,71 @@ func registeredEvent(t *testing.T, id, code, zone, locType string) []byte {
 	})
 }
 
-// constraintQty returns the effective quantity of the STORAGE constraint
-// for zone:locType, or -1 if no ProcessCapacity exists.
-func (h storageHarness) constraintQty(t *testing.T, location string) float64 {
-	t.Helper()
-	return qty(t, h.pcs, "STORAGE", location)
-}
-
-func qty(t *testing.T, repo interface {
-	FindByProcessLocationWindow(context.Context, processcapacity.ProcessType, string, time.Time, time.Time) (*processcapacity.ProcessCapacity, error)
-}, processType, location string) float64 {
-	t.Helper()
-	pc, err := repo.FindByProcessLocationWindow(context.Background(), processcapacity.ProcessType(processType), location,
-		kafkaconsumer.StandingWindowStart, kafkaconsumer.StandingWindowEnd)
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if pc == nil {
-		return -1
-	}
-	rate, _, err := pc.EffectiveRate()
-	if err != nil {
-		t.Fatalf("EffectiveRate: %v", err)
-	}
-	return rate.Quantity()
-}
-
-// assertRolledBack fails unless the first-step tally, the constraint and
-// the claim for (zone, locType, eventID) are all absent.
+// assertRolledBack fails unless the tally and the claim for (zone, locType,
+// eventID) are both absent.
 func (h storageHarness) assertRolledBack(t *testing.T, zone, locType, eventID string) {
 	t.Helper()
-	if got := h.tally.Count(zone, "LOCATION", locType); got != 0 {
+	if got := h.tally.Count(zone, tally.TypeLocation, locType); got != 0 {
 		t.Errorf("tally = %d after failed message, want 0 (rolled back)", got)
-	}
-	if got := h.constraintQty(t, zone+":"+locType); got != -1 {
-		t.Errorf("constraint = %v after failed message, want none", got)
 	}
 	if h.processed.Has(storageName, eventID) {
 		t.Error("event stayed claimed after a failed message; the redelivery would be skipped as already processed")
 	}
 }
 
-// assertApplied fails unless tally, constraint and claim are consistent at want.
+// assertApplied fails unless tally and claim are consistent at want.
 func (h storageHarness) assertApplied(t *testing.T, zone, locType, eventID string, want int) {
 	t.Helper()
-	if got := h.tally.Count(zone, "LOCATION", locType); got != want {
+	if got := h.tally.Count(zone, tally.TypeLocation, locType); got != want {
 		t.Errorf("tally = %d, want %d", got, want)
-	}
-	if got := h.constraintQty(t, zone+":"+locType); got != float64(want) {
-		t.Errorf("constraint = %v, want %d (tally and constraint consistent)", got, want)
 	}
 	if !h.processed.Has(storageName, eventID) {
 		t.Error("event not claimed after the successful handling")
 	}
 }
 
-func TestStorageConsumer_RegisterFailsAfterTally_RollsBackTallyConstraintAndClaim(t *testing.T) {
-	steps := map[string]func(h storageHarness){
-		"constraint Save fails": func(h storageHarness) { h.flaky.failSaveAfter(0, 1) },
-		"constraint Find fails": func(h storageHarness) { h.flaky.failFinds = 1 },
-	}
-	for name, inject := range steps {
-		t.Run(name, func(t *testing.T) {
-			h := newStorageHarness()
-			inject(h)
-			msg := registeredEvent(t, "evt-1", "WH1-A-01", "ZONE-A", "BULK")
+func TestStorageConsumer_FailureAfterTallyMutation_RollsBackTallyAndClaim(t *testing.T) {
+	h := newStorageHarness()
+	h.flaky.failNext(1)
+	msg := registeredEvent(t, "evt-1", "WH1-A-01", "ZONE-A", "BULK")
 
-			err := h.consumer.HandleMessage(context.Background(), msg)
-			if !errors.Is(err, errInjected) {
-				t.Fatalf("HandleMessage err = %v, want the injected infrastructure error (non-nil => retry)", err)
-			}
-			h.assertRolledBack(t, "ZONE-A", "BULK", "evt-1")
-
-			// The retry (same bytes, as Kafka/our loop would redeliver) heals it.
-			if err := h.consumer.HandleMessage(context.Background(), msg); err != nil {
-				t.Fatalf("retry HandleMessage: %v", err)
-			}
-			h.assertApplied(t, "ZONE-A", "BULK", "evt-1", 1)
-		})
+	err := h.consumer.HandleMessage(context.Background(), msg)
+	if !errors.Is(err, errInjected) {
+		t.Fatalf("HandleMessage err = %v, want the injected infrastructure error (non-nil => retry)", err)
 	}
+	h.assertRolledBack(t, "ZONE-A", "BULK", "evt-1")
+
+	// The retry (same bytes, as Kafka/our loop would redeliver) heals it.
+	if err := h.consumer.HandleMessage(context.Background(), msg); err != nil {
+		t.Fatalf("retry HandleMessage: %v", err)
+	}
+	h.assertApplied(t, "ZONE-A", "BULK", "evt-1", 1)
 }
 
 // TestStorageConsumer_RedeliveryAfterSuccessAndAlreadyRegisteredNoOp covers
 // the 'locationCode already registered' no-op: it must stay safe now that
-// everything is atomic. Verified, not assumed:
+// claim + tally are atomic.
 //  1. redelivering the SAME event id is skipped by the claim;
 //  2. a NEW event id for the SAME locationCode hits the already-registered
-//     no-op, increments nothing, and leaves the (already correct)
-//     constraint alone;
+//     no-op and increments nothing;
 //  3. after a ROLLED-BACK first attempt the tally registration is gone too,
 //     so the retry does NOT hit the no-op (the old, never-healing path).
 func TestStorageConsumer_RedeliveryAfterSuccessAndAlreadyRegisteredNoOp(t *testing.T) {
 	h := newStorageHarness()
 	ctx := context.Background()
 
-	// (3) first attempt fails after the tally step.
-	h.flaky.failSaveAfter(0, 1)
+	// (3) first attempt fails after the tally mutation.
+	h.flaky.failNext(1)
 	if err := h.consumer.HandleMessage(ctx, registeredEvent(t, "evt-1", "LOC-1", "Z", "BULK")); err == nil {
 		t.Fatal("expected the injected failure")
 	}
-	// Retry with a DIFFERENT event id for the same locationCode (a
-	// producer re-emit): must register for real, not no-op.
+	// Retry with a DIFFERENT event id for the same locationCode (a producer
+	// re-emit): must register for real, not no-op.
 	if err := h.consumer.HandleMessage(ctx, registeredEvent(t, "evt-1b", "LOC-1", "Z", "BULK")); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if h.tally.Count("Z", "LOCATION", "BULK") != 1 || h.constraintQty(t, "Z:BULK") != 1 {
-		t.Fatalf("after retry tally=%d constraint=%v, want 1/1", h.tally.Count("Z", "LOCATION", "BULK"), h.constraintQty(t, "Z:BULK"))
+	if got := h.tally.Count("Z", tally.TypeLocation, "BULK"); got != 1 {
+		t.Fatalf("after retry tally = %d, want 1", got)
 	}
 
 	// (1) same event id redelivered after success: skipped.
@@ -167,97 +123,60 @@ func TestStorageConsumer_RedeliveryAfterSuccessAndAlreadyRegisteredNoOp(t *testi
 	if err := h.consumer.HandleMessage(ctx, registeredEvent(t, "evt-1c", "LOC-1", "Z", "BULK")); err != nil {
 		t.Fatalf("re-emit: %v", err)
 	}
-	if h.tally.Count("Z", "LOCATION", "BULK") != 1 || h.constraintQty(t, "Z:BULK") != 1 {
-		t.Fatalf("redelivery double-counted: tally=%d constraint=%v", h.tally.Count("Z", "LOCATION", "BULK"), h.constraintQty(t, "Z:BULK"))
+	if got := h.tally.Count("Z", tally.TypeLocation, "BULK"); got != 1 {
+		t.Fatalf("redelivery double-counted: tally = %d", got)
 	}
 	if !h.processed.Has(storageName, "evt-1c") {
 		t.Error("the no-op event is still recorded as processed (a committed, harmless handling)")
 	}
 }
 
-// A WorkCenter event updates one constraint per activity. A failure on the
-// SECOND activity's upsert must roll back the first activity's constraint
-// and the whole tally, not leave PACK updated and QC stale.
-func TestStorageConsumer_WorkCenterFailureOnSecondActivity_RollsBackFirstToo(t *testing.T) {
+// A WorkCenter event tallies one bucket per activity. A failure after the
+// buckets were incremented must roll back ALL of them and the claim.
+func TestStorageConsumer_WorkCenterFailureAfterMutation_RollsBackEveryBucket(t *testing.T) {
 	h := newStorageHarness()
 	ctx := context.Background()
-	msg := locationSlotEvent(t, "evt-wc", "LocationSlotRegistered", time.Now().UTC(), map[string]any{
-		"locationCode": "WH1-PACK-01", "zoneId": "ZONE-B", "role": "WorkCenter", "activities": []any{"Pack", "QC"},
-	})
+	msg := workCenterEvent(t, "evt-wc", "WH1-PACK-01", "ZONE-B", "Pack", "QC")
 
-	h.flaky.failSaveAfter(1, 1) // PACK saves, QC fails
+	h.flaky.failNext(1)
 	if err := h.consumer.HandleMessage(ctx, msg); !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want injected", err)
 	}
-	if got := qty(t, h.pcs, "PACK", "ZONE-B"); got != -1 {
-		t.Errorf("PACK constraint = %v after failed message, want rolled back", got)
-	}
-	if h.tally.Count("ZONE-B", "STATION", "PACK") != 0 || h.tally.Count("ZONE-B", "STATION", "QC") != 0 || h.processed.Has(storageName, "evt-wc") {
+	if h.tally.Count("ZONE-B", tally.TypeStation, "PACK") != 0 || h.tally.Count("ZONE-B", tally.TypeStation, "QC") != 0 || h.processed.Has(storageName, "evt-wc") {
 		t.Error("tally/claim survived the rollback")
 	}
 
 	if err := h.consumer.HandleMessage(ctx, msg); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if qty(t, h.pcs, "PACK", "ZONE-B") != 1 || qty(t, h.pcs, "QC", "ZONE-B") != 1 {
-		t.Error("retry did not register both STATION constraints")
+	if h.tally.Count("ZONE-B", tally.TypeStation, "PACK") != 1 || h.tally.Count("ZONE-B", tally.TypeStation, "QC") != 1 {
+		t.Error("retry did not tally both activities")
 	}
 }
 
-func TestStorageConsumer_DecommissionFailsAfterTally_RollsBack(t *testing.T) {
+func TestStorageConsumer_DecommissionFailsAfterMutation_RollsBack(t *testing.T) {
 	h := newStorageHarness()
 	ctx := context.Background()
 	for _, id := range []string{"r1", "r2"} {
-		code := "LOC-" + id
-		if err := h.consumer.HandleMessage(ctx, registeredEvent(t, id, code, "Z", "BULK")); err != nil {
+		if err := h.consumer.HandleMessage(ctx, registeredEvent(t, id, "LOC-"+id, "Z", "BULK")); err != nil {
 			t.Fatal(err)
 		}
 	}
 	decom := locationSlotEvent(t, "d1", "LocationSlotDecommissioned", time.Now().UTC(), map[string]any{"locationCode": "LOC-r1"})
 
-	h.flaky.failSaveAfter(0, 1)
+	h.flaky.failNext(1)
 	if err := h.consumer.HandleMessage(ctx, decom); !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want injected", err)
 	}
-	if h.tally.Count("Z", "LOCATION", "BULK") != 2 || h.constraintQty(t, "Z:BULK") != 2 || h.processed.Has(storageName, "d1") {
-		t.Fatalf("decommission leaked state: tally=%d constraint=%v claimed=%v",
-			h.tally.Count("Z", "LOCATION", "BULK"), h.constraintQty(t, "Z:BULK"), h.processed.Has(storageName, "d1"))
+	if h.tally.Count("Z", tally.TypeLocation, "BULK") != 2 || h.processed.Has(storageName, "d1") {
+		t.Fatalf("decommission leaked state: tally=%d claimed=%v", h.tally.Count("Z", tally.TypeLocation, "BULK"), h.processed.Has(storageName, "d1"))
 	}
 	// The slot registration was restored too: the retry decrements for real.
 	if err := h.consumer.HandleMessage(ctx, decom); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if h.tally.Count("Z", "LOCATION", "BULK") != 1 || h.constraintQty(t, "Z:BULK") != 1 {
-		t.Fatalf("after retry tally=%d constraint=%v, want 1/1", h.tally.Count("Z", "LOCATION", "BULK"), h.constraintQty(t, "Z:BULK"))
-	}
-}
-
-// Defect 3's other half: a domain-validation rejection is skipped (nil, no
-// retry, tally kept, event claimed) while an infrastructure error is not.
-func TestStorageConsumer_DomainValidationErrorIsSkippedNotRolledBack(t *testing.T) {
-	h := newStorageHarness()
-	ctx := context.Background()
-
-	// Seed a STORAGE/Z:BULK aggregate whose native unit (UNIT) differs from
-	// the unit the consumer registers (LINE) -> processcapacity.ErrUnitMismatch.
-	w, _ := processcapacity.NewCapacityWindow(kafkaconsumer.StandingWindowStart, kafkaconsumer.StandingWindowEnd)
-	pc := processcapacity.NewProcessCapacity("STORAGE", "Z:BULK", w)
-	rate, _ := processcapacity.NewCapacityRate(5, processcapacity.UnitUnit, time.Hour)
-	if err := pc.AddConstraint(processcapacity.ConstraintEquipment, rate); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.pcs.Save(ctx, pc); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := h.consumer.HandleMessage(ctx, registeredEvent(t, "evt-1", "LOC-1", "Z", "BULK")); err != nil {
-		t.Fatalf("a deterministic domain rejection must not be an error (it would retry forever), got %v", err)
-	}
-	if h.tally.Count("Z", "LOCATION", "BULK") != 1 {
-		t.Error("tally was rolled back by a domain-validation skip; it must be kept")
-	}
-	if !h.processed.Has(storageName, "evt-1") {
-		t.Error("event not marked processed after a deterministic skip; it would be redelivered forever")
+	if got := h.tally.Count("Z", tally.TypeLocation, "BULK"); got != 1 {
+		t.Fatalf("after retry tally = %d, want 1", got)
 	}
 }
 

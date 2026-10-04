@@ -100,6 +100,9 @@ func (uc *CreateCapacityPlan) Handle(ctx context.Context, cmd CreateCapacityPlan
 		AssignedDemand: cmd.AssignedDemand,
 		PathRate:       result.NormalizedRate,
 		BottleneckStep: result.BottleneckStep,
+
+		BottleneckConstraint: result.BottleneckConstraint,
+		Warnings:             result.Warnings,
 	}, now())
 	if err != nil {
 		return nil, err

@@ -34,10 +34,19 @@ var wantTools = map[string]bool{ // name -> read-only
 	"create_capacity_plan":                 false,
 	"publish_capacity_plan":                false,
 	"get_capacity_plan":                    true,
+	"declare_station_standard":             false,
+	"list_station_standards":               true,
+	"get_storage_capacity":                 true,
 }
 
+// maxTools is the tool budget. It was 8; the station-capacity composition
+// (ADR 0002) adds declare_station_standard, list_station_standards and
+// get_storage_capacity, so it is now 10. Raising it is a deliberate,
+// reviewed act: TestToolSurface still pins the exact curated set.
+const maxTools = 10
+
 // The MCP governance charter's mechanical gate: the advertised tool set is
-// exactly the curated one, within the 8-tool budget, snake_case verb_noun,
+// exactly the curated one, within the tool budget, snake_case verb_noun,
 // annotated (writes destructive, reads read-only), described, and every
 // argument is snake_case and documented.
 func TestToolSurface(t *testing.T) {
@@ -46,8 +55,8 @@ func TestToolSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(res.Tools) != len(wantTools) || len(res.Tools) > 8 {
-		t.Fatalf("advertised %d tools, want exactly %d (budget 8)", len(res.Tools), len(wantTools))
+	if len(res.Tools) != len(wantTools) || len(res.Tools) > maxTools {
+		t.Fatalf("advertised %d tools, want exactly %d (budget %d)", len(res.Tools), len(wantTools), maxTools)
 	}
 	for _, tool := range res.Tools {
 		readOnly, known := wantTools[tool.Name]

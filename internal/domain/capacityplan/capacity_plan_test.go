@@ -407,3 +407,49 @@ func assertEventNames(t *testing.T, events []Event, want ...string) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
 }
+
+// The composition outcome (binding constraint + warnings) is recorded on the
+// plan, survives Rehydrate, and is defensively copied both ways -- and none of
+// it leaks into the published events.
+func TestCreate_RecordsBottleneckConstraintAndWarnings(t *testing.T) {
+	rate := mustRate(t, 1800, processcapacity.UnitOrder, time.Hour)
+	warnings := []string{"no station standard declared for PACK at SIM1"}
+	plan, err := Create(CreateParams{
+		ID: planID, WarehouseID: warehouseID, Location: "SIM1", Window: mustWindow(t, windowStart, windowEnd),
+		ProcessPathID: pathID, AssignedDemand: 20000, PathRate: rate, BottleneckStep: "PACK",
+		BottleneckConstraint: processcapacity.ConstraintStation, Warnings: warnings,
+	}, createdAt)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if plan.BottleneckConstraint() != processcapacity.ConstraintStation {
+		t.Fatalf("BottleneckConstraint = %s, want STATION", plan.BottleneckConstraint())
+	}
+	if got := plan.Warnings(); !reflect.DeepEqual(got, warnings) {
+		t.Fatalf("Warnings = %q, want %q", got, warnings)
+	}
+	warnings[0] = "mutated by the caller"
+	plan.Warnings()[0] = "mutated through the accessor"
+	if got := plan.Warnings(); got[0] != "no station standard declared for PACK at SIM1" {
+		t.Fatalf("Warnings is not defensively copied: %q", got)
+	}
+
+	// 1800/h over 8h = 14400 orders; shortage 5600; the event stays the old shape.
+	if plan.Shortage() != 5600 {
+		t.Fatalf("shortage = %v, want 5600", plan.Shortage())
+	}
+	events := plan.PullEvents()
+	created, ok := events[0].(CapacityPlanCreated)
+	if len(events) != 1 || !ok || created.BottleneckStep != "PACK" {
+		t.Fatalf("events = %#v, want exactly CapacityPlanCreated for PACK", events)
+	}
+
+	again := Rehydrate(RehydrateParams{
+		ID: planID, WarehouseID: warehouseID, Location: "SIM1", Window: mustWindow(t, windowStart, windowEnd),
+		ProcessPathID: pathID, BottleneckStep: "PACK", Status: StatusDraft, CreatedAt: createdAt,
+		BottleneckConstraint: processcapacity.ConstraintStation, Warnings: []string{"w1", "w2"},
+	})
+	if again.BottleneckConstraint() != processcapacity.ConstraintStation || !reflect.DeepEqual(again.Warnings(), []string{"w1", "w2"}) {
+		t.Fatalf("Rehydrate lost the composition outcome: %s %q", again.BottleneckConstraint(), again.Warnings())
+	}
+}

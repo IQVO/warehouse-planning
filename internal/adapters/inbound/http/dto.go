@@ -52,10 +52,23 @@ type processPathResponse struct {
 // processPathCapacityResponse is GET /process-paths/{id}/capacity's
 // response body: the WorkloadProfile-normalized rate (always ORDER) and
 // which step is the bottleneck.
+//
+// step_breakdown and warnings are additive (station capacity composition,
+// ADR 0002): each step's normalized rate (ORDER per HOUR) and the constraint
+// type binding it, and any composition warnings (never null).
 type processPathCapacityResponse struct {
-	NormalizedRate float64 `json:"normalized_rate"`
-	NormalizedUnit string  `json:"normalized_unit"`
-	BottleneckStep string  `json:"bottleneck_step"`
+	NormalizedRate float64             `json:"normalized_rate"`
+	NormalizedUnit string              `json:"normalized_unit"`
+	BottleneckStep string              `json:"bottleneck_step"`
+	StepBreakdown  []stepBreakdownItem `json:"step_breakdown"`
+	Warnings       []string            `json:"warnings"`
+}
+
+// stepBreakdownItem is one path step's composed result.
+type stepBreakdownItem struct {
+	Step              string  `json:"step"`
+	NormalizedRate    float64 `json:"normalized_rate"`
+	BindingConstraint string  `json:"binding_constraint"`
 }
 
 // createCapacityPlanRequest is POST /capacity-plans' request body.
@@ -92,4 +105,52 @@ type capacityPlanResponse struct {
 	Shortage           float64 `json:"shortage"`
 	CreatedAt          string  `json:"created_at"`
 	PublishedAt        *string `json:"published_at,omitempty"`
+
+	// BottleneckConstraint (the constraint type binding the bottleneck
+	// step, e.g. LABOR or STATION; empty for plans created before it was
+	// recorded) and Warnings (never null) are additive, see ADR 0002.
+	BottleneckConstraint string   `json:"bottleneck_constraint"`
+	Warnings             []string `json:"warnings"`
+}
+
+// declareStationStandardRequest is PUT /station-standards/{location}/
+// {process_type}'s request body: the throughput of ONE station.
+type declareStationStandardRequest struct {
+	Quantity      float64 `json:"quantity"`
+	Unit          string  `json:"unit"`
+	PeriodSeconds float64 `json:"period_seconds"`
+}
+
+// stationStandardResponse is one declared StationStandard.
+type stationStandardResponse struct {
+	Location      string  `json:"location"`
+	ProcessType   string  `json:"process_type"`
+	Quantity      float64 `json:"quantity"`
+	Unit          string  `json:"unit"`
+	PeriodSeconds float64 `json:"period_seconds"`
+}
+
+// stationStandardsResponse is GET /station-standards' body.
+type stationStandardsResponse struct {
+	Location  string                    `json:"location,omitempty"`
+	Standards []stationStandardResponse `json:"standards"`
+}
+
+// storageCapacityResponse is GET /storage-capacity's read model of one site.
+type storageCapacityResponse struct {
+	Location         string                 `json:"location"`
+	StoragePositions []storagePositionsItem `json:"storage_positions"`
+	Stations         []zoneStationsItem     `json:"stations"`
+}
+
+type storagePositionsItem struct {
+	ZoneID       string `json:"zone_id"`
+	LocationType string `json:"location_type"`
+	Positions    int    `json:"positions"`
+}
+
+type zoneStationsItem struct {
+	ZoneID   string `json:"zone_id"`
+	Activity string `json:"activity"`
+	Stations int    `json:"stations"`
 }

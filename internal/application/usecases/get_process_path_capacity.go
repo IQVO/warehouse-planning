@@ -3,6 +3,7 @@ package usecases
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
@@ -32,32 +33,46 @@ type GetProcessPathCapacityCommand struct {
 	PackagesPerOrder *float64
 }
 
-// GetProcessPathCapacityResult reports the normalized rate and its
-// bottleneck step.
+// GetProcessPathCapacityResult reports the normalized rate, its bottleneck
+// step and the constraint type binding that step, every step's composed
+// result in path order, and the composition warnings.
 type GetProcessPathCapacityResult struct {
-	NormalizedRate processcapacity.CapacityRate
-	BottleneckStep processcapacity.ProcessType
+	NormalizedRate       processcapacity.CapacityRate
+	BottleneckStep       processcapacity.ProcessType
+	BottleneckConstraint processcapacity.ConstraintType
+	Steps                []processcapacity.StepResult
+	Warnings             []string
 }
 
-// GetProcessPathCapacity resolves a ProcessPath's steps' ProcessCapacity
-// plus the requested WorkloadProfile, and computes the path's normalized
-// capacity and bottleneck step (see domain-model.md's ProcessPathCapacity
-// definition and processcapacity.ComputeProcessPathCapacity).
+// GetProcessPathCapacity resolves a ProcessPath's steps' capacity and the
+// requested WorkloadProfile, and computes the path's normalized capacity,
+// bottleneck step and binding constraint (see domain-model.md's
+// ProcessPathCapacity definition and
+// processcapacity.ComposeProcessPathCapacity).
+//
+// Capacity is composed AT READ TIME (ADR 0002): per step the candidates are
+// the ProcessCapacity constraints registered at exactly (process, location,
+// window) plus a derived STATION constraint = the stations tallied across the
+// site's zones x the operator-declared StationStandard. Nothing derived is
+// ever stored, so late declarations and facility changes are picked up on the
+// next read.
 type GetProcessPathCapacity struct {
 	ProcessPaths      ports.ProcessPathRepository
 	ProcessCapacities ports.ProcessCapacityRepository
+	StationStandards  ports.StationStandardRepository
+	Tally             ports.StorageTallyReader
 }
 
-// Handle loads the ProcessPath identified by cmd.ProcessPathID, loads each
-// of its steps' ProcessCapacity for cmd's location and window (reusing the
-// existing ProcessCapacityRepository), builds the WorkloadProfile from
-// cmd's factors, and delegates to
-// processcapacity.ComputeProcessPathCapacity. Returns ErrProcessPathNotFound
+// Handle loads the ProcessPath identified by cmd.ProcessPathID, gathers each
+// step's registered ProcessCapacity for cmd's location and window, its
+// tallied station count and its StationStandard, builds the WorkloadProfile
+// from cmd's factors, and delegates to
+// processcapacity.ComposeProcessPathCapacity. Returns ErrProcessPathNotFound
 // if no ProcessPath is registered under cmd.ProcessPathID. A step with no
-// registered ProcessCapacity is left absent from the capacities map on
-// purpose -- ComputeProcessPathCapacity itself returns the explicit
-// ErrMissingStepCapacity for any step absent there, so this use case never
-// needs to special-case "not found" per step itself.
+// candidate at all is left without a registered capacity on purpose --
+// ComposeProcessPathCapacity itself returns the explicit
+// ErrMissingStepCapacity, so this use case never special-cases "not found"
+// per step.
 func (uc *GetProcessPathCapacity) Handle(ctx context.Context, cmd GetProcessPathCapacityCommand) (GetProcessPathCapacityResult, error) {
 	path, err := uc.ProcessPaths.FindByID(ctx, cmd.ProcessPathID)
 	if err != nil {
@@ -73,22 +88,53 @@ func (uc *GetProcessPathCapacity) Handle(ctx context.Context, cmd GetProcessPath
 	}
 
 	steps := path.Steps()
-	capacities := make(map[processcapacity.ProcessType]*processcapacity.ProcessCapacity, len(steps))
+	inputs := make(map[processcapacity.ProcessType]processcapacity.StepInput, len(steps))
 	for _, step := range steps {
 		processType := processcapacity.ProcessType(step)
-		pc, err := uc.ProcessCapacities.FindByProcessLocationWindow(ctx, processType, cmd.Location, cmd.WindowStart, cmd.WindowEnd)
+		input, err := uc.stepInput(ctx, processType, cmd)
 		if err != nil {
 			return GetProcessPathCapacityResult{}, err
 		}
-		if pc != nil {
-			capacities[processType] = pc
-		}
+		inputs[processType] = input
 	}
 
-	rate, bottleneck, err := processcapacity.ComputeProcessPathCapacity(*path, capacities, profile)
+	composed, err := processcapacity.ComposeProcessPathCapacity(*path, inputs, profile)
 	if err != nil {
 		return GetProcessPathCapacityResult{}, err
 	}
+	return GetProcessPathCapacityResult{
+		NormalizedRate:       composed.Rate,
+		BottleneckStep:       composed.BottleneckStep,
+		BottleneckConstraint: composed.BottleneckConstraint,
+		Steps:                composed.Steps,
+		Warnings:             composed.Warnings,
+	}, nil
+}
 
-	return GetProcessPathCapacityResult{NormalizedRate: rate, BottleneckStep: bottleneck}, nil
+// stepInput gathers one step's candidates: the registered ProcessCapacity at
+// exactly (step, location, window), the site's tallied station count for the
+// step's activity (the step name, upper-cased like the tally keys) and -- only
+// when stations exist -- the declared StationStandard.
+func (uc *GetProcessPathCapacity) stepInput(ctx context.Context, step processcapacity.ProcessType, cmd GetProcessPathCapacityCommand) (processcapacity.StepInput, error) {
+	input := processcapacity.StepInput{Location: cmd.Location}
+
+	pc, err := uc.ProcessCapacities.FindByProcessLocationWindow(ctx, step, cmd.Location, cmd.WindowStart, cmd.WindowEnd)
+	if err != nil {
+		return processcapacity.StepInput{}, err
+	}
+	input.Registered = pc
+
+	count, err := uc.Tally.StationCount(ctx, cmd.Location, strings.ToUpper(string(step)))
+	if err != nil {
+		return processcapacity.StepInput{}, err
+	}
+	input.StationCount = count
+	if count > 0 {
+		standard, err := uc.StationStandards.Find(ctx, cmd.Location, step)
+		if err != nil {
+			return processcapacity.StepInput{}, err
+		}
+		input.Standard = standard
+	}
+	return input, nil
 }

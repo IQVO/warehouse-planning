@@ -5,15 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 
 	"github.com/claudioed/warehouse-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/tally"
-	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
 // FacilityTopic is facility-layout's integration topic. This service has
@@ -40,39 +37,6 @@ const (
 	roleWorkCenter = "WorkCenter"
 )
 
-// storageProcessType is the sentinel ProcessType this phase registers a
-// bare storage-position tally under. A raw location-slot count has no
-// naturally implied ProcessType the way a WorkCenter activity does (PACK,
-// SORT, ...) -- see this file's package doc and the design note in the
-// final delivery report: forcing it onto ProcessCapacity's
-// (ProcessType, Location, Window) identity is a pragmatic Phase 3 choice,
-// not a clean domain fit.
-const storageProcessType = processcapacity.ProcessType("STORAGE")
-
-// tallyRateUnit is the native CapacityUnit a LOCATION/STATION constraint
-// derived from a position/station COUNT (not a throughput) is registered
-// under. None of the domain's four units (UNIT/LINE/ORDER/PACKAGE)
-// naturally represents "a count of physical positions or stations" --
-// UnitLine is this phase's documented nearest-fit choice (a generic
-// countable unit), paired with a 1-hour period purely to satisfy
-// CapacityRate's required period, not because this is actually a
-// per-hour throughput figure.
-const tallyRateUnit = processcapacity.UnitLine
-const tallyRatePeriod = time.Hour
-
-// StandingWindowStart / StandingWindowEnd: the fixed, deterministic
-// CapacityWindow this phase registers every LOCATION/STATION tally
-// constraint under. A position/station count is a STANDING structural
-// fact, not something naturally sliced into time windows the way labor
-// capacity is -- using a single wide, constant window lets repeated
-// registrations for the same (zone, key) keep landing on the SAME
-// ProcessCapacity aggregate (so AddConstraint upserts in place) instead
-// of inventing a new window per event.
-var (
-	StandingWindowStart = time.Unix(0, 0).UTC()
-	StandingWindowEnd   = StandingWindowStart.AddDate(100, 0, 0)
-)
-
 // locationSlotRegisteredData mirrors facility-layout's
 // LocationSlotRegistered payload (hand-mirrored locally, never imported
 // from that service's own Go types).
@@ -90,21 +54,20 @@ type locationSlotDecommissionedData struct {
 	LocationCode string `json:"locationCode"`
 }
 
-// StorageCapacityConsumer tallies facility-layout's location-slot stream
-// into LOCATION (role=Storage) and STATION (role=WorkCenter)
-// CapacityConstraints. See docs/adr/0001-...'s Addendum and this file's
-// storageProcessType/tallyRateUnit doc comments for the keying/unit
-// decisions this phase made where the upstream contract and the domain
-// model don't cleanly line up.
+// StorageCapacityConsumer is a pure TALLY MAINTAINER: it folds facility-layout's
+// location-slot stream into the position/station tally
+// (ports.StorageTallyRepository) and does nothing else. It registers no
+// ProcessCapacity constraint -- a position/station COUNT is not a throughput.
+// Station counts are composed with LABOR and the operator-declared
+// StationStandard at READ time (usecases.GetProcessPathCapacity, ADR 0002),
+// and storage positions are a read model (usecases.GetStorageCapacity).
 //
-// UoW is REQUIRED: the processed-event claim, the tally mutation and every
-// ProcessCapacity constraint upsert for ONE message run inside a single
-// UoW.Do, so they commit or roll back together -- a failure between the
-// tally step and the constraint step can never leave the two out of sync.
+// UoW is REQUIRED: the processed-event claim and the tally mutation for ONE
+// message run inside a single UoW.Do, so they commit or roll back together --
+// the claim is never recorded for a message whose tally mutation failed.
 // Retry tunes the run loop's backoff (zero value = defaults).
 type StorageCapacityConsumer struct {
 	Reader          Reader
-	Register        *usecases.RegisterProcessCapacityConstraint
 	Tally           ports.StorageTallyRepository
 	ProcessedEvents ports.ProcessedEventRepository
 	UoW             ports.UnitOfWork
@@ -120,7 +83,6 @@ type StorageCapacityConsumer struct {
 func NewStorageCapacityConsumer(
 	brokers []string,
 	groupID string,
-	register *usecases.RegisterProcessCapacityConstraint,
 	tallyRepo ports.StorageTallyRepository,
 	processedEvents ports.ProcessedEventRepository,
 	uow ports.UnitOfWork,
@@ -128,7 +90,6 @@ func NewStorageCapacityConsumer(
 ) *StorageCapacityConsumer {
 	return &StorageCapacityConsumer{
 		Reader:          kafkago.NewReader(readerConfig(brokers, FacilityTopic, groupID)),
-		Register:        register,
 		Tally:           tallyRepo,
 		ProcessedEvents: processedEvents,
 		UoW:             uow,
@@ -163,11 +124,11 @@ func (c *StorageCapacityConsumer) Close() error {
 //
 // It returns nil for anything deterministic -- failed CloudEvents
 // validation, an unrecognized `type`, a malformed payload, missing fields,
-// an already-processed event id, an untracked decommission, a domain
-// validation rejection (all logged) -- because retrying those can never
-// succeed. It returns a non-nil error ONLY for transient/infrastructure
-// failures, after the unit of work has rolled back (claim, tally and
-// constraint changes all undone), so the caller may retry the same message.
+// an already-processed event id, an untracked decommission (all logged) --
+// because retrying those can never succeed. It returns a non-nil error ONLY
+// for transient/infrastructure failures (begin/commit, claim, tally), after
+// the unit of work has rolled back (claim and tally changes both undone), so
+// the caller may retry the same message.
 func (c *StorageCapacityConsumer) HandleMessage(ctx context.Context, value []byte) error {
 	e, err := cloudevents.Decode(value)
 	if err != nil {
@@ -231,15 +192,13 @@ func (c *StorageCapacityConsumer) handleRegistered(ctx context.Context, e eventD
 			return fmt.Errorf("register slot: %w", err)
 		}
 		if updates == nil {
-			// The slot is already tallied. Safe under redelivery now that
-			// claim + tally + constraint are one transaction: a previous
-			// attempt that got this far also committed the constraint, and
-			// one that failed rolled the tally back too, so this branch
-			// can never mask a stale constraint.
+			// The slot is already tallied (a producer re-emitting a slot
+			// under a NEW event id). Safe under redelivery: claim and tally
+			// are one transaction, so an attempt that failed rolled its
+			// tally registration back too and its retry registers for real.
 			c.Logger.InfoContext(ctx, "skipping already-registered locationCode", "location_code", reg.locationCode)
-			return nil
 		}
-		return c.applyTallyUpdates(ctx, updates)
+		return nil
 	})
 }
 
@@ -303,7 +262,7 @@ func (c *StorageCapacityConsumer) handleDecommissioned(ctx context.Context, e ev
 		if skip, err := c.claim(ctx, e, "LocationSlotDecommissioned"); err != nil || skip {
 			return err
 		}
-		updates, found, err := c.Tally.DecommissionSlot(ctx, data.LocationCode)
+		_, found, err := c.Tally.DecommissionSlot(ctx, data.LocationCode)
 		if err != nil {
 			return fmt.Errorf("decommission slot: %w", err)
 		}
@@ -311,69 +270,7 @@ func (c *StorageCapacityConsumer) handleDecommissioned(ctx context.Context, e ev
 			// Never crash, never go negative: a decommission for a slot
 			// this consumer never saw registered is logged and skipped.
 			c.Logger.WarnContext(ctx, "decommission received for an untracked slot", "location_code", data.LocationCode, "event_id", e.ID())
-			return nil
 		}
-		return c.applyTallyUpdates(ctx, updates)
+		return nil
 	})
-}
-
-// applyTallyUpdates re-registers the ProcessCapacity CapacityConstraint
-// matching each updated tally bucket with its new count, inside the
-// caller's unit of work. A domain-validation rejection is logged and
-// skipped; any other error (repository/infrastructure) is returned. See
-// storageProcessType/tallyRateUnit's doc comments for the keying
-// decisions:
-//   - TypeLocation (role=Storage): ProcessType=storageProcessType
-//     (sentinel), Location="<zoneID>:<locationType>" -- a composite key
-//     folding locationType into Location because ConstraintType=LOCATION
-//     is a single fixed vocabulary entry, not parameterized per
-//     locationType, so two distinct locationTypes in the same zone would
-//     otherwise overwrite each other's LOCATION constraint on the same
-//     aggregate.
-//   - TypeStation (role=WorkCenter): ProcessType=the activity itself
-//     (already uppercased), Location=zoneID -- a clean fit, no composite
-//     key needed.
-func (c *StorageCapacityConsumer) applyTallyUpdates(ctx context.Context, updates []tally.Update) error {
-	for _, u := range updates {
-		var (
-			processType    processcapacity.ProcessType
-			location       string
-			constraintType processcapacity.ConstraintType
-		)
-		switch u.TallyType {
-		case tally.TypeLocation:
-			processType = storageProcessType
-			location = u.ZoneID + ":" + u.TallyKey
-			constraintType = processcapacity.ConstraintLocation
-		case tally.TypeStation:
-			processType = processcapacity.ProcessType(u.TallyKey)
-			location = u.ZoneID
-			constraintType = processcapacity.ConstraintStation
-		default:
-			continue
-		}
-
-		_, err := c.Register.Handle(ctx, usecases.RegisterProcessCapacityConstraintCommand{
-			ProcessType:    processType,
-			Location:       location,
-			WindowStart:    StandingWindowStart,
-			WindowEnd:      StandingWindowEnd,
-			ConstraintType: constraintType,
-			Quantity:       float64(u.Count),
-			Unit:           tallyRateUnit,
-			Period:         tallyRatePeriod,
-		})
-		if err != nil {
-			if usecases.IsDomainValidationError(err) {
-				// Deterministic rejection: retrying can never help, and it
-				// must not roll back the tally or fail the message.
-				c.Logger.WarnContext(ctx, "skipping tally update that failed domain validation", "error", err, "zone_id", u.ZoneID, "tally_type", u.TallyType, "tally_key", u.TallyKey)
-				continue
-			}
-			// Infrastructure failure: surface it so the enclosing unit of
-			// work rolls the tally back too and the message is retried.
-			return fmt.Errorf("register %s constraint for %s/%s: %w", u.TallyType, u.ZoneID, u.TallyKey, err)
-		}
-	}
-	return nil
 }

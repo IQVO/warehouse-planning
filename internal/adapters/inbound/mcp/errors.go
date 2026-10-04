@@ -24,6 +24,8 @@ func slugFor(err error) (slug string, ok bool) {
 		{processcapacity.ErrNegativeQuantity, "negative-quantity"},
 		{processcapacity.ErrNonPositivePeriod, "non-positive-period"},
 		{processcapacity.ErrUnitMismatch, "unit-mismatch"},
+		{processcapacity.ErrNonPositiveStationStandard, "non-positive-station-standard"},
+		{processcapacity.ErrStationStandardRequiredField, "missing-station-standard-field"},
 		{processpath.ErrEmptySteps, "empty-process-path-steps"},
 		{processcapacity.ErrNonPositiveConversionFactor, "non-positive-conversion-factor"},
 		{processcapacity.ErrMissingConversionFactor, "missing-conversion-factor"},
