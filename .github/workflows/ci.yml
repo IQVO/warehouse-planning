@@ -217,12 +217,6 @@ jobs:
         run: |
           echo "### go mod tidy -diff" >> "$GITHUB_STEP_SUMMARY"
           go mod tidy -diff | tee -a "$GITHUB_STEP_SUMMARY" || true
-      - name: Unused frontend exports/files/deps (knip)
-        working-directory: web
-        run: |
-          npm ci
-          echo "### knip (web/)" >> "$GITHUB_STEP_SUMMARY"
-          npx knip --no-exit-code | tee -a "$GITHUB_STEP_SUMMARY" || true
       - name: Coverage quality — high-coverage functions with a surviving mutant
         run: |
           go test ./internal/domain/... -coverprofile=/tmp/cov.out -covermode=atomic
@@ -351,32 +345,6 @@ jobs:
   # Runs ONLY for a pull_request targeting main -- validated pre-merge,
   # never on develop pushes/PRs or on push-to-main (already validated).
   # ============================================================
-  web:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: "warehouse-planning/web"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          path: "warehouse-planning"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: claudioed/warehouse-ui-kit
-          ref: develop
-          path: warehouse-ui-kit
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: "22"
-      - run: npm ci && npm run build
-        working-directory: warehouse-ui-kit
-      - run: npm ci
-      - run: npm run lint
-      - run: npx tsc -b
-      - run: npm test
-      - run: npm run build
-
   trivy-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -431,27 +399,29 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
+      packages: write
       id-token: write   # cosign keyless signing (Fulcio/Rekor via GitHub OIDC)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set image tag (short SHA)
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-      - name: Log in to Docker Hub
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           platforms: linux/amd64
           push: true
           tags: |
-            claudioed/warehouse-planning:latest
-            claudioed/warehouse-planning:${{ env.SHORT_SHA }}
+            ghcr.io/iqvo/warehouse-planning:latest
+            ghcr.io/iqvo/warehouse-planning:${{ env.SHORT_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Install cosign
@@ -459,11 +429,11 @@ jobs:
       - name: Sign the published image (keyless, GitHub OIDC identity)
         run: |
           cosign sign --yes \
-            claudioed/warehouse-planning@${{ steps.build.outputs.digest }}
+            ghcr.io/iqvo/warehouse-planning@${{ steps.build.outputs.digest }}
       - name: Generate SBOM (SPDX) for the published image
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
-          image: claudioed/warehouse-planning@${{ steps.build.outputs.digest }}
+          image: ghcr.io/iqvo/warehouse-planning@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
       - name: Attest the image with its SBOM (keyless)
@@ -471,7 +441,7 @@ jobs:
           cosign attest --yes \
             --predicate sbom.spdx.json \
             --type spdxjson \
-            claudioed/warehouse-planning@${{ steps.build.outputs.digest }}
+            ghcr.io/iqvo/warehouse-planning@${{ steps.build.outputs.digest }}
       - name: Upload SBOM as a workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -481,7 +451,7 @@ jobs:
 
   # Cuts a GitHub Release (+ matching git tag + versioned Docker tag) on every
   # merge to main. Runs only after docker-publish actually succeeded, so a
-  # release always points at an image that is genuinely live on Docker Hub.
+  # release always points at an image that is genuinely live on GHCR.
   # Versioning: simple auto-increment patch (vX.Y.Z -> vX.Y.(Z+1)), starting
   # at v0.1.0 if no tag exists yet. No commit-message parsing.
   # ============================================================
@@ -514,17 +484,18 @@ jobs:
           echo "version=$new" >> "$GITHUB_OUTPUT"
       - name: Set image tag (short SHA)
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-      - name: Log in to Docker Hub
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Tag the already-published image with the release version
         run: |
           docker buildx imagetools create \
-            -t claudioed/warehouse-planning:${{ steps.version.outputs.version }} \
-            claudioed/warehouse-planning:${{ env.SHORT_SHA }}
+            -t ghcr.io/iqvo/warehouse-planning:${{ steps.version.outputs.version }} \
+            ghcr.io/iqvo/warehouse-planning:${{ env.SHORT_SHA }}
       - name: Package and publish the Helm chart for this release
         run: |
           CHART_VERSION="${{ steps.version.outputs.version }}"
@@ -538,7 +509,7 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
           helm push "/tmp/chart-out/warehouse-planning-${CHART_VERSION}.tgz" \
-            oci://ghcr.io/claudioed
+            oci://ghcr.io/iqvo
       - name: Create and push the git tag
         run: |
           git config user.name "github-actions[bot]"
@@ -552,8 +523,8 @@ jobs:
           generate_release_notes: true
           files: ${{ env.CHART_TGZ }}
           body: |
-            Docker image: `claudioed/warehouse-planning:${{ steps.version.outputs.version }}`
+            Docker image: `ghcr.io/iqvo/warehouse-planning:${{ steps.version.outputs.version }}`
             (also tagged `latest` and `${{ env.SHORT_SHA }}`)
 
-            Helm chart: `oci://ghcr.io/claudioed/warehouse-planning:${{ steps.version.outputs.version }}`
+            Helm chart: `oci://ghcr.io/iqvo/warehouse-planning:${{ steps.version.outputs.version }}`
             (also attached below as a `.tgz`)
