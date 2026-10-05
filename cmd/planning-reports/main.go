@@ -21,10 +21,16 @@ import (
 
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/analyticsstore"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/warehouse-planning/internal/bootretry"
 )
 
 const shutdownTimeout = 10 * time.Second
+
+// reportsServiceName labels this binary for logs/spans/metrics
+// (telemetry.Setup's service.name and otelchi's own service name in
+// NewReportsRouter).
+const reportsServiceName = "warehouse-planning-reports"
 
 var errMissingAnalyticsURL = errors.New("ANALYTICS_DATABASE_URL is required: the reports are served from the analytical database")
 
@@ -38,6 +44,21 @@ func main() {
 func run() error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
+
+	// Standard metrics (docs/adr/0011), same adapter cmd/api uses.
+	otelCtx, otelCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	otelShutdown, err := telemetry.Setup(otelCtx, reportsServiceName, serviceVersion(), getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint))
+	otelCancel()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			logger.Error("telemetry shutdown failed", "error", err)
+		}
+	}()
 
 	url := os.Getenv("ANALYTICS_DATABASE_URL")
 	if url == "" {
@@ -103,4 +124,11 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// serviceVersion is this binary's OTel service.version resource
+// attribute. SERVICE_VERSION is set by the chart from the image tag; a
+// local run without it reports "dev".
+func serviceVersion() string {
+	return getenv("SERVICE_VERSION", "dev")
 }

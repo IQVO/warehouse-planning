@@ -29,6 +29,7 @@ import (
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/bootretry"
@@ -51,6 +52,21 @@ func main() {
 func run() error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
+
+	// Standard metrics (docs/adr/0011), same adapter cmd/api uses.
+	otelCtx, otelCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	otelShutdown, err := telemetry.Setup(otelCtx, mcpServiceName, serviceVersion(), getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint))
+	otelCancel()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			logger.Error("telemetry shutdown failed", "error", err)
+		}
+	}()
 
 	httpAddr := getenv("MCP_ADDR", ":8090")
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -136,6 +152,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
 	encoder := outboundkafka.NewFanoutEncoder()
+	planMetrics, err := telemetry.NewPlanMetrics()
+	if err != nil {
+		return inboundmcp.Deps{}, noop, err
+	}
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
 		ProcessCapacities:                 pcRepo,
@@ -143,7 +163,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
-			Demand: expectedDemand,
+			Demand: expectedDemand, Metrics: planMetrics,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
@@ -205,4 +225,11 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// serviceVersion is this binary's OTel service.version resource
+// attribute. SERVICE_VERSION is set by the chart from the image tag; a
+// local run without it reports "dev".
+func serviceVersion() string {
+	return getenv("SERVICE_VERSION", "dev")
 }

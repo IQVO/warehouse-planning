@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -74,6 +75,14 @@ type StorageCapacityConsumer struct {
 	Logger          *slog.Logger
 	Retry           RetryPolicy
 
+	// DLQ is this consumer's dead-letter writer (topic FacilityTopic +
+	// DLQSuffix), built by NewStorageCapacityConsumer. A transient
+	// failure is retried domainMaxHandlerAttempts times before the
+	// message is published here instead of blocking the partition
+	// forever (deadletter.go).
+	DLQ      DeadLetterWriter
+	DLQTopic string
+
 	sleep sleepFunc // test hook; nil => real, ctx-cancellable sleep
 }
 
@@ -94,14 +103,17 @@ func NewStorageCapacityConsumer(
 		ProcessedEvents: processedEvents,
 		UoW:             uow,
 		Logger:          defaultLogger(logger),
+		DLQ:             newDomainDLQWriter(brokers, FacilityTopic),
+		DLQTopic:        FacilityTopic + DLQSuffix,
 	}
 }
 
 // Run consumes FacilityTopic until ctx is cancelled or the reader fails. It
 // is at-least-once: a message's offset is committed only after
-// HandleMessage returned nil, and a transient failure retries the SAME
-// message with capped exponential backoff (see consumeLoop) -- it is never
-// skipped.
+// HandleMessage returned nil. A transient failure retries the SAME
+// message with capped exponential backoff (see consumeLoop) up to
+// domainMaxHandlerAttempts times, after which it is dead-lettered rather
+// than blocking the partition forever.
 func (c *StorageCapacityConsumer) Run(ctx context.Context) error {
 	loop := consumeLoop{
 		reader: c.Reader,
@@ -111,12 +123,22 @@ func (c *StorageCapacityConsumer) Run(ctx context.Context) error {
 		retry:  c.Retry,
 		sleep:  c.sleep,
 	}
+	if c.DLQ != nil {
+		loop.maxAttempts = domainMaxHandlerAttempts
+		loop.deadLetter = func(ctx context.Context, msg kafkago.Message, cause error) error {
+			return publishDeadLetter(ctx, c.DLQ, c.DLQTopic, msg, cause)
+		}
+	}
 	return loop.run(ctx)
 }
 
-// Close releases the underlying Kafka reader.
+// Close releases the underlying Kafka reader and dead-letter writer.
 func (c *StorageCapacityConsumer) Close() error {
-	return c.Reader.Close()
+	err := c.Reader.Close()
+	if c.DLQ != nil {
+		err = errors.Join(err, c.DLQ.Close())
+	}
+	return err
 }
 
 // HandleMessage decodes one CloudEvents 1.0 message and dispatches it to
