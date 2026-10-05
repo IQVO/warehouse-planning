@@ -56,27 +56,11 @@ func run() error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
 
-	// Standard metrics (docs/adr/0011): a TracerProvider + MeterProvider
-	// exporting OTLP to an optional Collector. Setup never blocks on the
-	// Collector being reachable, so a missing one degrades to "telemetry
-	// dropped", never to "service won't start".
-	otelCtx, otelCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	otelShutdown, err := telemetry.Setup(otelCtx, inboundhttp.DefaultServiceName, serviceVersion(), getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint))
-	otelCancel()
+	otelShutdown, planMetrics, err := setupTelemetry(logger)
 	if err != nil {
-		return fmt.Errorf("telemetry setup: %w", err)
+		return err
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := otelShutdown(shutdownCtx); err != nil {
-			logger.Error("telemetry shutdown failed", "error", err)
-		}
-	}()
-	planMetrics, err := telemetry.NewPlanMetrics()
-	if err != nil {
-		return fmt.Errorf("telemetry: register plan metrics: %w", err)
-	}
+	defer otelShutdown()
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -99,10 +83,56 @@ func run() error {
 	encoder := outboundkafka.NewFanoutEncoder()
 	expectedDemand := &usecases.GetExpectedDemand{Demand: ad.orderDemand}
 	readiness := &inboundhttp.Readiness{}
-	server := &inboundhttp.Server{
+	server := buildServer(ad, register, pathCapacity, encoder, expectedDemand, planMetrics, readiness)
+	httpServer := &http.Server{
+		Addr:              httpAddr,
+		Handler:           inboundhttp.NewRouter(server),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	consumers, closeConsumers := startKafkaConsumers(register, ad.processedEvents, ad.storageTally, ad.uow, logger)
+
+	// The order-demand consumer (ADR 0004) is OFF unless DEMAND_CONSUMER_GROUP
+	// is set; it shares the unit of work and processed-event guard above.
+	demandConsumers, closeDemand, err := startDemandConsumer(ad, logger)
+	if err != nil {
+		closeConsumers()
+		return err
+	}
+	consumers = append(consumers, demandConsumers...)
+	closeConsumers = joinClosers(closeConsumers, closeDemand)
+
+	// The outbox relay runs next to the consumers. It never dials Kafka at
+	// boot (the writer connects lazily on its first send), so a broker
+	// outage cannot crash the process. It is stopped and drained SEPARATELY
+	// from the consumers above, and LAST (see serveUntilSignal): an event
+	// committed by the HTTP drain or a consumer's last message must not be
+	// stranded until the next pod boots.
+	relayRunner, closeRelay, err := startOutboxRelay(ad.outboxStore, logger)
+	if err != nil {
+		closeConsumers()
+		return err
+	}
+
+	return serveUntilSignal(logger, httpServer, readiness, consumers, closeConsumers, relayRunner, closeRelay)
+}
+
+// buildServer assembles the REST inbound adapter's Server from the wired
+// adapters/use cases. Split out of run() only to keep that function
+// within the lint's length budget.
+func buildServer(
+	ad adapters,
+	register *usecases.RegisterProcessCapacityConstraint,
+	pathCapacity *usecases.GetProcessPathCapacity,
+	encoder ports.EventEncoder,
+	expectedDemand *usecases.GetExpectedDemand,
+	planMetrics ports.PlanMetrics,
+	readiness *inboundhttp.Readiness,
+) *inboundhttp.Server {
+	return &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
-		ProcessCapacities:                 pcRepo,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
+		ProcessCapacities:                 ad.processCapacities,
+		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: ad.processPaths},
 		GetProcessPathCapacity:            pathCapacity,
 		// Phase 4: every CapacityPlan write saves the aggregate and
 		// inserts its CloudEvents into the outbox in ONE UnitOfWork.
@@ -138,40 +168,9 @@ func run() error {
 		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: ad.planLister},
 
 		// Readiness backs GET /readyz (graceful-shutdown fix): flipped to
-		// not-ready as the FIRST step of shutdown, below.
+		// not-ready as the FIRST step of shutdown (serveUntilSignal).
 		Readiness: readiness,
 	}
-	httpServer := &http.Server{
-		Addr:              httpAddr,
-		Handler:           inboundhttp.NewRouter(server),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	consumers, closeConsumers := startKafkaConsumers(register, ad.processedEvents, ad.storageTally, ad.uow, logger)
-
-	// The order-demand consumer (ADR 0004) is OFF unless DEMAND_CONSUMER_GROUP
-	// is set; it shares the unit of work and processed-event guard above.
-	demandConsumers, closeDemand, err := startDemandConsumer(ad, logger)
-	if err != nil {
-		closeConsumers()
-		return err
-	}
-	consumers = append(consumers, demandConsumers...)
-	closeConsumers = joinClosers(closeConsumers, closeDemand)
-
-	// The outbox relay runs next to the consumers. It never dials Kafka at
-	// boot (the writer connects lazily on its first send), so a broker
-	// outage cannot crash the process. It is stopped and drained SEPARATELY
-	// from the consumers above, and LAST (see serveUntilSignal): an event
-	// committed by the HTTP drain or a consumer's last message must not be
-	// stranded until the next pod boots.
-	relayRunner, closeRelay, err := startOutboxRelay(ad.outboxStore, logger)
-	if err != nil {
-		closeConsumers()
-		return err
-	}
-
-	return serveUntilSignal(logger, httpServer, readiness, consumers, closeConsumers, relayRunner, closeRelay)
 }
 
 // adapters is the set of outbound adapters the composition root wires.
@@ -562,6 +561,34 @@ func shutdownDrainDelay(logger *slog.Logger) time.Duration {
 // local run without it reports "dev".
 func serviceVersion() string {
 	return getenv("SERVICE_VERSION", "dev")
+}
+
+// setupTelemetry installs the standard-metrics adapter (docs/adr/0011):
+// a TracerProvider + MeterProvider exporting OTLP to an optional
+// Collector (Setup never blocks on the Collector being reachable -- a
+// missing one degrades to "telemetry dropped", never to "service won't
+// start"), and registers the Tier-2 plan-created counter. The returned
+// closer flushes both providers on a bounded timeout and logs (never
+// returns) a shutdown failure; call it via defer.
+func setupTelemetry(logger *slog.Logger) (closer func(), metrics *telemetry.PlanMetrics, err error) {
+	otelCtx, otelCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	otelShutdown, err := telemetry.Setup(otelCtx, inboundhttp.DefaultServiceName, serviceVersion(), getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint))
+	otelCancel()
+	if err != nil {
+		return nil, nil, fmt.Errorf("telemetry setup: %w", err)
+	}
+	closer = func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			logger.Error("telemetry shutdown failed", "error", err)
+		}
+	}
+	metrics, err = telemetry.NewPlanMetrics()
+	if err != nil {
+		return nil, nil, fmt.Errorf("telemetry: register plan metrics: %w", err)
+	}
+	return closer, metrics, nil
 }
 
 // newLogger builds the process-wide structured logger. LOG_LEVEL maps

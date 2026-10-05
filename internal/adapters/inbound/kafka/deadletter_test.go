@@ -88,11 +88,11 @@ func TestHandleWithDeadLetter_SucceedsBeforeExhaustion_NeverDeadLetters(t *testi
 func TestHandleWithDeadLetter_PublishFailureIsRetried(t *testing.T) {
 	dlqAttempts := 0
 	l := &consumeLoop{
-		logger: quietDeadLetterLogger(),
-		name:   "test",
-		handle: func(context.Context, kafkago.Message) error { return errors.New("transient") },
-		sleep:  func(context.Context, time.Duration) error { return nil },
-		retry:  RetryPolicy{Initial: time.Millisecond, Max: time.Millisecond},
+		logger:      quietDeadLetterLogger(),
+		name:        "test",
+		handle:      func(context.Context, kafkago.Message) error { return errors.New("transient") },
+		sleep:       func(context.Context, time.Duration) error { return nil },
+		retry:       RetryPolicy{Initial: time.Millisecond, Max: time.Millisecond},
 		maxAttempts: 1,
 		deadLetter: func(context.Context, kafkago.Message, error) error {
 			dlqAttempts++
