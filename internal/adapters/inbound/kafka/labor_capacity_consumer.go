@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -77,6 +78,14 @@ type LaborCapacityConsumer struct {
 	Logger          *slog.Logger
 	Retry           RetryPolicy
 
+	// DLQ is this consumer's dead-letter writer (topic LaborTopic +
+	// DLQSuffix), built by NewLaborCapacityConsumer. A transient failure
+	// is retried domainMaxHandlerAttempts times before the message is
+	// published here instead of blocking the partition forever
+	// (deadletter.go).
+	DLQ      DeadLetterWriter
+	DLQTopic string
+
 	sleep sleepFunc // test hook; nil => real, ctx-cancellable sleep
 }
 
@@ -98,13 +107,17 @@ func NewLaborCapacityConsumer(
 		ProcessedEvents: processedEvents,
 		UoW:             uow,
 		Logger:          defaultLogger(logger),
+		DLQ:             newDomainDLQWriter(brokers, LaborTopic),
+		DLQTopic:        LaborTopic + DLQSuffix,
 	}
 }
 
 // Run consumes LaborTopic until ctx is cancelled or the reader fails. It is
 // at-least-once: a message's offset is committed only after HandleMessage
-// returned nil, and a transient failure retries the SAME message with
-// capped exponential backoff (see consumeLoop) -- it is never skipped.
+// returned nil. A transient failure retries the SAME message with capped
+// exponential backoff (see consumeLoop) up to domainMaxHandlerAttempts
+// times, after which it is dead-lettered rather than blocking the
+// partition forever.
 func (c *LaborCapacityConsumer) Run(ctx context.Context) error {
 	loop := consumeLoop{
 		reader: c.Reader,
@@ -113,6 +126,12 @@ func (c *LaborCapacityConsumer) Run(ctx context.Context) error {
 		name:   "labor capacity consumer",
 		retry:  c.Retry,
 		sleep:  c.sleep,
+	}
+	if c.DLQ != nil {
+		loop.maxAttempts = domainMaxHandlerAttempts
+		loop.deadLetter = func(ctx context.Context, msg kafkago.Message, cause error) error {
+			return publishDeadLetter(ctx, c.DLQ, c.DLQTopic, msg, cause)
+		}
 	}
 	return loop.run(ctx)
 }
@@ -182,9 +201,13 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 	})
 }
 
-// Close releases the underlying Kafka reader.
+// Close releases the underlying Kafka reader and dead-letter writer.
 func (c *LaborCapacityConsumer) Close() error {
-	return c.Reader.Close()
+	err := c.Reader.Close()
+	if c.DLQ != nil {
+		err = errors.Join(err, c.DLQ.Close())
+	}
+	return err
 }
 
 // durationFromHours converts a float64 hour count (workforce-management's

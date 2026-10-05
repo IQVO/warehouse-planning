@@ -129,6 +129,15 @@ type consumeLoop struct {
 	name   string
 	retry  RetryPolicy
 	sleep  sleepFunc
+
+	// maxAttempts and deadLetter bound the handling retry: once handle
+	// has failed maxAttempts times for the SAME message, deadLetter is
+	// called instead of retrying handle again (see deadletter.go). The
+	// zero value (maxAttempts<=0 or deadLetter nil) preserves this
+	// loop's original behaviour: retry handle forever, exactly as
+	// AnalyticsConsumer still does today.
+	maxAttempts int
+	deadLetter  func(ctx context.Context, msg kafkago.Message, cause error) error
 }
 
 // run fetches one message at a time and does not fetch the next until the
@@ -145,9 +154,7 @@ func (l *consumeLoop) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := l.retryUntilOK(ctx, policy, sleep, "handling", msg, func() error {
-			return l.handle(ctx, msg)
-		}); err != nil {
+		if err := l.handleWithDeadLetter(ctx, policy, sleep, msg); err != nil {
 			return err
 		}
 		// Commit ONLY now. A commit that fails is retried too: the work is
@@ -159,6 +166,45 @@ func (l *consumeLoop) run(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+// handleWithDeadLetter retries l.handle on msg with capped backoff,
+// exactly like retryUntilOK, UNLESS l.maxAttempts/l.deadLetter are set:
+// then, once l.maxAttempts handling attempts have all failed, it
+// publishes msg to the dead letter sink instead of retrying handle
+// again. The dead-letter PUBLISH itself is retried forever (via
+// retryUntilOK) -- a message that could not even be dead-lettered must
+// never be silently dropped by committing past it anyway.
+func (l *consumeLoop) handleWithDeadLetter(ctx context.Context, p RetryPolicy, sleep sleepFunc, msg kafkago.Message) error {
+	if l.maxAttempts <= 0 || l.deadLetter == nil {
+		return l.retryUntilOK(ctx, p, sleep, "handling", msg, func() error { return l.handle(ctx, msg) })
+	}
+
+	delay := p.Initial
+	for attempt := 1; attempt <= l.maxAttempts; attempt++ {
+		err := l.handle(ctx, msg)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if attempt == l.maxAttempts {
+			l.logger.ErrorContext(ctx, l.name+" handling failed after the maximum attempts; dead-lettering the message",
+				"error", err, "partition", msg.Partition, "offset", msg.Offset, "attempts", attempt)
+			return l.retryUntilOK(ctx, p, sleep, "dead-letter publish", msg, func() error {
+				return l.deadLetter(ctx, msg, err)
+			})
+		}
+		l.logger.ErrorContext(ctx, l.name+" handling failed; retrying the same message",
+			"error", err, "partition", msg.Partition, "offset", msg.Offset,
+			"attempt", attempt, "max_attempts", l.maxAttempts, "retry_in", delay)
+		if serr := sleep(ctx, delay); serr != nil {
+			return serr
+		}
+		delay = p.next(delay)
+	}
+	return nil // unreachable: the loop above always returns
 }
 
 // retryUntilOK runs op until it returns nil, sleeping with capped

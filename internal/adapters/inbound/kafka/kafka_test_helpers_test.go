@@ -294,3 +294,41 @@ func (r *fakeReader) log() []string {
 	defer r.mu.Unlock()
 	return append([]string(nil), r.events...)
 }
+
+// fakeDLQWriter records every message WriteMessages publishes; errs[0]
+// is consumed (and popped) on each call before falling through to a nil
+// return, so a test can script a transient DLQ-write failure followed by
+// success.
+type fakeDLQWriter struct {
+	mu     sync.Mutex
+	msgs   []kafkago.Message
+	errs   []error
+	closed bool
+}
+
+func (w *fakeDLQWriter) WriteMessages(_ context.Context, msgs ...kafkago.Message) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var err error
+	if len(w.errs) > 0 {
+		err, w.errs = w.errs[0], w.errs[1:]
+	}
+	if err != nil {
+		return err
+	}
+	w.msgs = append(w.msgs, msgs...)
+	return nil
+}
+
+func (w *fakeDLQWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+	return nil
+}
+
+func (w *fakeDLQWriter) published() []kafkago.Message {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]kafkago.Message(nil), w.msgs...)
+}
