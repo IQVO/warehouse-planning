@@ -6,6 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
+	"github.com/riandyrn/otelchi"
+	otelchimetric "github.com/riandyrn/otelchi/metric"
 
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
@@ -57,6 +59,13 @@ type Server struct {
 	// exactly as before the lists existed.
 	ListProcessPaths  *usecases.ListProcessPaths
 	ListCapacityPlans *usecases.ListCapacityPlans
+
+	// Readiness backs GET /readyz, separate from the liveness-only
+	// /healthz above (graceful-shutdown fix: this service previously had
+	// no readiness signal at all). A nil Readiness (the zero value, and
+	// every pre-existing test/caller) means /readyz always reports ready
+	// -- see Readiness's own doc comment.
+	Readiness *Readiness
 }
 
 // DefaultServiceName labels this service for logs/telemetry when the
@@ -71,8 +80,19 @@ const defaultCORSAllowedOrigins = "http://localhost:5173"
 // .claude/rules/rest-api.md. No auth middleware is ever added here --
 // internal/architecture/fitness_test.go's TestNoAuthMiddlewareReintroduced
 // fails CI if it is.
+//
+// Middleware order matters (standard-metrics convention, docs/adr/0011
+// Tier 1): otelchi runs first so every later handler (including CORS'
+// own) runs inside a span, and otelchi.WithChiRoutes resolves the route
+// pattern up front, so spans/metrics are labeled e.g.
+// "/capacity-plans/{id}" rather than one distinct name per plan id.
 func NewRouter(s *Server) http.Handler {
 	r := chi.NewRouter()
+
+	r.Use(otelchi.Middleware(DefaultServiceName, otelchi.WithChiRoutes(r)))
+	// Emits http.server.request.duration (seconds) per OTel HTTP semantic
+	// conventions; no hand-rolled histogram needed.
+	r.Use(otelchimetric.NewServerRequestDuration(otelchimetric.NewBaseConfig(DefaultServiceName)))
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsAllowedOrigins(),
@@ -82,6 +102,7 @@ func NewRouter(s *Server) http.Handler {
 	}))
 
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/readyz", s.handleReadyz)
 	r.Post("/process-capacities", s.handleRegisterProcessCapacityConstraint)
 	r.Get("/process-capacities", s.handleGetEffectiveProcessCapacity)
 	r.Post("/process-paths", s.handleRegisterProcessPath)
