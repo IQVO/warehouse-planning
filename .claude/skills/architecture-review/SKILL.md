@@ -71,8 +71,8 @@ small commit. The ADRs in `docs/adr/` are the standing decisions:
    (`.claude/rules/fleet/kafka-testing-and-consumers.md`).
 8. **Auth and frontend.** No bearer/JWT/API-key layer
    (`TestNoAuthMiddlewareReintroduced`; re-adopting auth needs a user
-   decision plus an ADR). This repo has no `web/`: a frontend remote is a
-   tracked deferral, not something to scaffold in passing.
+   decision plus an ADR). `web/` is the `capacity_mfe` remote: it may call only
+   this service's own REST API, and nothing under `internal/` may know it exists.
 9. **Undocumented architecture.** If the change introduces or alters a
    cross-context contract, a new port family, or a new runtime process, check
    an ADR exists (see `.claude/skills/how-to-write-an-adr/SKILL.md`) and that

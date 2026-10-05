@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -72,6 +73,14 @@ type OrderDemandConsumer struct {
 	Logger   *slog.Logger
 	Retry    RetryPolicy
 
+	// DLQ is this consumer's dead-letter writer (topic OrderTopic +
+	// DLQSuffix), built by NewOrderDemandConsumer. A transient failure
+	// is retried domainMaxHandlerAttempts times before the message is
+	// published here instead of blocking the partition forever
+	// (deadletter.go).
+	DLQ      DeadLetterWriter
+	DLQTopic string
+
 	sleep sleepFunc // test hook; nil => real, ctx-cancellable sleep
 }
 
@@ -92,12 +101,16 @@ func NewOrderDemandConsumer(
 		Record:   record,
 		Location: location,
 		Logger:   defaultLogger(logger),
+		DLQ:      newDomainDLQWriter(brokers, OrderTopic),
+		DLQTopic: OrderTopic + DLQSuffix,
 	}
 }
 
 // Run consumes OrderTopic until ctx is cancelled or the reader fails, with
 // the same at-least-once loop as the other consumers: commit only after
-// success, retry the SAME message with capped backoff on a transient error.
+// success, retry the SAME message with capped backoff on a transient
+// error, up to domainMaxHandlerAttempts times, after which it is
+// dead-lettered rather than blocking the partition forever.
 func (c *OrderDemandConsumer) Run(ctx context.Context) error {
 	loop := consumeLoop{
 		reader: c.Reader,
@@ -106,6 +119,12 @@ func (c *OrderDemandConsumer) Run(ctx context.Context) error {
 		name:   "order demand consumer",
 		retry:  c.Retry,
 		sleep:  c.sleep,
+	}
+	if c.DLQ != nil {
+		loop.maxAttempts = domainMaxHandlerAttempts
+		loop.deadLetter = func(ctx context.Context, msg kafkago.Message, cause error) error {
+			return publishDeadLetter(ctx, c.DLQ, c.DLQTopic, msg, cause)
+		}
 	}
 	return loop.run(ctx)
 }
@@ -165,7 +184,11 @@ func (c *OrderDemandConsumer) HandleMessage(ctx context.Context, value []byte) e
 	return nil
 }
 
-// Close releases the underlying Kafka reader.
+// Close releases the underlying Kafka reader and dead-letter writer.
 func (c *OrderDemandConsumer) Close() error {
-	return c.Reader.Close()
+	err := c.Reader.Close()
+	if c.DLQ != nil {
+		err = errors.Join(err, c.DLQ.Close())
+	}
+	return err
 }

@@ -61,6 +61,46 @@ const sidebars: SidebarsConfig = {
           label: '0003 Window coverage semantics',
           href: '/docs/adr/0003-window-coverage-semantics',
         },
+        {
+          type: 'link',
+          label: '0004 Demand ingestion from order-management',
+          href: '/docs/adr/0004-demand-ingestion-from-order-management',
+        },
+        {
+          type: 'link',
+          label: '0005 Analytics read side',
+          href: '/docs/adr/0005-analytics-read-side',
+        },
+        {
+          type: 'link',
+          label: '0006 CloudEvents envelope and type catalogue',
+          href: '/docs/adr/0006-cloudevents-envelope-and-type-catalogue',
+        },
+        {
+          type: 'link',
+          label: '0007 Outbox and resilient consumers',
+          href: '/docs/adr/0007-outbox-and-resilient-consumers',
+        },
+        {
+          type: 'link',
+          label: '0008 MCP server adoption',
+          href: '/docs/adr/0008-mcp-server-adoption',
+        },
+        {
+          type: 'link',
+          label: '0009 HPA and pgxpool tuning',
+          href: '/docs/adr/0009-hpa-and-pgxpool-tuning',
+        },
+        {
+          type: 'link',
+          label: '0010 Migrations over a direct connection',
+          href: '/docs/adr/0010-migrations-over-direct-connection',
+        },
+        {
+          type: 'link',
+          label: '0011 Standard metrics adoption',
+          href: '/docs/adr/0011-standard-metrics-adoption',
+        },
       ],
     },
   ],

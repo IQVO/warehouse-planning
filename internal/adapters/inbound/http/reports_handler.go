@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/riandyrn/otelchi"
+	otelchimetric "github.com/riandyrn/otelchi/metric"
 
 	"github.com/claudioed/warehouse-planning/internal/analytics/report"
 )
@@ -81,11 +83,17 @@ type throughputReportDTO struct {
 	Latency []latencyDTO       `json:"latency"`
 }
 
+// reportsServiceName labels the reports binary for logs/spans/metrics,
+// distinct from the main api service's DefaultServiceName.
+const reportsServiceName = "warehouse-planning-reports"
+
 // NewReportsRouter builds the router of cmd/planning-reports: /healthz and
 // GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput,freshness}. No
 // auth middleware (fleet rule), no CORS: the service is cluster-internal.
 func NewReportsRouter(s *ReportsServer) http.Handler {
 	r := chi.NewRouter()
+	r.Use(otelchi.Middleware(reportsServiceName, otelchi.WithChiRoutes(r)))
+	r.Use(otelchimetric.NewServerRequestDuration(otelchimetric.NewBaseConfig(reportsServiceName)))
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

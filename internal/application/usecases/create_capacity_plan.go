@@ -15,10 +15,13 @@ import (
 // CreateCapacityPlanCommand carries everything needed to evaluate one
 // ProcessPath against the demand assigned to one location and window.
 //
-// AssignedDemand (orders) arrives on the request. PHASE 4 SIMPLIFICATION:
-// the final demand-ingestion shape from order-management /
-// network-fulfillment is a later decision, and CLAUDE.md's cross-context
-// rule forbids a live lookup, so the caller states the demand directly.
+// AssignedDemand (orders) arrives on the request. It is OPTIONAL
+// (docs/adr/0004): an explicit value always wins and behaves exactly as
+// the original Phase 2 shape did; when omitted (DemandFromOrders) the
+// demand comes from the expected-demand read model fed by
+// order-management's published events instead (see Demand/resolveDemand
+// below) -- the "final demand-ingestion shape is a later decision" open
+// question this comment used to record is resolved.
 //
 // UnitsPerOrder/PackagesPerOrder are the WorkloadProfile factors, passed
 // per request exactly as in Phase 2's path-capacity endpoint (no
@@ -69,6 +72,13 @@ type CreateCapacityPlan struct {
 	// for tests.
 	NewID func() string
 	Now   func() time.Time
+
+	// Metrics records the Tier-2 business counter
+	// warehouse_planning.capacity_plans.created (fleet standard-metrics
+	// ADR, docs/adr/0011). Nil is a documented no-op (ports.PlanMetrics
+	// implementations are nil-safe), so a caller that predates this
+	// field behaves exactly as before.
+	Metrics ports.PlanMetrics
 }
 
 // Handle creates and persists a DRAFT CapacityPlan. Errors: the window
@@ -79,6 +89,26 @@ type CreateCapacityPlan struct {
 // ErrRequiredField) and ErrMissingAssignedDemand (demand omitted and no
 // orders expected in the window).
 func (uc *CreateCapacityPlan) Handle(ctx context.Context, cmd CreateCapacityPlanCommand) (*capacityplan.CapacityPlan, error) {
+	plan, err := uc.handle(ctx, cmd)
+	// uc.Metrics is an interface field: a caller that predates it (every
+	// pre-existing test) leaves it as the nil interface, not a nil
+	// *telemetry.PlanMetrics, so the nil check MUST happen here rather
+	// than relying solely on the implementation's own nil-receiver
+	// safety -- calling a method on a nil interface panics.
+	if uc.Metrics != nil {
+		if err != nil {
+			uc.Metrics.CapacityPlanCreated(ctx, ports.PlanOutcomeRejected)
+		} else {
+			uc.Metrics.CapacityPlanCreated(ctx, ports.PlanOutcomeCreated)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlanCommand) (*capacityplan.CapacityPlan, error) {
 	// Resolve the demand FIRST: an omitted assigned_demand with no order
 	// data has always been rejected before any other check.
 	assignedDemand, source, err := uc.resolveDemand(ctx, cmd)

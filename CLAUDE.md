@@ -50,9 +50,10 @@ Study project: not production software.
    only on application and domain, nothing depends on them, Streamable HTTP
    only, tool surface capped at 10 (`.claude/rules/mcp.md`,
    `.claude/rules/fleet/no-auth-and-mcp.md`).
-8. **No frontend here.** There is no `web/` directory; the frontend remote is a
-   tracked deferral (README). Do not scaffold one, despite the fleet rule about
-   `web/` remotes.
+8. **Frontend remote in `web/`.** `capacity_mfe` (Vite + React Module Federation
+   remote) is lazy-loaded by `warehouse-console`. It talks only to this service's
+   own REST API. Rules: `.claude/rules/frontend.md`; skill:
+   `how-to-add-a-frontend-remote`.
 9. **Generated docs.** `docs/docs/api-reference/rest/` is generated from
    `apis/openapi.yaml`; never hand-edit it. Regenerate with
    `cd docs && npm run clean-api-docs warehouse-planning && npm run gen-api-docs warehouse-planning`
@@ -100,7 +101,10 @@ Claude Code loads each rule below automatically when you touch the matching path
 
 | When touching | Read |
 |---|---|
+| `internal/domain/**`, `internal/application/**`, `features/**` ... | `.claude/rules/domain-model.md` |
+| `web/**` | `.claude/rules/frontend.md` |
 | `internal/adapters/**/kafka/**`, `internal/adapters/outbound/events/**`, `apis/asyncapi*` | `.claude/rules/integration-events.md` |
+| `internal/adapters/inbound/mcp/**`, `cmd/mcp/**` | `.claude/rules/mcp.md` |
 | `internal/adapters/inbound/http/**`, `apis/openapi*.yaml`, `apis/openapi/**` | `.claude/rules/rest-api.md` |
 
 Hooks (`scripts/harness/hook.py`, wired for Claude Code, Codex and OpenCode) block pushes to develop/main, `--no-verify`, bare `rm -rf`, and edits to generated files, and feed gofmt/vet findings back after each edit. Before saying "done" run `make check-fast`; the full gate is `make check-all`. `HARNESS_OFF=1` disables the hooks when debugging the harness itself.
