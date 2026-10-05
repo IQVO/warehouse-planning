@@ -188,8 +188,8 @@ extraEnv: []
 # The Postgres dial (migrations + ping) at boot is wrapped in a bounded retry
 # (~31s). periodSeconds * failureThreshold gives a ~60s window, comfortably
 # past that, before the kubelet gives up. Once startupProbe succeeds,
-# liveness/readiness take over. The service exposes /healthz only (there is no
-# /readyz), so readiness reuses it.
+# liveness takes over; readiness uses the separate /readyz endpoint (flipped
+# to not-ready as the FIRST step of graceful shutdown).
 startupProbe:
   httpGet:
     path: /healthz
@@ -206,13 +206,15 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /healthz
+    path: /readyz
     port: http
   initialDelaySeconds: 3
   periodSeconds: 5
 
-# Room for the binary's graceful shutdown (10s HTTP drain + 10s consumer drain).
-terminationGracePeriodSeconds: 30
+# Room for the binary's graceful shutdown: SHUTDOWN_DRAIN_DELAY (default 5s)
+# + HTTP drain (10s) + Kafka consumer drain (10s) + outbox relay drain (10s),
+# sequential, worst case ~35s.
+terminationGracePeriodSeconds: 40
 
 # --- MCP server ---
 # The Model Context Protocol server (cmd/mcp, Streamable HTTP only). DISABLED
