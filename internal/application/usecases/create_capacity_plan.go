@@ -15,10 +15,13 @@ import (
 // CreateCapacityPlanCommand carries everything needed to evaluate one
 // ProcessPath against the demand assigned to one location and window.
 //
-// AssignedDemand (orders) arrives on the request. PHASE 4 SIMPLIFICATION:
-// the final demand-ingestion shape from order-management /
-// network-fulfillment is a later decision, and CLAUDE.md's cross-context
-// rule forbids a live lookup, so the caller states the demand directly.
+// AssignedDemand (orders) arrives on the request. It is OPTIONAL
+// (docs/adr/0004): an explicit value always wins and behaves exactly as
+// the original Phase 2 shape did; when omitted (DemandFromOrders) the
+// demand comes from the expected-demand read model fed by
+// order-management's published events instead (see Demand/resolveDemand
+// below) -- the "final demand-ingestion shape is a later decision" open
+// question this comment used to record is resolved.
 //
 // UnitsPerOrder/PackagesPerOrder are the WorkloadProfile factors, passed
 // per request exactly as in Phase 2's path-capacity endpoint (no

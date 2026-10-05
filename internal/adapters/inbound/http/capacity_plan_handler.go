@@ -13,10 +13,12 @@ import (
 
 // handleCreateCapacityPlan backs POST /capacity-plans: evaluates a
 // ProcessPath against the demand assigned to a location and window and
-// stores the resulting DRAFT plan (201). The demand arrives in the body --
-// a documented Phase 4 simplification (see CreateCapacityPlanCommand);
-// every step's registered ProcessCapacity window must COVER
-// [window_start, window_end) (docs/adr/0003).
+// stores the resulting DRAFT plan (201). assigned_demand is OPTIONAL
+// (docs/adr/0004): an explicit value in the body always wins; when
+// omitted, CreateCapacityPlanCommand resolves it from the expected-demand
+// read model instead (see createCapacityPlanRequest below). Every step's
+// registered ProcessCapacity window must COVER [window_start, window_end)
+// (docs/adr/0003).
 func (s *Server) handleCreateCapacityPlan(w http.ResponseWriter, r *http.Request) {
 	var req createCapacityPlanRequest
 	if !decodeJSON(w, r, &req) {

@@ -34,7 +34,7 @@ sitting in the `wes` tier of the fleet's CloudEvents subdomain taxonomy
 | `facility-layout` -> `warehouse-planning` | location/zone structural capacity | Published Language via Kafka |
 | `fulfillment-execution` / `wes-work-planning` -> `warehouse-planning` | observed/current effective capacity (feedback, later phase) | Published Language via Kafka |
 | `order-management` / `network-fulfillment` -> `warehouse-planning` | assigned demand for a planning window | Published Language via Kafka (final shape to be confirmed before the demand-ingestion phase) |
-| `warehouse-planning` -> `order-management` | `WarehouseCapacityPublished` / `CapacityShortageDetected` | Published Language, consumed by order-management in a later, separate change |
+| `warehouse-planning` -> `order-management` | `CapacityPlanPublished` / `CapacityShortageDetected` | Published Language, consumed by order-management in a later, separate change |
 | `warehouse-planning` -> `warehouse-ops-agent`, `warehouse-console` | read-only capacity queries | Open Host Service via REST/MCP |
 
 **Explicitly excluded**: `inventory-storage` stock levels are never
@@ -59,7 +59,7 @@ degraded or unreachable.
   labor scheduling, storage slotting, or path capability/eligibility
   authoring, all of which remain in their existing contexts.
 - `order-management` needs a follow-up change (separate PR, separate repo)
-  to actually consume `WarehouseCapacityPublished`/`CapacityShortageDetected`
+  to actually consume `CapacityPlanPublished`/`CapacityShortageDetected`
   — out of scope for this repo's own delivery.
 
 ## Addendum (2026-10-03): upstream event contract spike (Task 0.4)
@@ -114,11 +114,28 @@ consumer.
   and — only when `role=WorkCenter` — an `activities` array (`Pack`,
   `Sort`, `QC`, `VAS`, `Deconsolidate`, `Receive`, `Kit`). Phase 3 tallies
   these itself, mirroring inventory-storage's existing
-  location-classification cache pattern (per-process-unique consumer
-  group, FirstOffset replay):
+  location-classification cache pattern: a STABLE, SHARED consumer group
+  (`StorageCapacityConsumer`'s `STORAGE_CAPACITY_CONSUMER_GROUP`) with an
+  atomic `processed_events` claim per message — NOT a per-process-unique
+  consumer group with `FirstOffset` replay. (Verified against the shipped
+  code, `internal/adapters/inbound/kafka/storage_capacity_consumer.go`:
+  the code was already correct; only this paragraph's description of it
+  was stale, corrected 2026-10-05.) This is the same at-least-once,
+  idempotent-claim shape `LaborCapacityConsumer` and `OrderDemandConsumer`
+  use (docs/adr/0007), not the separate per-process full-replay-cache
+  pattern used elsewhere in the fleet for a different correctness need.
   - `role=Storage` slots, counted per `(zoneId, locationType)`, feed a
     LOCATION `CapacityConstraint` (position count as a capacity proxy).
   - `role=WorkCenter` slots whose `activities` includes a given process
     name, counted per zone, feed a STATION `CapacityConstraint` for that
     process (the doc's "10 packing stations" concept).
   `LocationSlotDecommissioned` decrements the same tally.
+
+## Forward links
+
+- [ADR 0004](0004-demand-ingestion-from-order-management.md) resolves this
+  ADR's "final shape to be confirmed before the demand-ingestion phase" open
+  question (context-map row above): demand is ingested from
+  `order-management`'s `OrderAllocated`/`OrderPartiallyAllocated` events into
+  a local read model, and `assigned_demand` is now optional on
+  `POST /capacity-plans`.

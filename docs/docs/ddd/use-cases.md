@@ -23,9 +23,14 @@ Plain reads without a use case (a repository port is called directly):
 `GetEffectiveProcessCapacity` (`GET /process-capacities`),
 `GET /capacity-plans/{id}` and `GET /station-standards`.
 
-:::note Documented simplification
-Assigned demand and the WorkloadProfile factors arrive in the request body of
-the path-capacity and capacity-plan endpoints. The final demand-ingestion shape
-from order-management and network-fulfillment is a later decision, and there is
-no live cross-context lookup.
+:::note Demand ingestion (docs/adr/0004)
+`assigned_demand` is optional on the path-capacity and capacity-plan
+endpoints: an explicit value in the request body always wins, and when
+omitted it is resolved from the expected-demand read model fed by
+order-management's published `OrderAllocated`/`OrderPartiallyAllocated`
+events (`GetExpectedDemand`). There is still no live cross-context lookup
+-- the read model is populated by `OrderDemandConsumer`, never by a
+synchronous call. WorkloadProfile factors (units/packages per order)
+still arrive in the request body; no WorkloadProfile persistence exists
+yet.
 :::
