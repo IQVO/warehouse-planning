@@ -50,9 +50,10 @@ Study project: not production software.
    only on application and domain, nothing depends on them, Streamable HTTP
    only, tool surface capped at 10 (`.claude/rules/mcp.md`,
    `.claude/rules/fleet/no-auth-and-mcp.md`).
-8. **No frontend here.** There is no `web/` directory; the frontend remote is a
-   tracked deferral (README). Do not scaffold one, despite the fleet rule about
-   `web/` remotes.
+8. **Frontend remote in `web/`.** `capacity_mfe` (Vite + React Module Federation
+   remote) is lazy-loaded by `warehouse-console`. It talks only to this service's
+   own REST API. Rules: `.claude/rules/frontend.md`; skill:
+   `how-to-add-a-frontend-remote`.
 9. **Generated docs.** `docs/docs/api-reference/rest/` is generated from
    `apis/openapi.yaml`; never hand-edit it. Regenerate with
    `cd docs && npm run clean-api-docs warehouse-planning && npm run gen-api-docs warehouse-planning`
