@@ -56,6 +56,17 @@ any other bounded context, and nothing in `internal/` knows `web/` exists.
 - Tests mock `fetch` (`src/test/fetchMock.ts`: an unmocked request REJECTS, so a
   surprise call fails the test). Every screen has loading, success, empty and
   error/problem tests; an RFC 7807 failure must surface BOTH `title` and `detail`.
+- **Relative links must come from a layout route WITH a path, and tests must
+  mount the remote under the host's splat route.** The shell mounts `App` in
+  `<Route path="/capacity/*">`. react-router 7 resolves a relative link against
+  the last *path-contributing* match, and that match's `pathname` includes the
+  splat, so a nav rendered above `<Routes>` (or in a pathless layout route,
+  which react-router drops from resolution) pointed `paths` at
+  `/capacity/paths/paths` and kept "Overview" active on every screen. `App.tsx`
+  therefore renders the nav from `<Route path="/" element={<CapacityLayout/>}>`.
+  `App.test.tsx` has a `mountUnderHost` helper for exactly this: a test that
+  mounts `App` at the router root cannot see this class of bug (the original
+  suite passed while the live console was broken).
 
 ## Contract the screens depend on (read `rest-api.md` for the shapes)
 
