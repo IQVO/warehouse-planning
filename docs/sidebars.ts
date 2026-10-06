@@ -28,7 +28,26 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Domain-Driven Design',
       link: {type: 'doc', id: 'ddd/ubiquitous-language'},
-      items: ['ddd/use-cases'],
+      items: [
+        'ddd/use-cases',
+        {
+          type: 'category',
+          label: 'DDD artifacts (ddd-crew)',
+          link: {type: 'doc', id: 'ddd/ddd-artifacts'},
+          items: [
+            'ddd/core-domain-chart',
+            'ddd/bounded-context-canvas',
+            'ddd/context-map',
+            'ddd/aggregate-design-canvas',
+            'ddd/domain-message-flow',
+            'ddd/eventstorming',
+            'ddd/class-diagram',
+            'ddd/entity-relationship',
+            'ddd/sequence-diagrams',
+            'ddd/domain-events',
+          ],
+        },
+      ],
     },
     {
       type: 'category',

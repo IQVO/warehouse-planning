@@ -63,8 +63,9 @@ For a path step with process `P` at location `L` and window `W`:
    `WorkloadProfile` **before** comparing (units per hour and packages per hour
    are not comparable raw).
 3. The step's effective rate is the minimum, and its binding constraint type
-   (`LABOR`, `STATION`, ...) is reported. Ties go to the earliest candidate
-   (registered constraints in registration order, then STATION).
+   (`LABOR`, `STATION`, ...) is reported. Ties go to the earliest candidate:
+   registered constraints in precedence order (newest covering aggregate
+   first, registration order within one aggregate), then STATION.
 4. No candidate at all: `ErrMissingStepCapacity` (REST `422 missing-step-capacity`).
 
 The path capacity is the minimum over the steps; the step that produces it is

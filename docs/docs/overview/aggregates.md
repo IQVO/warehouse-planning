@@ -51,8 +51,9 @@ window to the path capacity available to serve it.
 | `BottleneckStep` | the path step limiting end-to-end flow |
 | `CapacityOverWindow` | `PathCapacity` x window hours |
 | `Shortage` | `max(0, demand - capacityOverWindow)`; never negative, and demand exactly equal to the capacity is **not** a shortage |
+| `DemandSource` | `request` (stated by the caller) or `orders` (defaulted from the expected-demand read model, ADR 0004); informational, no published event carries it |
 | `Status` | `DRAFT` or `PUBLISHED` |
-| `BottleneckConstraint`, `Warnings` | informational composition outcome (for example `STATION`); not carried by any published event |
+| `BottleneckConstraint`, `Warnings` | informational composition outcome (for example `STATION`); no integration event carries them, and only the analytics copy of `CapacityPlanPublished` carries the constraint (`binding_constraint`, ADR 0005) |
 
 Behaviour:
 
@@ -79,3 +80,11 @@ ShortageDetected, BottleneckDetected (at publish).
 - **Station counts and storage positions** are a tally of `facility-layout`
   events (`location_slot_tally`), exposed as a read model. A count has no
   throughput of its own.
+- **Expected demand** (`internal/domain/demand`, ADR 0004) is a read model of
+  `order-management` orders (`order_demand`): one `demand.Order` per order id,
+  last writer wins on the CloudEvents `time` (`Order.Supersedes`), counted in a
+  window `[start, end)` by its promise cutoff (`Order.CountsIn`). Zero orders is
+  *no data*, never zero demand (`Summary.HasData`).
+
+The [Aggregate Design Canvas](/docs/ddd/aggregate-design-canvas) covers both
+aggregates in the ddd-crew format.

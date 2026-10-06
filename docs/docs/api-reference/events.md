@@ -54,9 +54,9 @@ Topic `warehouse.warehouse-planning.events`, written by the outbox relay.
 | `BottleneckDetected` | publication, only when `shortage > 0` | `plan_id`, `warehouse_id`, `location`, `path_id`, `window_start`, `window_end`, `bottleneck_step`, `path_capacity` |
 
 Quantities are orders; `path_capacity` is ORDER per hour; times are RFC 3339 UTC.
-`ProcessCapacityRegistered` and `ProcessCapacityChanged` are **not** published,
-and there is no analytics stream
-(`warehouse.warehouse-planning.analytics`) yet.
+`ProcessCapacityRegistered` and `ProcessCapacityChanged` are **not** published.
+Each occurrence is also written once more to the analytics topic (see
+"Analytics stream" above).
 
 ## Consumed
 
@@ -73,8 +73,16 @@ The two order-management types feed the expected-demand read model
 on `POST /capacity-plans`); every other type on that topic, `OrderRepromised`
 included, is ignored. See `docs/adr/0004-demand-ingestion-from-order-management.md`.
 
+A transiently failing message on any of the three consumed topics is retried
+up to 5 times and then published to `<topic>.dlq`
+(`warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`,
+`warehouse.order-management.events.dlq`) with `x-dlq-*` headers
+([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers)).
+
 What each consumed event changes is described on
-[Upstream contracts](/docs/ecosystem/upstream-contracts).
+[Upstream contracts](/docs/ecosystem/upstream-contracts); the DDD view of every
+event (producer use case, partition key, known consumers) is on
+[Domain events](/docs/ddd/domain-events).
 
 ## Example
 

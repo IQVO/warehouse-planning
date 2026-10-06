@@ -42,6 +42,33 @@ become capacity only at read time, composed with an operator-declared
 StationStandard
 ([capacity composition](/docs/overview/capacity-composition)).
 
+## order-management
+
+[ADR 0004](/docs/adr/0004-demand-ingestion-from-order-management). The
+consumer is **off** unless `DEMAND_CONSUMER_GROUP` is set; it then requires
+`DEMAND_SITE_ID`.
+
+| | |
+| --- | --- |
+| Types | `com.warehouse.wes.order-management.order.OrderAllocated` and `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` |
+| Topic | `warehouse.order-management.events` |
+| Fields used | `order_id` (must equal the CloudEvents `subject`), `promise_date`, `len(lines)`, and the CloudEvents `time` |
+| Effect | upserts one `order_demand` row per order id (last writer wins on `time`); every order is attributed to the one configured site `DEMAND_SITE_ID`, because the events carry no fulfillment site |
+| Ignored | `OrderRepromised` (no new cutoff instant) and every other type on the topic |
+
+Demand is therefore counted in orders (no units) and not netted for
+cancellations. It is read by `GET /demand`, the `get_expected_demand` MCP tool
+and `POST /capacity-plans` when `assigned_demand` is omitted.
+
+## Dead-letter topics
+
+A message whose handling keeps failing transiently is retried up to 5 times and
+then published to `<topic>.dlq` (`warehouse.workforce.events.dlq`,
+`warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`) with
+`x-dlq-*` headers ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers)).
+Deterministic problems (not a CloudEvent, unknown type, malformed payload,
+missing fields) are logged and skipped, never dead-lettered.
+
 ## process-path-management: deliberately not consumed
 
 Its `ProcessPath` carries `path_id`, `required_capabilities` and eligibility
@@ -53,5 +80,11 @@ cross-reference.
 ## Downstream
 
 The four CapacityPlan events are published on `warehouse.warehouse-planning.events`
-(see the [event catalogue](/docs/api-reference/events)). ADR 0001 notes that
-`order-management` needs a separate follow-up change to consume them.
+(see the [event catalogue](/docs/api-reference/events)). The follow-up change
+ADR 0001 anticipated has landed in `order-management` (its
+`internal/adapters/inbound/kafka/planned_capacity_consumer.go`), which acts on
+`CapacityPlanCreated`, `CapacityPlanPublished` and `CapacityShortageDetected`
+and ignores `BottleneckDetected`. `warehouse-ops-agent` reads this context
+through four read-only MCP tools (`get_process_path_capacity`,
+`get_capacity_plan`, `get_storage_capacity`, `list_station_standards`). The
+whole slice is drawn on the [Context map](/docs/ddd/context-map).
