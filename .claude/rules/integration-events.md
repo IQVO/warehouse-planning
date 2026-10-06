@@ -304,10 +304,15 @@ it is safe under redelivery BECAUSE the claim and the tally commit together
 (an attempt that failed after the tally step rolled the registration back
 too, so the retry registers for real and cannot hit the no-op).
 
-Known trade-off: a message that fails with a non-recognised, actually
-deterministic error blocks its partition (retried forever with an ERROR
-log per attempt, 5s cap) instead of being dropped -- by design, since a
-silent drop is unrecoverable data loss. There is no DLQ yet.
+Dead-lettering: a TRANSIENT failure is retried a bounded number of times
+with capped backoff and then published to `<topic>.dlq` with `x-dlq-*`
+headers (`internal/adapters/inbound/kafka/deadletter.go`), so it no longer
+wedges the partition forever. Deterministic problems (not CloudEvents, unknown
+type, malformed payload, domain validation failure) return nil from
+`HandleMessage` and are committed past, never retried. The analytics consumer
+is the deliberate exception: it never dead-letters a transient failure
+(ADR 0005 Decision 4), because losing analytics to a brief database outage is
+unacceptable there. Silent drops of real data remain forbidden.
 
 Tests that pin this: `internal/adapters/inbound/kafka/atomic_*_test.go`
 (rollback of the tally mutation + claim when a failure is injected AFTER

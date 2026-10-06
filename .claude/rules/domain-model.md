@@ -192,10 +192,10 @@ Vocabulary only, NOT implemented or published yet (nothing raises them):
   its length), and
   stations can bind it), builds the aggregate, saves it
   and queues `CapacityPlanCreated` in the outbox -- one `ports.UnitOfWork.Do`.
-  Assigned demand and the WorkloadProfile factors arrive in the request body
-  (documented simplification: the final demand-ingestion shape from
-  order-management/network-fulfillment is a later decision, and this context
-  makes no live cross-context lookup).
+  The WorkloadProfile factors arrive in the request body. Assigned demand
+  arrives in the request body OR defaults to the expected-demand read model
+  (docs/adr/0004, order-management `OrderAllocated` events); this context makes
+  no live cross-context lookup either way.
 - `PublishCapacityPlan` (Phase 4) — loads the plan, `Publish()`, saves it and
   queues every recorded event in the outbox, in one `UnitOfWork.Do`. The
   Postgres `FindByID` locks the row inside the unit of work, so concurrent

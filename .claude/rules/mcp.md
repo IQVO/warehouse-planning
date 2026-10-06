@@ -8,8 +8,8 @@ paths:
 
 One MCP server for this bounded context, an additive inbound adapter
 (the fleet's "MCP servers are additive inbound adapters" decision, cited as
-ADR-0008 in `HARNESS.md` and in `TestMCPAdapterDependencyRule`; there is no
-ADR-0008 in this repo's `docs/adr/`, which holds 0001-0003 only; the short
+ADR-0008 in `HARNESS.md` and in `TestMCPAdapterDependencyRule`; this repo's own
+adoption record is `docs/adr/0008-mcp-server-adoption.md`; the short
 rule is `.claude/rules/fleet/no-auth-and-mcp.md`) over the SAME
 use cases the REST adapter calls:
 
@@ -95,7 +95,8 @@ snake_case documented arguments.
 - `cmd/mcp/main_test.go`: `/healthz`, both mount paths over real Streamable
   HTTP, no auth required. `cmd/mcp/main_integration_test.go`
   (`-tags=integration`, testcontainers Postgres): migrations on a fresh DB,
-  section 43 persisted incl. the 4 outbox rows.
+  section 43 persisted incl. the 8 outbox rows (4 events, each on the
+  integration AND the analytics topic: ADR 0005).
 
 ## Adding a tool
 
