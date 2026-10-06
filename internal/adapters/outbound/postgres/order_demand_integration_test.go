@@ -183,10 +183,25 @@ func TestMigration0006_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 	defer func() { _, _ = m.Close() }()
 
 	version, dirty, err := m.Version()
-	if err != nil || dirty || version != 7 {
-		t.Fatalf("version = %d dirty=%v err=%v, want 7 (the latest migration is 0007_outbox_event_id_per_topic)", version, dirty, err)
+	if err != nil || dirty || version != 8 {
+		t.Fatalf("version = %d dirty=%v err=%v, want 8 (the latest migration is 0008_capacity_plan_site_id)", version, dirty, err)
 	}
-	// 0007 (outbox identity per topic) sits on top of 0006: undo it first.
+	// 0008 (site id) and 0007 (outbox identity per topic) sit on top of 0006: undo them first.
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("down 0008: %v", err)
+	}
+	if version, dirty, err = m.Version(); err != nil || dirty || version != 7 {
+		t.Fatalf("version after down 0008 = %d dirty=%v err=%v, want 7", version, dirty, err)
+	}
+	downPool, err := postgres.NewPool(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer downPool.Close()
+	var siteCol int
+	if err := downPool.QueryRow(context.Background(), "SELECT count(*) FROM information_schema.columns WHERE table_name = 'capacity_plans' AND column_name = 'site_id'").Scan(&siteCol); err != nil || siteCol != 0 {
+		t.Fatalf("site_id survived the down migration: %d, %v", siteCol, err)
+	}
 	if err := m.Steps(-1); err != nil {
 		t.Fatalf("down 0007: %v", err)
 	}
@@ -229,7 +244,7 @@ func TestCapacityPlanRepo_PersistsDemandSourceAndLegacyRowsReadAsRequest(t *test
 		"plan-orders": capacityplan.DemandSourceOrders, "plan-request": capacityplan.DemandSourceRequest, "plan-default": "",
 	} {
 		p, err := capacityplan.Create(capacityplan.CreateParams{
-			ID: id, WarehouseID: "WH-1", Location: "SIM1", Window: window, ProcessPathID: "pick",
+			ID: id, WarehouseID: "WH-1", SiteID: "SIM1", Location: "SIM1", Window: window, ProcessPathID: "pick",
 			AssignedDemand: 8500, PathRate: rate, BottleneckStep: "PICK", DemandSource: source,
 		}, odAsOf)
 		if err != nil {

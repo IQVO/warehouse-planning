@@ -13,6 +13,7 @@ import (
 const (
 	planID      = "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
 	warehouseID = "WH-1"
+	siteID      = "SIM1"
 	location    = "PATH-ZONE-A"
 	pathID      = "pick-rebin-pack"
 )
@@ -83,6 +84,7 @@ func createWorkedExample(t *testing.T, demand float64) *CapacityPlan {
 	plan, err := Create(CreateParams{
 		ID:             planID,
 		WarehouseID:    warehouseID,
+		SiteID:         siteID,
 		Location:       location,
 		Window:         mustWindow(t, windowStart, windowEnd),
 		ProcessPathID:  pathID,
@@ -152,7 +154,7 @@ func TestWorkedExample_ShortageDetected(t *testing.T) {
 	header := Header{PlanID: planID, At: publishedAt}
 	want := []Event{
 		CapacityPlanPublished{
-			Header: header, WarehouseID: warehouseID, Location: location, PathID: pathID,
+			Header: header, WarehouseID: warehouseID, SiteID: siteID, Location: location, PathID: pathID,
 			WindowStart: windowStart, WindowEnd: windowEnd,
 			AssignedDemand: 12000, PathCapacity: 1000, CapacityOverWindow: 8000, Shortage: 4000,
 			BottleneckStep: "REBIN",
@@ -223,7 +225,7 @@ func TestShortageBoundary(t *testing.T) {
 func TestNonHourlyPeriodAndWindow(t *testing.T) {
 	// 600 ORDER / 30min = 1200 ORDER/h; window 07:00-12:30 = 5.5h -> 6600.
 	plan, err := Create(CreateParams{
-		ID: planID, WarehouseID: warehouseID, Location: location,
+		ID: planID, WarehouseID: warehouseID, SiteID: siteID, Location: location,
 		Window:         mustWindow(t, time.Date(2026, 10, 5, 7, 0, 0, 0, time.UTC), time.Date(2026, 10, 5, 12, 30, 0, 0, time.UTC)),
 		ProcessPathID:  pathID,
 		AssignedDemand: 7000,
@@ -248,7 +250,7 @@ func TestCreateValidation(t *testing.T) {
 	rate := mustRate(t, 1000, processcapacity.UnitOrder, time.Hour)
 	base := func() CreateParams {
 		return CreateParams{
-			ID: planID, WarehouseID: warehouseID, Location: location,
+			ID: planID, WarehouseID: warehouseID, SiteID: siteID, Location: location,
 			Window: mustWindow(t, windowStart, windowEnd), ProcessPathID: pathID,
 			AssignedDemand: 100, PathRate: rate, BottleneckStep: "REBIN",
 		}
@@ -415,7 +417,7 @@ func TestCreate_RecordsBottleneckConstraintAndWarnings(t *testing.T) {
 	rate := mustRate(t, 1800, processcapacity.UnitOrder, time.Hour)
 	warnings := []string{"no station standard declared for PACK at SIM1"}
 	plan, err := Create(CreateParams{
-		ID: planID, WarehouseID: warehouseID, Location: "SIM1", Window: mustWindow(t, windowStart, windowEnd),
+		ID: planID, WarehouseID: warehouseID, SiteID: siteID, Location: "SIM1", Window: mustWindow(t, windowStart, windowEnd),
 		ProcessPathID: pathID, AssignedDemand: 20000, PathRate: rate, BottleneckStep: "PACK",
 		BottleneckConstraint: processcapacity.ConstraintStation, Warnings: warnings,
 	}, createdAt)
@@ -452,6 +454,78 @@ func TestCreate_RecordsBottleneckConstraintAndWarnings(t *testing.T) {
 	if again.BottleneckConstraint() != processcapacity.ConstraintStation || !reflect.DeepEqual(again.Warnings(), []string{"w1", "w2"}) {
 		t.Fatalf("Rehydrate lost the composition outcome: %s %q", again.BottleneckConstraint(), again.Warnings())
 	}
+}
+
+// TestPublish_CarriesTheBottleneckConstraintOnThePublishedEventOnly func is above.
+
+// The canonical site id is an explicit planning fact (it names the
+// facility-layout Site by site_code), required at Create, carried on the
+// plan and on CapacityPlanPublished's payload source, and never inferred
+// from warehouse_id or location. A plan Rehydrated without one (a row
+// stored before migration 0008) publishes an empty site id and stays
+// decodable: the v1 payload is additive.
+func TestCreate_RequiresAndRecordsSiteID(t *testing.T) {
+	rate := mustRate(t, 1000, processcapacity.UnitOrder, time.Hour)
+	base := func() CreateParams {
+		return CreateParams{
+			ID: planID, WarehouseID: warehouseID, SiteID: siteID, Location: location,
+			Window: mustWindow(t, windowStart, windowEnd), ProcessPathID: pathID,
+			AssignedDemand: 100, PathRate: rate, BottleneckStep: "REBIN",
+		}
+	}
+
+	t.Run("blank site id is rejected", func(t *testing.T) {
+		p := base()
+		p.SiteID = ""
+		if _, err := Create(p, createdAt); !errors.Is(err, ErrRequiredField) {
+			t.Fatalf("err = %v, want ErrRequiredField", err)
+		}
+	})
+
+	t.Run("recorded on the plan and on the published event", func(t *testing.T) {
+		plan, err := Create(base(), createdAt)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if plan.SiteID() != siteID {
+			t.Fatalf("SiteID = %q, want %q", plan.SiteID(), siteID)
+		}
+		plan.PullEvents()
+		if err := plan.Publish(publishedAt); err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+		published, ok := plan.PullEvents()[0].(CapacityPlanPublished)
+		if !ok || published.SiteID != siteID {
+			t.Fatalf("published event = %#v, want SiteID %q on CapacityPlanPublished", published, siteID)
+		}
+	})
+
+	t.Run("a rehydrated plan without a site id publishes an empty one", func(t *testing.T) {
+		legacy := Rehydrate(RehydrateParams{
+			ID: planID, WarehouseID: warehouseID, Location: location, Window: mustWindow(t, windowStart, windowEnd),
+			ProcessPathID: pathID, AssignedDemand: 100, PathCapacity: 1000, BottleneckStep: "REBIN",
+			CapacityOverWindow: 800, Shortage: 0, Status: StatusDraft, CreatedAt: createdAt,
+		})
+		if legacy.SiteID() != "" {
+			t.Fatalf("legacy SiteID = %q, want empty", legacy.SiteID())
+		}
+		if err := legacy.Publish(publishedAt); err != nil {
+			t.Fatalf("Publish legacy: %v", err)
+		}
+		if published := legacy.PullEvents()[0].(CapacityPlanPublished); published.SiteID != "" {
+			t.Fatalf("legacy published SiteID = %q, want empty", published.SiteID)
+		}
+	})
+
+	t.Run("rehydrate round-trips the site id", func(t *testing.T) {
+		plan := Rehydrate(RehydrateParams{
+			ID: planID, WarehouseID: warehouseID, SiteID: siteID, Location: location, Window: mustWindow(t, windowStart, windowEnd),
+			ProcessPathID: pathID, Status: StatusDraft, CreatedAt: createdAt,
+		})
+		if plan.SiteID() != siteID {
+			t.Fatalf("Rehydrate SiteID = %q, want %q", plan.SiteID(), siteID)
+		}
+	})
 }
 
 // The bottleneck's binding constraint travels on CapacityPlanPublished (and

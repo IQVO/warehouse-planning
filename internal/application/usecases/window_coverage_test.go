@@ -315,7 +315,7 @@ func TestCreateCapacityPlan_LiveShape(t *testing.T) {
 		Now:        func() time.Time { return planCreatedAt },
 	}
 	cmd := CreateCapacityPlanCommand{
-		WarehouseID: "WH-1", Location: "SIM1", WindowStart: atH(1), WindowEnd: atH(7),
+		WarehouseID: "WH-1", SiteID: "SIM1", Location: "SIM1", WindowStart: atH(1), WindowEnd: atH(7),
 		ProcessPathID: "pick-rebin-pack", AssignedDemand: 7000,
 		UnitsPerOrder: f64ptr(2.5), PackagesPerOrder: f64ptr(1),
 	}

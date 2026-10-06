@@ -91,6 +91,7 @@ func newPlanFixture(t *testing.T) *planFixture {
 func planCommand(demand float64) CreateCapacityPlanCommand {
 	return CreateCapacityPlanCommand{
 		WarehouseID:      "WH-1",
+		SiteID:           "SIM1",
 		Location:         "PATH-ZONE-A",
 		WindowStart:      planWindowStart,
 		WindowEnd:        planWindowEnd,
@@ -128,6 +129,9 @@ func TestCreateCapacityPlan_WorkedExample(t *testing.T) {
 	if plan.PathCapacity() != 1000 || plan.BottleneckStep() != "REBIN" || plan.CapacityOverWindow() != 8000 || plan.Shortage() != 4000 {
 		t.Errorf("computed = %v %s %v %v", plan.PathCapacity(), plan.BottleneckStep(), plan.CapacityOverWindow(), plan.Shortage())
 	}
+	if plan.SiteID() != "SIM1" {
+		t.Errorf("SiteID = %q, want SIM1 (the command's site id, never inferred)", plan.SiteID())
+	}
 
 	stored, err := f.plans.FindByID(context.Background(), "plan-1")
 	if err != nil || stored == nil || stored.Shortage() != 4000 || stored.Status() != capacityplan.StatusDraft {
@@ -153,6 +157,7 @@ func TestCreateCapacityPlan_Rejections(t *testing.T) {
 		{"missing factor", func(c *CreateCapacityPlanCommand) { c.UnitsPerOrder = nil }, processcapacity.ErrMissingConversionFactor},
 		{"negative demand", func(c *CreateCapacityPlanCommand) { c.AssignedDemand = -1 }, capacityplan.ErrNegativeDemand},
 		{"blank warehouse", func(c *CreateCapacityPlanCommand) { c.WarehouseID = "" }, capacityplan.ErrRequiredField},
+		{"blank site id", func(c *CreateCapacityPlanCommand) { c.SiteID = "" }, capacityplan.ErrRequiredField},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

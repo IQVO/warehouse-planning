@@ -116,7 +116,10 @@ paths:
   binding.
 - **CapacityPlan** (`internal/domain/capacityplan`, Phase 4, implemented): id =
   a UUID string (natural key `(WarehouseID, PlanningWindow)`). Fields:
-  `WarehouseID`, `Location` (the ProcessCapacity location evaluated),
+  `WarehouseID`, `SiteID` (canonical site, a facility-layout Site
+  `site_code`; REQUIRED at `Create` since ADR 0012 — never inferred from
+  `WarehouseID` or `Location`, and empty only for rows stored before
+  migration 0008), `Location` (the ProcessCapacity location evaluated),
   `PlanningWindow` (a `processcapacity.CapacityWindow`), `ProcessPathID`,
   `AssignedDemand` (orders, `>= 0`), and computed-at-creation `PathCapacity`
   (ORDER/HOUR, from `ComputeProcessPathCapacity`), `BottleneckStep`,
@@ -151,7 +154,10 @@ ShortageDetected, BottleneckDetected (at publish).
 `CapacityPlanPublished` also carries `BottleneckConstraint` (the plan's binding
 constraint at the bottleneck step; empty for a plan created before it was
 recorded). The INTEGRATION payload does not serialize it: only the analytics
-stream does (ADR 0005, `integration-events.md`). The same four events are written
+stream does (ADR 0005, `integration-events.md`). Since ADR 0012 it also
+carries `SiteID`, serialized ADDITIVELY as `site_id` on the v1 integration
+payload (`omitempty`: a pre-migration-0008 plan publishes without it, and a
+legacy payload without it still decodes). The same four events are written
 to both the integration and the analytics topic by the outbox; the analytical
 side (`internal/analytics/report`, `analyticsstore`) is a projection built from
 them and the domain never imports it.

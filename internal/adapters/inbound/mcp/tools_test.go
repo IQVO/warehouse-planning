@@ -249,6 +249,11 @@ func TestErrorsSurfaceAsToolErrors(t *testing.T) {
 			m["warehouse_id"] = ""
 			return m
 		}(), "missing-required-field"},
+		{"blank site id", "create_capacity_plan", func() map[string]any {
+			m := planArgs("FC01", "pick-only", 1)
+			m["site_id"] = ""
+			return m
+		}(), "missing-required-field"},
 		{"malformed plan window", "create_capacity_plan", func() map[string]any {
 			m := planArgs("FC01", "pick-only", 1)
 			m["window_end"] = "nope"

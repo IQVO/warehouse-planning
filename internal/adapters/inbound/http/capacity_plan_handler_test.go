@@ -75,7 +75,7 @@ func seedPlanFixture(t *testing.T, srv *httptest.Server) {
 
 func planBody(demand any) map[string]any {
 	b := map[string]any{
-		"warehouse_id": "WH-1", "location": "PATH-ZONE-A",
+		"warehouse_id": "WH-1", "site_id": "SIM1", "location": "PATH-ZONE-A",
 		"window_start": planStart, "window_end": planEnd,
 		"path_id": "pick-rebin-pack", "units_per_order": 2.5, "packages_per_order": 1,
 	}
@@ -88,6 +88,7 @@ func planBody(demand any) map[string]any {
 type planJSON struct {
 	ID                 string  `json:"id"`
 	WarehouseID        string  `json:"warehouse_id"`
+	SiteID             string  `json:"site_id"`
 	Location           string  `json:"location"`
 	WindowStart        string  `json:"window_start"`
 	WindowEnd          string  `json:"window_end"`
@@ -180,7 +181,7 @@ func TestHandler_CapacityPlan_WorkedExample(t *testing.T) {
 func assertWorkedExamplePlan(t *testing.T, plan planJSON, status string) {
 	t.Helper()
 	want := planJSON{
-		WarehouseID: "WH-1", Location: "PATH-ZONE-A", WindowStart: planStart, WindowEnd: planEnd, PathID: "pick-rebin-pack",
+		WarehouseID: "WH-1", SiteID: "SIM1", Location: "PATH-ZONE-A", WindowStart: planStart, WindowEnd: planEnd, PathID: "pick-rebin-pack",
 		AssignedDemand: 12000, Status: status, PathCapacity: 1000, BottleneckStep: "REBIN", CapacityOverWindow: 8000, Shortage: 4000,
 	}
 	if plan.ID == "" || plan.CreatedAt == "" {
@@ -234,6 +235,8 @@ func TestHandler_CapacityPlan_CreateRejections(t *testing.T) {
 		{"negative demand", func(b map[string]any) { b["assigned_demand"] = -1 }, http.StatusUnprocessableEntity, "negative-assigned-demand"},
 		{"absent demand", func(b map[string]any) { delete(b, "assigned_demand") }, http.StatusUnprocessableEntity, "missing-assigned-demand"},
 		{"blank warehouse", func(b map[string]any) { b["warehouse_id"] = "" }, http.StatusUnprocessableEntity, "missing-required-field"},
+		{"blank site id", func(b map[string]any) { b["site_id"] = "" }, http.StatusUnprocessableEntity, "missing-required-field"},
+		{"absent site id", func(b map[string]any) { delete(b, "site_id") }, http.StatusUnprocessableEntity, "missing-required-field"},
 		{"inverted window", func(b map[string]any) { b["window_end"] = planStart }, http.StatusBadRequest, "invalid-capacity-window"},
 		{"malformed window_start", func(b map[string]any) { b["window_start"] = "yesterday" }, http.StatusBadRequest, "malformed-window-start"},
 		{"malformed window_end", func(b map[string]any) { b["window_end"] = "tomorrow" }, http.StatusBadRequest, "malformed-window-end"},

@@ -375,7 +375,7 @@ func TestComposedPathCapacity_RealPostgres_FixturesBandC(t *testing.T) {
 		PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: outboundkafka.NewEncoder(), UnitOfWork: uow,
 	}
 	planCmd := usecases.CreateCapacityPlanCommand{
-		WarehouseID: "WH-1", Location: "SIM1", WindowStart: planStart, WindowEnd: planEnd, ProcessPathID: "pick-rebin-pack",
+		WarehouseID: "WH-1", SiteID: "SIM1", Location: "SIM1", WindowStart: planStart, WindowEnd: planEnd, ProcessPathID: "pick-rebin-pack",
 		AssignedDemand: 20000, UnitsPerOrder: &upo, PackagesPerOrder: &ppo,
 	}
 

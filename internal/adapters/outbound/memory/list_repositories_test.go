@@ -73,7 +73,7 @@ func listPlan(t *testing.T, id, location string, createdAt time.Time) *capacityp
 		t.Fatal(err)
 	}
 	plan, err := capacityplan.Create(capacityplan.CreateParams{
-		ID: id, WarehouseID: "WH-1", Location: location, Window: window, ProcessPathID: "pick-rebin-pack",
+		ID: id, WarehouseID: "WH-1", SiteID: "SIM1", Location: location, Window: window, ProcessPathID: "pick-rebin-pack",
 		AssignedDemand: 6000, PathRate: rate, BottleneckStep: "REBIN",
 	}, createdAt)
 	if err != nil {

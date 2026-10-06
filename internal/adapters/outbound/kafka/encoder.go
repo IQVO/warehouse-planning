@@ -48,8 +48,13 @@ type planCreatedData struct {
 }
 
 type planPublishedData struct {
-	PlanID             string    `json:"plan_id"`
-	WarehouseID        string    `json:"warehouse_id"`
+	PlanID      string `json:"plan_id"`
+	WarehouseID string `json:"warehouse_id"`
+	// SiteID is the canonical site (a facility-layout Site site_code) the
+	// plan is scoped to. Additive on the v1 payload: omitted when empty
+	// (a plan stored before migration 0008), so legacy bytes stay
+	// byte-identical and legacy payloads without it still decode.
+	SiteID             string    `json:"site_id,omitempty"`
 	Location           string    `json:"location"`
 	PathID             string    `json:"path_id"`
 	WindowStart        time.Time `json:"window_start"`
@@ -178,7 +183,7 @@ func payloadFor(ev capacityplan.Event) (any, error) {
 		}, nil
 	case capacityplan.CapacityPlanPublished:
 		return planPublishedData{
-			PlanID: e.PlanID, WarehouseID: e.WarehouseID, Location: e.Location, PathID: e.PathID,
+			PlanID: e.PlanID, WarehouseID: e.WarehouseID, SiteID: e.SiteID, Location: e.Location, PathID: e.PathID,
 			WindowStart: e.WindowStart.UTC(), WindowEnd: e.WindowEnd.UTC(),
 			AssignedDemand: e.AssignedDemand, PathCapacity: e.PathCapacity,
 			CapacityOverWindow: e.CapacityOverWindow, Shortage: e.Shortage,

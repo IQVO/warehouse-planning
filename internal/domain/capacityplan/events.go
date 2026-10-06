@@ -62,7 +62,14 @@ func (CapacityPlanCreated) EventName() string { return EventCapacityPlanCreated 
 // CapacityPlanPublished is raised when a DRAFT plan is published.
 type CapacityPlanPublished struct {
 	Header
-	WarehouseID        string
+	WarehouseID string
+	// SiteID is the canonical site (a facility-layout Site site_code) the
+	// plan is scoped to. Required for plans created after this field
+	// existed; empty for a plan stored before it (the payload is additive:
+	// legacy consumers never see an unknown field, this producer emits
+	// "site_id" with omitempty so a legacy-plan publish stays
+	// byte-compatible). Never inferred from WarehouseID or Location.
+	SiteID             string
 	Location           string
 	PathID             string
 	WindowStart        time.Time

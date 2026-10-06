@@ -82,7 +82,7 @@ func newPlanStack(t *testing.T) *planStack {
 func planCmd(demand float64) usecases.CreateCapacityPlanCommand {
 	upo, ppo := 2.5, 1.0
 	return usecases.CreateCapacityPlanCommand{
-		WarehouseID: "WH-1", Location: "PATH-ZONE-A", WindowStart: planStart, WindowEnd: planEnd,
+		WarehouseID: "WH-1", SiteID: "SIM1", Location: "PATH-ZONE-A", WindowStart: planStart, WindowEnd: planEnd,
 		ProcessPathID: "pick-rebin-pack", AssignedDemand: demand, UnitsPerOrder: &upo, PackagesPerOrder: &ppo,
 	}
 }
@@ -142,7 +142,7 @@ func TestCapacityPlanRepo_Postgres_RoundTrip(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("Find = %v, %v", got, err)
 	}
-	if got.ID() != plan.ID() || got.WarehouseID() != "WH-1" || got.Location() != "PATH-ZONE-A" || got.ProcessPathID() != "pick-rebin-pack" ||
+	if got.ID() != plan.ID() || got.WarehouseID() != "WH-1" || got.SiteID() != "SIM1" || got.Location() != "PATH-ZONE-A" || got.ProcessPathID() != "pick-rebin-pack" ||
 		got.AssignedDemand() != 12000 || got.PathCapacity() != 1000 || got.BottleneckStep() != "REBIN" ||
 		got.CapacityOverWindow() != 8000 || got.Shortage() != 4000 || got.Status() != capacityplan.StatusDraft {
 		t.Errorf("round trip lost state: %+v", got)

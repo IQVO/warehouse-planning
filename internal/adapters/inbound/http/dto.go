@@ -78,6 +78,9 @@ type stepBreakdownItem struct {
 }
 
 // createCapacityPlanRequest is POST /capacity-plans' request body.
+// site_id is the canonical site (a facility-layout Site site_code); it is
+// REQUIRED (blank/absent is 422 missing-required-field) and never inferred
+// from warehouse_id or location.
 // assigned_demand (orders) is a pointer: present (even 0) it is used as
 // stated; ABSENT it is defaulted from the order-management demand read
 // model, or rejected with 422 missing-assigned-demand when that has no
@@ -87,6 +90,7 @@ type stepBreakdownItem struct {
 // on the request exactly like Phase 2's path-capacity endpoint.
 type createCapacityPlanRequest struct {
 	WarehouseID      string   `json:"warehouse_id"`
+	SiteID           string   `json:"site_id"`
 	Location         string   `json:"location"`
 	WindowStart      string   `json:"window_start"`
 	WindowEnd        string   `json:"window_end"`
@@ -100,8 +104,11 @@ type createCapacityPlanRequest struct {
 // three /capacity-plans endpoints. Quantities are orders; path_capacity is
 // ORDER per HOUR.
 type capacityPlanResponse struct {
-	ID                 string  `json:"id"`
-	WarehouseID        string  `json:"warehouse_id"`
+	ID          string `json:"id"`
+	WarehouseID string `json:"warehouse_id"`
+	// SiteID is the canonical site (a facility-layout Site site_code);
+	// empty for plans stored before migration 0008. Additive.
+	SiteID             string  `json:"site_id"`
 	Location           string  `json:"location"`
 	WindowStart        string  `json:"window_start"`
 	WindowEnd          string  `json:"window_end"`

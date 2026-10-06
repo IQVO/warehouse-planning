@@ -51,7 +51,7 @@ Feature: Expected demand from order-management
     And I register a process path "pick-only" named "Pick-Only" with steps PICK
     And order-management published 12 orders promised at "2026-10-05T09:00:00Z"
     And order-management published OrderAllocated for order "ord-outside" promised at "2026-10-05T10:00:00Z" with 1 released line
-    When I create a capacity plan for warehouse "WH-1" at "SIM1" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z" without assigned demand, units_per_order 1 and packages_per_order 1
+    When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "SIM1" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z" without assigned demand, units_per_order 1 and packages_per_order 1
     Then the response status is 201
     And the capacity plan uses demand 12 from orders with shortage 2
     And the stored capacity plan remembers its demand source is orders
@@ -63,7 +63,7 @@ Feature: Expected demand from order-management
     Given I register a LABOR constraint of 5 UNIT per HOUR for PICK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z"
     And I register a process path "pick-only" named "Pick-Only" with steps PICK
     And order-management published 12 orders promised at "2026-10-05T09:00:00Z"
-    When I create a capacity plan for warehouse "WH-1" at "SIM1" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z" with assigned demand 5, units_per_order 1 and packages_per_order 1
+    When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "SIM1" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z" with assigned demand 5, units_per_order 1 and packages_per_order 1
     Then the response status is 201
     And the capacity plan uses demand 5 from request with shortage 0
 
@@ -71,7 +71,7 @@ Feature: Expected demand from order-management
     Given I register a LABOR constraint of 5 UNIT per HOUR for PICK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z"
     And I register a process path "pick-only" named "Pick-Only" with steps PICK
     And order-management published OrderAllocated for order "ord-outside" promised at "2026-10-05T10:00:00Z" with 1 released line
-    When I create a capacity plan for warehouse "WH-1" at "SIM1" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z" without assigned demand, units_per_order 1 and packages_per_order 1
+    When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "SIM1" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z" without assigned demand, units_per_order 1 and packages_per_order 1
     Then the response status is 422
     And the problem detail type is "missing-assigned-demand"
     And the outbox is empty

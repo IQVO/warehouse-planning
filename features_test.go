@@ -226,10 +226,12 @@ func (w *world) iLookUpTheProcessPathCapacity(ctx context.Context, pathID, locat
 	return w.record(ctx, http.MethodGet, path, nil)
 }
 
-// iCreateACapacityPlan handles "I create a capacity plan for warehouse ...".
-func (w *world) iCreateACapacityPlan(ctx context.Context, warehouse, location, pathID, windowStart, windowEnd string, demand, unitsPerOrder, packagesPerOrder float64) error {
+// iCreateACapacityPlan handles "I create a capacity plan for warehouse ...
+// at site ... in location ...".
+func (w *world) iCreateACapacityPlan(ctx context.Context, warehouse, site, location, pathID, windowStart, windowEnd string, demand, unitsPerOrder, packagesPerOrder float64) error {
 	if err := w.record(ctx, http.MethodPost, "/capacity-plans", map[string]any{
 		"warehouse_id":       warehouse,
+		"site_id":            site,
 		"location":           location,
 		"window_start":       windowStart,
 		"window_end":         windowEnd,
@@ -608,7 +610,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^I register a process path "([^"]*)" named "([^"]*)" with steps ([A-Z, ]+)$`, w.iRegisterAProcessPath)
 	sc.Step(`^I look up the capacity of process path "([^"]*)" at "([^"]*)" for the window "([^"]*)" to "([^"]*)" with units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iLookUpTheProcessPathCapacity)
 
-	sc.Step(`^I create a capacity plan for warehouse "([^"]*)" at "([^"]*)" on path "([^"]*)" for the window "([^"]*)" to "([^"]*)" with assigned demand (-?\d+(?:\.\d+)?), units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iCreateACapacityPlan)
+	sc.Step(`^I create a capacity plan for warehouse "([^"]*)" at site "([^"]*)" in location "([^"]*)" on path "([^"]*)" for the window "([^"]*)" to "([^"]*)" with assigned demand (-?\d+(?:\.\d+)?), units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iCreateACapacityPlan)
 	sc.Step(`^I publish the capacity plan$`, w.iPublishTheCapacityPlan)
 	sc.Step(`^I publish the capacity plan "([^"]*)"$`, w.iPublishTheCapacityPlanWithID)
 

@@ -147,7 +147,7 @@ func (h *harness) seedSection43(t *testing.T, location, pathID string) {
 
 func planArgs(location, pathID string, demand float64) map[string]any {
 	return map[string]any{
-		"warehouse_id": "WH-1", "location": location, "window_start": winStart, "window_end": winEnd,
+		"warehouse_id": "WH-1", "site_id": "SIM1", "location": location, "window_start": winStart, "window_end": winEnd,
 		"path_id": pathID, "assigned_demand": demand, "units_per_order": 2.5, "packages_per_order": 1,
 	}
 }

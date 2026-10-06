@@ -89,7 +89,7 @@ func TestMCPAgainstPostgres_Section43PersistsPlanAndOutbox(t *testing.T) {
 	}
 	call("register_process_path", map[string]any{"id": "tote-path", "name": "Tote", "steps": []string{"PICK", "REBIN", "PACK"}})
 	plan := call("create_capacity_plan", map[string]any{
-		"warehouse_id": "WH-1", "location": "FC01", "window_start": start, "window_end": end,
+		"warehouse_id": "WH-1", "site_id": "FC01", "location": "FC01", "window_start": start, "window_end": end,
 		"path_id": "tote-path", "assigned_demand": 12000, "units_per_order": 2.5, "packages_per_order": 1,
 	})
 	if plan["shortage"] != 4000.0 || plan["bottleneck_step"] != "REBIN" || plan["status"] != "DRAFT" {

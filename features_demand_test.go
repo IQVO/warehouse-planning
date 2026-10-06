@@ -93,9 +93,9 @@ func (w *world) iRequestTheExpectedDemand(ctx context.Context, location, start, 
 	return w.record(ctx, http.MethodGet, fmt.Sprintf("/demand?location=%s&window_start=%s&window_end=%s", location, start, end), nil)
 }
 
-func (w *world) iCreateAPlanWithoutDemand(ctx context.Context, warehouse, location, pathID, start, end string, units, packages float64) error {
+func (w *world) iCreateAPlanWithoutDemand(ctx context.Context, warehouse, site, location, pathID, start, end string, units, packages float64) error {
 	if err := w.record(ctx, http.MethodPost, "/capacity-plans", map[string]any{
-		"warehouse_id": warehouse, "location": location, "path_id": pathID,
+		"warehouse_id": warehouse, "site_id": site, "location": location, "path_id": pathID,
 		"window_start": start, "window_end": end,
 		"units_per_order": units, "packages_per_order": packages,
 	}); err != nil {
@@ -192,7 +192,7 @@ func registerDemandSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^order-management topic carries a message that is not a CloudEvent$`, w.orderManagementPublishedGarbage)
 
 	sc.Step(`^I request the expected demand for `+ts+` for the window `+ts+` to `+ts+`$`, w.iRequestTheExpectedDemand)
-	sc.Step(`^I create a capacity plan for warehouse `+ts+` at `+ts+` on path `+ts+` for the window `+ts+` to `+ts+` without assigned demand, units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iCreateAPlanWithoutDemand)
+	sc.Step(`^I create a capacity plan for warehouse `+ts+` at site `+ts+` in location `+ts+` on path `+ts+` for the window `+ts+` to `+ts+` without assigned demand, units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iCreateAPlanWithoutDemand)
 	sc.Step(`^the expected demand is (\d+) orders? and (\d+) released lines?$`, w.theExpectedDemandIs)
 	sc.Step(`^the expected demand as of is (null|`+ts+`)$`, func(raw string) error { return w.theExpectedDemandAsOfIs(strings.Trim(raw, `"`)) })
 	sc.Step(`^the capacity plan uses demand (\d+(?:\.\d+)?) from (orders|request) with shortage (\d+(?:\.\d+)?)$`, w.theCapacityPlanUsesDemand)

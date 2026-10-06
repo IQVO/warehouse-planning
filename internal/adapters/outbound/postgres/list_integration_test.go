@@ -61,7 +61,7 @@ func savePlan(t *testing.T, repo *postgres.CapacityPlanRepo, id, location string
 		t.Fatal(err)
 	}
 	plan, err := capacityplan.Create(capacityplan.CreateParams{
-		ID: id, WarehouseID: "WH-1", Location: location, Window: window, ProcessPathID: "pick-rebin-pack",
+		ID: id, WarehouseID: "WH-1", SiteID: "SIM1", Location: location, Window: window, ProcessPathID: "pick-rebin-pack",
 		AssignedDemand: 12000, PathRate: rate, BottleneckStep: "REBIN",
 		BottleneckConstraint: processcapacity.ConstraintLabor, Warnings: []string{"no station standard for PACK"},
 		DemandSource: capacityplan.DemandSourceOrders,

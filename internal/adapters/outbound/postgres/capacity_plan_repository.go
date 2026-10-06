@@ -38,14 +38,14 @@ func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPla
 	}
 	_, err := queryFor(ctx, r.pool).Exec(ctx, `
 		INSERT INTO capacity_plans (
-			id, warehouse_id, location, window_start, window_end, process_path_id,
+			id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 			assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 			status, created_at, published_at, bottleneck_constraint, warnings, demand_source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			published_at = EXCLUDED.published_at
-	`, p.ID(), p.WarehouseID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
+	`, p.ID(), p.WarehouseID(), p.SiteID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
 		p.AssignedDemand(), p.PathCapacity(), string(p.BottleneckStep()), p.CapacityOverWindow(), p.Shortage(),
 		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings, string(p.DemandSource()))
 	return err
@@ -101,7 +101,7 @@ func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, limi
 }
 
 // planColumns is the column list scanPlan expects, in order.
-const planColumns = `id, warehouse_id, location, window_start, window_end, process_path_id,
+const planColumns = `id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source`
 
@@ -116,7 +116,7 @@ func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
 		publishedAt            *time.Time
 	)
 	err := row.Scan(
-		&p.ID, &p.WarehouseID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
+		&p.ID, &p.WarehouseID, &p.SiteID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
 		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
 		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource)
 	if err != nil {

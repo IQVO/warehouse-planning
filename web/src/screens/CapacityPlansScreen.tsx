@@ -172,6 +172,7 @@ function PlansTable({
 function CreatePlanForm({ defaultLocation, onCreated }: { defaultLocation: string; onCreated: () => void }) {
   const paths = useRequest(listProcessPaths, "paths");
   const [warehouseId, setWarehouseId] = useState("");
+  const [siteId, setSiteId] = useState("");
   const [location, setLocation] = useState(defaultLocation);
   const [pathId, setPathId] = useState("");
   const [windowStart, setWindowStart] = useState("");
@@ -192,6 +193,7 @@ function CreatePlanForm({ defaultLocation, onCreated }: { defaultLocation: strin
     const unitsPerOrder = optionalNumber(units);
     const packagesPerOrder = optionalNumber(packages);
     if (!warehouseId.trim()) return setInvalid("Enter the warehouse id.");
+    if (!siteId.trim()) return setInvalid("Enter the canonical site id (a facility-layout site code, e.g. SIM1).");
     if (!location.trim()) return setInvalid("Enter a site code.");
     if (!pathId) return setInvalid("Choose a process path.");
     if (!window.ok) return setInvalid(window.message);
@@ -204,6 +206,7 @@ function CreatePlanForm({ defaultLocation, onCreated }: { defaultLocation: strin
 
     const input: CreateCapacityPlanInput = {
       warehouse_id: warehouseId.trim(),
+      site_id: siteId.trim(),
       location: location.trim(),
       window_start: window.start,
       window_end: window.end,
@@ -235,6 +238,7 @@ function CreatePlanForm({ defaultLocation, onCreated }: { defaultLocation: strin
         <Form label="Create capacity plan" onSubmit={submit}>
           <FormRow>
             <TextField label="Warehouse id" value={warehouseId} onChange={setWarehouseId} required />
+            <TextField label="Site id" value={siteId} onChange={setSiteId} required />
             <TextField label="Plan site code" value={location} onChange={setLocation} required />
             <SelectField
               label="Plan process path"

@@ -32,7 +32,13 @@ import (
 // COVERS [WindowStart, WindowEnd) (docs/adr/0003), exactly as in
 // GetProcessPathCapacity. The plan stores this requested window as is.
 type CreateCapacityPlanCommand struct {
-	WarehouseID   string
+	WarehouseID string
+	// SiteID is the canonical site (a facility-layout Site site_code) the
+	// plan is scoped to. REQUIRED: a blank one is rejected with
+	// capacityplan.ErrRequiredField; it is never defaulted from
+	// WarehouseID or Location (the plan's Location is a planning
+	// location, not a site code).
+	SiteID        string
 	Location      string
 	WindowStart   time.Time
 	WindowEnd     time.Time
@@ -144,6 +150,7 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 	plan, err := capacityplan.Create(capacityplan.CreateParams{
 		ID:             newID(),
 		WarehouseID:    cmd.WarehouseID,
+		SiteID:         cmd.SiteID,
 		Location:       cmd.Location,
 		Window:         window,
 		ProcessPathID:  cmd.ProcessPathID,

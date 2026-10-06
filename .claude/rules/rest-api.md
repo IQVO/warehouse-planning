@@ -160,7 +160,11 @@ Errors (`application/problem+json`):
 ## `POST /capacity-plans` request/response shape
 
 Evaluates a ProcessPath against the demand assigned to a location and window
-and stores a DRAFT plan. `assigned_demand` (orders) is OPTIONAL since ADR 0004:
+and stores a DRAFT plan. `site_id` is REQUIRED (ADR 0012): the canonical site
+(a facility-layout Site `site_code`) the plan is scoped to — a stated planning
+fact, never inferred from `warehouse_id` or `location`; blank/absent is 422
+`missing-required-field`. The response carries it back additively (empty for
+plans stored before migration `0008`). `assigned_demand` (orders) is OPTIONAL since ADR 0004:
 present (even `0`) it is used as stated and ALWAYS wins; omitted it defaults to
 the orders order-management expects at `(location, window)` from the local read
 model (`GET /demand`; no live cross-context call). The WorkloadProfile factors
@@ -173,12 +177,12 @@ endpoint (docs/adr/0003): a registered window applies when it covers
 
 ```json
 // request
-{ "warehouse_id": "WH-1", "location": "PATH-ZONE-A",
+{ "warehouse_id": "WH-1", "site_id": "SIM1", "location": "PATH-ZONE-A",
   "window_start": "2026-10-05T08:00:00Z", "window_end": "2026-10-05T16:00:00Z",
   "path_id": "pick-rebin-pack", "assigned_demand": 12000,
   "units_per_order": 2.5, "packages_per_order": 1 }
 // 201 response
-{ "id": "<uuid>", "warehouse_id": "WH-1", "location": "PATH-ZONE-A",
+{ "id": "<uuid>", "warehouse_id": "WH-1", "site_id": "SIM1", "location": "PATH-ZONE-A",
   "window_start": "2026-10-05T08:00:00Z", "window_end": "2026-10-05T16:00:00Z",
   "path_id": "pick-rebin-pack", "assigned_demand": 12000, "status": "DRAFT",
   "path_capacity": 1000, "bottleneck_step": "REBIN",

@@ -49,9 +49,9 @@ var (
 	// Zero demand is valid (nothing to serve, never a shortage).
 	ErrNegativeDemand = errors.New("capacityplan: assigned demand must not be negative")
 
-	// ErrRequiredField is returned when id, warehouse id, location or
-	// process path id is blank.
-	ErrRequiredField = errors.New("capacityplan: id, warehouse id, location and process path id are required")
+	// ErrRequiredField is returned when id, warehouse id, site id,
+	// location or process path id is blank.
+	ErrRequiredField = errors.New("capacityplan: id, warehouse id, site id, location and process path id are required")
 
 	// ErrPathRateNotOrder is returned when the path capacity handed to
 	// Create is not an ORDER rate. ComputeProcessPathCapacity always
@@ -65,6 +65,7 @@ var (
 type CapacityPlan struct {
 	id            string
 	warehouseID   string
+	siteID        string
 	location      string
 	window        processcapacity.CapacityWindow
 	processPathID string
@@ -99,8 +100,12 @@ type CapacityPlan struct {
 // CreateParams carries everything Create needs. PathRate and
 // BottleneckStep are the results of ComputeProcessPathCapacity.
 type CreateParams struct {
-	ID             string
-	WarehouseID    string
+	ID          string
+	WarehouseID string
+	// SiteID is the canonical site the plan is scoped to: a
+	// facility-layout Site site_code. Required for new plans (a blank one
+	// is ErrRequiredField); never inferred from WarehouseID or Location.
+	SiteID         string
 	Location       string
 	Window         processcapacity.CapacityWindow
 	ProcessPathID  string
@@ -125,7 +130,7 @@ type CreateParams struct {
 //	capacityOverWindow = pathCapacity x window hours
 //	shortage           = max(0, demand - capacityOverWindow), never negative
 func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
-	if p.ID == "" || p.WarehouseID == "" || p.Location == "" || p.ProcessPathID == "" {
+	if p.ID == "" || p.WarehouseID == "" || p.SiteID == "" || p.Location == "" || p.ProcessPathID == "" {
 		return nil, ErrRequiredField
 	}
 	if p.AssignedDemand < 0 {
@@ -141,6 +146,7 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 	plan := &CapacityPlan{
 		id:                 p.ID,
 		warehouseID:        p.WarehouseID,
+		siteID:             p.SiteID,
 		location:           p.Location,
 		window:             p.Window,
 		processPathID:      p.ProcessPathID,
@@ -175,8 +181,11 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 // RehydrateParams is the stored state of a plan, used by repositories to
 // rebuild the aggregate without re-deriving or re-announcing anything.
 type RehydrateParams struct {
-	ID                 string
-	WarehouseID        string
+	ID          string
+	WarehouseID string
+	// SiteID: empty for rows stored before migration 0008 (the plan then
+	// reports and publishes an empty site id; never inferred).
+	SiteID             string
 	Location           string
 	Window             processcapacity.CapacityWindow
 	ProcessPathID      string
@@ -202,6 +211,7 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 	return &CapacityPlan{
 		id:                 p.ID,
 		warehouseID:        p.WarehouseID,
+		siteID:             p.SiteID,
 		location:           p.Location,
 		window:             p.Window,
 		processPathID:      p.ProcessPathID,
@@ -235,6 +245,7 @@ func (c *CapacityPlan) Publish(now time.Time) error {
 	c.record(CapacityPlanPublished{
 		Header:             header,
 		WarehouseID:        c.warehouseID,
+		SiteID:             c.siteID,
 		Location:           c.location,
 		PathID:             c.processPathID,
 		WindowStart:        c.window.Start(),
@@ -290,6 +301,10 @@ func (c *CapacityPlan) ID() string { return c.id }
 
 // WarehouseID returns the warehouse the plan is for.
 func (c *CapacityPlan) WarehouseID() string { return c.warehouseID }
+
+// SiteID returns the canonical site (a facility-layout Site site_code) the
+// plan is scoped to; empty for plans stored before migration 0008.
+func (c *CapacityPlan) SiteID() string { return c.siteID }
 
 // Location returns the ProcessCapacity location the plan evaluates.
 func (c *CapacityPlan) Location() string { return c.location }
