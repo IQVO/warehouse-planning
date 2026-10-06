@@ -100,8 +100,9 @@ broker per package from `TestMain`, a unique topic per test, explicit
 `t.Skip`, never hardcode `localhost:9092`
 (`TestKafkaIntegrationTestsUseTestcontainers`, and
 `.claude/rules/fleet/kafka-testing-and-consumers.md`). CI's `integration`
-job needs Docker on the runner; the Postgres service container it declares
-is not what these tests use.
+job needs Docker on the runner and declares no Postgres service container
+(`TestPostgresIntegrationTestsUseTestcontainers` fails a `DATABASE_URL`
+skip-gate or a pgx test with no testcontainers Postgres in its package).
 
 ## Verify before opening the PR
 
