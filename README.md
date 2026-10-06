@@ -11,7 +11,11 @@ capacity shortages.
 See `CLAUDE.md` for the full repo guide, `.claude/rules/domain-model.md`
 for the ubiquitous language/aggregates, and
 `docs/adr/0001-warehouse-planning-bounded-context.md` for why this context
-exists and its context map.
+exists and its context map. The Docusaurus site under `docs/` (published at
+https://iqvo.github.io/warehouse-planning/) carries the product docs, the 11
+ADRs and a ddd-crew DDD artifact pack (`docs/docs/ddd/`: core domain chart,
+bounded context canvas, context map, aggregate design canvas, domain message
+flows, EventStorming, class, ER and sequence diagrams).
 
 Scaffolded from `warehouse-harness-template: v2`. See `HARNESS.md` for the
 sensor manifest.
@@ -27,10 +31,10 @@ no support guarantee.
 
 - **Image**: root `Dockerfile` builds every `cmd/*` directory (`api`, `mcp`, `planning-projector` and `planning-reports`) into `/app/<name>`; `ENTRYPOINT` is `./api`. OLTP migrations are copied to `/app/migrations`, the analytical ones to `/app/analytics/migrations`.
 - **Chart**: `charts/warehouse-planning` (OLTP `api` component; optional `mcp`, `frontend` and analytics (`analytics-projector`, `analytics-reports`) components, all off by default). It refuses to render without `database.url` or `database.existingSecret`. Run `helm lint charts/warehouse-planning --set database.url=postgres://u@example.invalid:5432/db` and `python3 charts/warehouse-planning/tests/test_service_selectors.py`.
-- **MCP**: `cmd/mcp` serves 10 tools over Streamable HTTP on `:8090` (`/` and `/mcp`, `GET /healthz`, no auth); see `.claude/rules/mcp.md`. Enable in the chart with `mcp.enabled=true`.
+- **MCP**: `cmd/mcp` serves 11 tools over Streamable HTTP on `:8090` (`/` and `/mcp`, `GET /healthz`, no auth); see `.claude/rules/mcp.md`. Enable in the chart with `mcp.enabled=true`.
 - **Frontend remote** (`web/`, Module Federation container `capacity_mfe`): the operator screens (capacity overview, path capacity, capacity plans) that `warehouse-console` lazy-loads. Served by its own nginx workload (chart `frontend.enabled=true`, image `warehouse/warehouse-planning-frontend`) at `http://localhost/mfes/warehouse-planning/` behind the Nginx web gateway, and reads `apiOrigin` from the console's `/config.json` to call this service through Kong at `/api/warehouse-planning`. See `web/` and `.claude/rules/frontend.md`.
 - **Kind cluster**: wired by `warehouse-infra` (`local.services`); ArgoCD deploys the chart from this repo's `develop`.
-- **Analytics read side** (ADR 0005): the four capacity-plan events are also written to `warehouse.warehouse-planning.analytics` in the same outbox transaction; `cmd/planning-projector` (admin `:8091`) projects them into a SEPARATE analytical database and `cmd/planning-reports` (`:8092`, read-only) serves `GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput}`. Chart: `analytics.enabled=true` (default `false`) renders both components; the analytical DSN comes from `analytics.databaseUrl` or `analytics.existingSecret`.
+- **Analytics read side** (ADR 0005): the four capacity-plan events are also written to `warehouse.warehouse-planning.analytics` in the same outbox transaction; `cmd/planning-projector` (admin `:8091`) projects them into a SEPARATE analytical database and `cmd/planning-reports` (`:8092`, read-only) serves `GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput,freshness}`. Chart: `analytics.enabled=true` (default `false`) renders both components; the analytical DSN comes from `analytics.databaseUrl` or `analytics.existingSecret`.
 
 ## Analytics read side
 

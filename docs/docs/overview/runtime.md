@@ -13,11 +13,16 @@ Hexagonal architecture, enforced by architecture tests in
 
 | Layer | Path |
 | --- | --- |
-| Domain | `internal/domain/{processcapacity,capacityplan,processpath}` |
-| Application (use cases, ports) | `internal/application/...` |
+| Domain | `internal/domain/{processcapacity,capacityplan,processpath,demand}` |
+| Application (use cases, ports) | `internal/application/{usecases,ports,outbox,tally}` |
 | Inbound adapters | `internal/adapters/inbound/{http,kafka,mcp}` |
-| Outbound adapters | `internal/adapters/outbound/{postgres,memory,kafka,outbox}` |
-| Composition roots | `cmd/api`, `cmd/mcp` |
+| Outbound adapters | `internal/adapters/outbound/{postgres,memory,kafka,outbox,analyticsstore,telemetry}` |
+| CloudEvents helper | `internal/adapters/kafka/cloudevents` |
+| Analytics read side | `internal/analytics/report` (never imported by the OLTP layers) |
+| Composition roots | `cmd/api`, `cmd/mcp`, `cmd/planning-projector`, `cmd/planning-reports` |
+
+The [class diagrams](/docs/ddd/class-diagram) show the domain types and the
+ports with their adapters.
 
 ## Publishing: transactional outbox
 
@@ -46,13 +51,22 @@ send, never at boot.
   problems (not a CloudEvent, unknown type, malformed payload, duplicate id,
   domain-validation rejections) are skipped.
 - Consumer group ids come from environment variables
-  (`LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`), never
-  from string literals.
+  (`LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`,
+  `DEMAND_CONSUMER_GROUP`, and the projector's `ANALYTICS_CONSUMER_GROUP`),
+  never from string literals. The order-demand consumer is off unless
+  `DEMAND_CONSUMER_GROUP` is set, and then requires `DEMAND_SITE_ID`.
 
-Known trade-off recorded in the repository rules: a message that fails with an
-unrecognised but actually deterministic error blocks its partition (retried with
-an ERROR log per attempt) rather than being silently dropped. There is no DLQ
-yet.
+Dead-lettering ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers) §3,
+`internal/adapters/inbound/kafka/deadletter.go`): the three domain consumers
+retry a transient failure on the same message up to 5 times, then publish it to
+`<topic>.dlq` (`warehouse.workforce.events.dlq`,
+`warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`) with
+`x-dlq-*` headers and commit past it. The DLQ publish itself is retried until it
+succeeds, so nothing is silently dropped. The analytics projector is different
+by design ([ADR 0005](/docs/adr/0005-analytics-read-side)): a transient failure
+is retried forever and never dead-lettered; only a known type with an unusable
+payload or a deterministic store rejection goes to
+`warehouse.warehouse-planning.analytics.dlq`.
 
 ## CloudEvents envelope
 
@@ -62,10 +76,11 @@ the header `content-type: application/cloudevents+json; charset=UTF-8`. See the
 
 ## MCP
 
-`cmd/mcp` exposes 10 tools (budget is 10): `register_process_capacity_constraint`,
-`get_effective_process_capacity`, `register_process_path`,
-`get_process_path_capacity`, `create_capacity_plan`, `publish_capacity_plan`,
-`get_capacity_plan`, `declare_station_standard`, `list_station_standards` and
-`get_storage_capacity`. Arguments are snake_case, matching the REST bodies;
+`cmd/mcp` exposes 11 tools (budget is 11, pinned by `maxTools` in
+`internal/adapters/inbound/mcp/governance_test.go`):
+`register_process_capacity_constraint`, `get_effective_process_capacity`,
+`register_process_path`, `get_process_path_capacity`, `create_capacity_plan`,
+`publish_capacity_plan`, `get_capacity_plan`, `declare_station_standard`,
+`list_station_standards`, `get_storage_capacity` and `get_expected_demand`. Arguments are snake_case, matching the REST bodies;
 failures are MCP tool errors whose text is `<slug>: <message>` using the REST
 problem slugs.

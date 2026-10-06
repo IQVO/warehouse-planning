@@ -11,7 +11,7 @@ sidebar_position: 1
 | --- | --- | --- |
 | REST | `apis/openapi.yaml` (OpenAPI 3.0.3) | Pages under *REST* are generated from the spec; do not edit them by hand. Default server `http://localhost:8080`. |
 | Events | `apis/asyncapi.yaml` (AsyncAPI 2.6.0) | Summarised on the [event catalogue](/docs/api-reference/events). |
-| MCP | `.claude/rules/mcp.md` | 10 tools over Streamable HTTP on `:8090`; same use cases as REST. |
+| MCP | `.claude/rules/mcp.md` | 11 tools over Streamable HTTP on `:8090`; same use cases as REST. |
 
 ## Conventions
 
@@ -28,9 +28,14 @@ sidebar_position: 1
 | Tag | Endpoints |
 | --- | --- |
 | `process-capacities` | `POST /process-capacities`, `GET /process-capacities` |
-| `process-paths` | `POST /process-paths`, `GET /process-paths/{id}/capacity` |
-| `capacity-plans` | `POST /capacity-plans`, `GET /capacity-plans/{id}`, `POST /capacity-plans/{id}/publish` |
+| `process-paths` | `GET /process-paths`, `POST /process-paths`, `GET /process-paths/{id}/capacity` |
+| `capacity-plans` | `GET /capacity-plans`, `POST /capacity-plans`, `GET /capacity-plans/{id}`, `POST /capacity-plans/{id}/publish` |
 | `station-capacity` | `PUT /station-standards/{location}/{process_type}`, `GET /station-standards`, `GET /storage-capacity` |
+| `demand` | `GET /demand` |
+| `reports` | `GET /reports/bottleneck-frequency`, `GET /reports/shortage-trend`, `GET /reports/plan-throughput`, `GET /reports/freshness` (served by `cmd/planning-reports` on `:8092`, not by `cmd/api`) |
+
+`cmd/api` also serves `GET /healthz` (liveness) and `GET /readyz` (readiness,
+`503` once shutdown has started); neither is in the spec.
 
 ## Regenerating the REST reference
 

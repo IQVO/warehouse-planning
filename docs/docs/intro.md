@@ -48,6 +48,10 @@ guarantee.
 - **StationStandard** - the operator-declared throughput of one station of a
   process at a site. No upstream publishes it.
 
+It also keeps an **expected-demand read model** (one row per
+`order-management` order, fed only by Kafka; [ADR 0004](/docs/adr/0004-demand-ingestion-from-order-management))
+that a capacity plan defaults its demand to when the caller omits it.
+
 It does **not** own labor scheduling (`workforce-management`), storage
 slotting and layout (`facility-layout`), stock levels (`inventory-storage`) or
 path capability and eligibility authoring (`process-path-management`).
@@ -57,6 +61,7 @@ path capability and eligibility authoring (`process-path-management`).
 - [Bounded context](/docs/overview/context): purpose, context map, the no-live-lookup rule.
 - [Aggregates](/docs/overview/aggregates): `ProcessCapacity` and `CapacityPlan` and their invariants.
 - [Capacity composition](/docs/overview/capacity-composition): how a step's capacity is resolved (window coverage, station capacity).
+- [DDD artifacts](/docs/ddd/ddd-artifacts): the ddd-crew pack (core domain chart, canvases, context map, EventStorming, class, ER and sequence diagrams).
 - [Upstream contracts](/docs/ecosystem/upstream-contracts): the events consumed from sibling contexts.
 - [API reference](/docs/api-reference): REST (generated from `apis/openapi.yaml`) and the event catalogue.
 - [Architecture decision records](/docs/adr/0001-warehouse-planning-bounded-context).
