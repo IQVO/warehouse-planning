@@ -257,6 +257,7 @@ func (d Deps) getProcessPathCapacity(ctx context.Context, in getPathCapacityInpu
 
 type createPlanInput struct {
 	WarehouseID      string   `json:"warehouse_id" jsonschema:"the warehouse the plan is for, e.g. WH-1"`
+	SiteID           string   `json:"site_id" jsonschema:"REQUIRED canonical site code (a facility-layout Site site_code, e.g. SIM1) the plan is scoped to; never inferred from warehouse_id or location"`
 	Location         string   `json:"location" jsonschema:"the location whose step capacities are used, e.g. FC01"`
 	WindowStart      string   `json:"window_start" jsonschema:"plan window start, RFC3339 timestamp; a registered capacity window applies to a step when it COVERS [window_start, window_end), not only when equal"`
 	WindowEnd        string   `json:"window_end" jsonschema:"plan window end, RFC3339 timestamp; must be after window_start"`
@@ -274,8 +275,11 @@ type planIDInput struct {
 // return, identical to the REST body. Quantities are orders; path_capacity
 // is ORDER per HOUR.
 type capacityPlanOutput struct {
-	ID                 string  `json:"id"`
-	WarehouseID        string  `json:"warehouse_id"`
+	ID          string `json:"id"`
+	WarehouseID string `json:"warehouse_id"`
+	// SiteID is the canonical site (a facility-layout Site site_code);
+	// empty for plans stored before migration 0008. Additive.
+	SiteID             string  `json:"site_id"`
 	Location           string  `json:"location"`
 	WindowStart        string  `json:"window_start"`
 	WindowEnd          string  `json:"window_end"`
@@ -303,6 +307,7 @@ func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
 	out := capacityPlanOutput{
 		ID:                 p.ID(),
 		WarehouseID:        p.WarehouseID(),
+		SiteID:             p.SiteID(),
 		Location:           p.Location(),
 		WindowStart:        p.Window().Start().UTC().Format(time.RFC3339),
 		WindowEnd:          p.Window().End().UTC().Format(time.RFC3339),
@@ -338,6 +343,7 @@ func (d Deps) createCapacityPlan(ctx context.Context, in createPlanInput) (capac
 	// demand read model, or rejected (docs/adr/0004); a stated one wins.
 	cmd := usecases.CreateCapacityPlanCommand{
 		WarehouseID:      in.WarehouseID,
+		SiteID:           in.SiteID,
 		Location:         in.Location,
 		WindowStart:      windowStart,
 		WindowEnd:        windowEnd,

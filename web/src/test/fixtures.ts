@@ -61,6 +61,7 @@ export function plan(overrides: Partial<CapacityPlan> = {}): CapacityPlan {
   return {
     id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10",
     warehouse_id: "WH-1",
+    site_id: "SIM1",
     location: "SIM1",
     window_start: "2026-10-05T08:00:00Z",
     window_end: "2026-10-05T16:00:00Z",

@@ -24,6 +24,7 @@ func stateOf(p *capacityplan.CapacityPlan) capacityplan.RehydrateParams {
 	return capacityplan.RehydrateParams{
 		ID:                 p.ID(),
 		WarehouseID:        p.WarehouseID(),
+		SiteID:             p.SiteID(),
 		Location:           p.Location(),
 		Window:             p.Window(),
 		ProcessPathID:      p.ProcessPathID(),

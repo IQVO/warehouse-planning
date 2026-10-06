@@ -78,7 +78,7 @@ func TestListCapacityPlans_ReturnsStoredPlansNewestFirst(t *testing.T) {
 	rate, _ := processcapacity.NewCapacityRate(1000, processcapacity.UnitOrder, time.Hour)
 	for i := 0; i < 3; i++ {
 		plan, err := capacityplan.Create(capacityplan.CreateParams{
-			ID: fmt.Sprintf("plan-%d", i), WarehouseID: "WH-1", Location: "SIM1", Window: window,
+			ID: fmt.Sprintf("plan-%d", i), WarehouseID: "WH-1", SiteID: "SIM1", Location: "SIM1", Window: window,
 			ProcessPathID: "p", AssignedDemand: 10, PathRate: rate, BottleneckStep: "PACK",
 		}, planCreatedAt.Add(time.Duration(i)*time.Minute))
 		if err != nil {

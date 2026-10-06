@@ -257,7 +257,7 @@ func TestWindowCoverage_Postgres_LiveShapedPathCapacityAndPlan(t *testing.T) {
 	}
 
 	plan, err := s.create.Handle(ctx, usecases.CreateCapacityPlanCommand{
-		WarehouseID: "WH-1", Location: "SIM1", WindowStart: covAt(9, 0, 0), WindowEnd: covAt(15, 0, 0),
+		WarehouseID: "WH-1", SiteID: "SIM1", Location: "SIM1", WindowStart: covAt(9, 0, 0), WindowEnd: covAt(15, 0, 0),
 		ProcessPathID: "pick-rebin-pack", AssignedDemand: 12000, UnitsPerOrder: &upo, PackagesPerOrder: &ppo,
 	})
 	if err != nil {

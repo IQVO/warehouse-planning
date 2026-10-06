@@ -101,6 +101,7 @@ describe("API client URLs and verbs", () => {
     const api = mockApi({ "POST /capacity-plans": json({ id: "plan-1", status: "DRAFT" }, 201) });
     const plan = await createCapacityPlan({
       warehouse_id: "WH-1",
+      site_id: "SIM1",
       location: "S1",
       window_start: "2026-10-05T08:00:00Z",
       window_end: "2026-10-05T16:00:00Z",
@@ -124,7 +125,7 @@ describe("errors", () => {
     mockApi({
       "POST /capacity-plans": problem(422, "missing-assigned-demand", "assigned_demand is required", "assigned_demand (orders) must be provided"),
     });
-    const err = await createCapacityPlan({ warehouse_id: "w", location: "l", window_start: "a", window_end: "b", path_id: "p" }).catch((e: unknown) => e);
+    const err = await createCapacityPlan({ warehouse_id: "w", site_id: "SIM1", location: "l", window_start: "a", window_end: "b", path_id: "p" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     const apiErr = err as ApiError;
     expect(apiErr.status).toBe(422);

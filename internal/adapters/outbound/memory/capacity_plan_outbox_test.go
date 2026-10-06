@@ -29,7 +29,7 @@ func newPlan(t *testing.T, id string) *capacityplan.CapacityPlan {
 		t.Fatal(err)
 	}
 	p, err := capacityplan.Create(capacityplan.CreateParams{
-		ID: id, WarehouseID: "WH-1", Location: "Z", Window: w, ProcessPathID: "p",
+		ID: id, WarehouseID: "WH-1", SiteID: "SIM1", Location: "Z", Window: w, ProcessPathID: "p",
 		AssignedDemand: 12000, PathRate: rate, BottleneckStep: "REBIN",
 	}, time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC))
 	if err != nil {

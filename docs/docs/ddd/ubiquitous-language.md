@@ -31,6 +31,7 @@ are flagged in the last column.
 | **Storage positions** | Storage slots per zone and location type; a read model, not a throughput. | `tally.Bucket`; `GetStorageCapacity`; JSON `storage_positions` | **yes**: `Bucket` |
 | **Site / location** | A planning `location` is a site (building) code such as `SIM1`, also the first dash-separated segment of that site's facility zone ids. | the `location` string on every type; `building_id` in the labor payload | **yes**: `building_id` upstream |
 | **CapacityPlan** | Assigned demand for a site and window, compared with the ProcessPathCapacity; yields shortage and bottleneck. Lifecycle `DRAFT` then `PUBLISHED`. | `capacityplan.CapacityPlan`, `StatusDraft`, `StatusPublished` | no |
+| **Site id** | The canonical site a plan is scoped to: a facility-layout Site `site_code`. Stated on create, never inferred from warehouse or location. | `CapacityPlan.SiteID()`; JSON `site_id` | no |
 | **Assigned demand** | The orders a plan must serve in its window, stated or defaulted from expected demand. | `CapacityPlan.AssignedDemand()`; JSON `assigned_demand` | no |
 | **DemandSource** | Where the assigned demand came from: `request` or `orders`. | `capacityplan.DemandSource` (`DemandSourceRequest`, `DemandSourceOrders`) | no |
 | **Capacity over window** | Path capacity (ORDER per hour) times the window's hours. | `CapacityPlan.CapacityOverWindow()`; JSON `capacity_over_window` | no |

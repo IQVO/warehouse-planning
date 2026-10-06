@@ -50,12 +50,12 @@ func TestGolden_PublishedTypes(t *testing.T) {
 		{
 			name: "CapacityPlanPublished",
 			event: capacityplan.CapacityPlanPublished{
-				Header: h, WarehouseID: "WH-1", Location: "PATH-ZONE-A", PathID: "pick-rebin-pack",
+				Header: h, WarehouseID: "WH-1", SiteID: "SIM1", Location: "PATH-ZONE-A", PathID: "pick-rebin-pack",
 				WindowStart: goldenStart, WindowEnd: goldenEnd,
 				AssignedDemand: 12000, PathCapacity: 1000, CapacityOverWindow: 8000, Shortage: 4000,
 				BottleneckStep: "REBIN",
 			},
-			want: `{"specversion":"1.0","id":"6f1c2b7e-4c3a-4a1d-9f0b-6c2b8a7d1e33","source":"/warehouse/warehouse-planning","type":"com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished","subject":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","datacontenttype":"application/json","dataschema":"urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1","time":"2026-10-04T21:45:10Z","data":{"plan_id":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","warehouse_id":"WH-1","location":"PATH-ZONE-A","path_id":"pick-rebin-pack","window_start":"2026-10-05T08:00:00Z","window_end":"2026-10-05T16:00:00Z","assigned_demand":12000,"path_capacity":1000,"capacity_over_window":8000,"shortage":4000,"bottleneck_step":"REBIN","published_at":"2026-10-04T21:45:10Z"}}`,
+			want: `{"specversion":"1.0","id":"6f1c2b7e-4c3a-4a1d-9f0b-6c2b8a7d1e33","source":"/warehouse/warehouse-planning","type":"com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished","subject":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","datacontenttype":"application/json","dataschema":"urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1","time":"2026-10-04T21:45:10Z","data":{"plan_id":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","warehouse_id":"WH-1","site_id":"SIM1","location":"PATH-ZONE-A","path_id":"pick-rebin-pack","window_start":"2026-10-05T08:00:00Z","window_end":"2026-10-05T16:00:00Z","assigned_demand":12000,"path_capacity":1000,"capacity_over_window":8000,"shortage":4000,"bottleneck_step":"REBIN","published_at":"2026-10-04T21:45:10Z"}}`,
 		},
 		{
 			name: "CapacityShortageDetected",
@@ -173,5 +173,46 @@ func TestEncode_TopicOverride(t *testing.T) {
 	msgs, err := e.Encode(capacityplan.BottleneckDetected{Header: capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
 	if err != nil || msgs[0].Topic != "some.other.topic" {
 		t.Fatalf("Encode = %+v, %v; want the overridden topic", msgs, err)
+	}
+}
+
+// A plan stored before the site id existed (migration 0008) publishes with an
+// EMPTY site id: site_id is omitted (omitempty) and the v1 payload stays
+// byte-identical to the pre-site_id shape, so legacy consumers and replays
+// of the persisted outbox bytes see no change.
+func TestGolden_PublishedWithoutSiteIDIsTheLegacyShape(t *testing.T) {
+	h := capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}
+	msgs, err := goldenEncoder().Encode(capacityplan.CapacityPlanPublished{
+		Header: h, WarehouseID: "WH-1", Location: "PATH-ZONE-A", PathID: "pick-rebin-pack",
+		WindowStart: goldenStart, WindowEnd: goldenEnd,
+		AssignedDemand: 12000, PathCapacity: 1000, CapacityOverWindow: 8000, Shortage: 4000,
+		BottleneckStep: "REBIN",
+	})
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("Encode = %d msgs, %v", len(msgs), err)
+	}
+	want := `{"specversion":"1.0","id":"6f1c2b7e-4c3a-4a1d-9f0b-6c2b8a7d1e33","source":"/warehouse/warehouse-planning","type":"com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished","subject":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","datacontenttype":"application/json","dataschema":"urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1","time":"2026-10-04T21:45:10Z","data":{"plan_id":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","warehouse_id":"WH-1","location":"PATH-ZONE-A","path_id":"pick-rebin-pack","window_start":"2026-10-05T08:00:00Z","window_end":"2026-10-05T16:00:00Z","assigned_demand":12000,"path_capacity":1000,"capacity_over_window":8000,"shortage":4000,"bottleneck_step":"REBIN","published_at":"2026-10-04T21:45:10Z"}}`
+	if string(msgs[0].Value) != want {
+		t.Errorf("value =\n%s\nwant\n%s", msgs[0].Value, want)
+	}
+}
+
+// A legacy v1 payload WITHOUT site_id still decodes through the service's
+// own validating CloudEvents decoder (the consumer-side guarantee: the field
+// is additive, absence never breaks a decode).
+func TestEncode_PublishedLegacyPayloadStillDecodes(t *testing.T) {
+	const legacy = `{"specversion":"1.0","id":"6f1c2b7e-4c3a-4a1d-9f0b-6c2b8a7d1e33","source":"/warehouse/warehouse-planning","type":"com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished","subject":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","datacontenttype":"application/json","dataschema":"urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1","time":"2026-10-04T21:45:10Z","data":{"plan_id":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","warehouse_id":"WH-1","location":"PATH-ZONE-A","path_id":"pick-rebin-pack","window_start":"2026-10-05T08:00:00Z","window_end":"2026-10-05T16:00:00Z","assigned_demand":12000,"path_capacity":1000,"capacity_over_window":8000,"shortage":4000,"bottleneck_step":"REBIN","published_at":"2026-10-04T21:45:10Z"}}`
+	ev, err := cloudevents.Decode([]byte(legacy))
+	if err != nil {
+		t.Fatalf("a legacy v1 payload without site_id must decode: %v", err)
+	}
+	var data struct {
+		SiteID *string `json:"site_id"`
+	}
+	if err := ev.DataAs(&data); err != nil {
+		t.Fatalf("DataAs: %v", err)
+	}
+	if data.SiteID != nil {
+		t.Errorf("site_id = %q, want absent (nil)", *data.SiteID)
 	}
 }

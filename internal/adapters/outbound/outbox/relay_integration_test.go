@@ -193,7 +193,7 @@ func TestRelay_RealPostgresAndKafka_PublishesTheFourCloudEventsAndRetriesWithThe
 	}
 	publish := &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow}
 	plan, err := create.Handle(ctx, usecases.CreateCapacityPlanCommand{
-		WarehouseID: "WH-1", Location: "PATH-ZONE-A", WindowStart: start, WindowEnd: end,
+		WarehouseID: "WH-1", SiteID: "SIM1", Location: "PATH-ZONE-A", WindowStart: start, WindowEnd: end,
 		ProcessPathID: "pick-rebin-pack", AssignedDemand: 12000, UnitsPerOrder: &upo, PackagesPerOrder: &ppo,
 	})
 	if err != nil {

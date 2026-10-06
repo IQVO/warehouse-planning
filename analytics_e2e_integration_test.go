@@ -131,11 +131,11 @@ func (f *lostAckOnce) Send(ctx context.Context, msgs ...outbox.Message) error {
 
 func at(day, hour, min int) time.Time { return time.Date(2026, 10, day, hour, min, 0, 0, time.UTC) }
 
-type e2eSite struct{ warehouse, location string }
+type e2eSite struct{ warehouse, site, location string }
 
 var (
-	siteA = e2eSite{"WH-1", "PATH-ZONE-A"}
-	siteB = e2eSite{"WH-2", "PATH-ZONE-B"}
+	siteA = e2eSite{"WH-1", "SIM1", "PATH-ZONE-A"}
+	siteB = e2eSite{"WH-2", "SIM2", "PATH-ZONE-B"}
 )
 
 func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
@@ -191,7 +191,7 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 		t.Helper()
 		clock = created
 		p, err := create.Handle(ctx, usecases.CreateCapacityPlanCommand{
-			WarehouseID: site.warehouse, Location: site.location, WindowStart: windowStart, WindowEnd: windowEnd,
+			WarehouseID: site.warehouse, SiteID: site.site, Location: site.location, WindowStart: windowStart, WindowEnd: windowEnd,
 			ProcessPathID: "pick-rebin-pack", AssignedDemand: demand, UnitsPerOrder: &upo, PackagesPerOrder: &ppo})
 		if err != nil {
 			t.Fatalf("create: %v", err)

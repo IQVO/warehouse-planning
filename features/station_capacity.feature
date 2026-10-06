@@ -37,7 +37,7 @@ Feature: Station capacity composed at read time
     Then the response status is 200
     And the process path capacity response reports 1800 ORDER per HOUR bound by PACK
     And the step breakdown is "PICK:3200:LABOR,REBIN:2400:LABOR,PACK:1800:STATION"
-    When I create a capacity plan for warehouse "WH-1" at "SIM1" on path "pick-rebin-pack" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 20000, units_per_order 2.5 and packages_per_order 1
+    When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "SIM1" on path "pick-rebin-pack" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 20000, units_per_order 2.5 and packages_per_order 1
     Then the response status is 201
     And the capacity plan is DRAFT with path capacity 1800 ORDER per HOUR, capacity over window 14400, shortage 5600 and bottleneck PACK
     And the capacity plan is bound by STATION

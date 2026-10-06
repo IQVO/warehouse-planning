@@ -357,6 +357,11 @@ paths:
         to a step when it COVERS [window_start, window_end), exactly as in
         GET /process-paths/{id}/capacity (docs/adr/0003). The plan stores
         its own requested window.
+        site_id is REQUIRED: the canonical site (a facility-layout Site
+        site_code, the same identifier its SiteCapabilityChanged event
+        publishes) the plan is scoped to. It is a stated planning fact,
+        never inferred from warehouse_id or location, and a blank or absent
+        one is rejected with 422 missing-required-field.
         assigned_demand is OPTIONAL (docs/adr/0004). An explicit value
         (including 0) is used exactly as stated and the plan's demand_source
         is "request". When it is OMITTED the demand defaults to the number of
@@ -401,8 +406,9 @@ paths:
             location/window; a WorkloadProfile factor is missing, not
             positive, or cannot normalize a step's unit; assigned_demand is
             negative, or is omitted and the order-demand read model has no
-            order for this location and window (missing-assigned-demand); or
-            warehouse_id/location/path_id is blank.
+            order for this location and window (missing-assigned-demand);
+            site_id is absent/blank; or warehouse_id/location/path_id is
+            blank.
           content:
             application/problem+json:
               schema:
@@ -1273,6 +1279,7 @@ components:
       type: object
       required:
         - warehouse_id
+        - site_id
         - location
         - window_start
         - window_end
@@ -1281,6 +1288,14 @@ components:
         warehouse_id:
           type: string
           example: WH-1
+        site_id:
+          type: string
+          description: >-
+            REQUIRED. Canonical site the plan is scoped to: a facility-layout
+            Site site_code (the same identifier its SiteCapabilityChanged
+            event publishes). A stated planning fact, never inferred from
+            warehouse_id or location.
+          example: SIM1
         location:
           type: string
           description: The ProcessCapacity location every path step is looked up under.
@@ -1331,6 +1346,12 @@ components:
         warehouse_id:
           type: string
           example: WH-1
+        site_id:
+          type: string
+          description: >-
+            Additive. Canonical site the plan is scoped to (a facility-layout
+            Site site_code); empty for plans stored before migration 0008.
+          example: SIM1
         location:
           type: string
           example: PATH-ZONE-A

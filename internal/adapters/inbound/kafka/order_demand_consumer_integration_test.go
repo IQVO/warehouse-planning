@@ -163,7 +163,7 @@ func TestOrderDemandConsumer_Integration_RealKafkaAndPostgres_PlanPicksUpTheDema
 	}
 
 	planBody := map[string]any{
-		"warehouse_id": "WH-1", "location": "SIM1", "path_id": "pick-only",
+		"warehouse_id": "WH-1", "site_id": "SIM1", "location": "SIM1", "path_id": "pick-only",
 		"window_start": "2026-10-05T08:00:00Z", "window_end": "2026-10-05T16:00:00Z",
 		"units_per_order": 1, "packages_per_order": 1,
 	}

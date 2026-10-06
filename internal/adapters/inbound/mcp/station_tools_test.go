@@ -151,7 +151,7 @@ func TestStationComposition_FixturesAB_ThroughMCP(t *testing.T) {
 	}
 
 	plan := h.ok(t, "create_capacity_plan", map[string]any{
-		"warehouse_id": "WH-1", "location": "SIM1", "window_start": winStart, "window_end": winEnd,
+		"warehouse_id": "WH-1", "site_id": "SIM1", "location": "SIM1", "window_start": winStart, "window_end": winEnd,
 		"path_id": "tote-path", "assigned_demand": 20000, "units_per_order": 2.5, "packages_per_order": 1,
 	})
 	if plan["path_capacity"] != 1800.0 || plan["bottleneck_step"] != "PACK" || plan["bottleneck_constraint"] != "STATION" ||

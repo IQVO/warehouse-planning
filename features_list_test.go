@@ -128,7 +128,7 @@ func (w *world) theListedPlanIs(index int, status string) error {
 // iCreateTheCapacityPlanWithDemand creates a plan on the list scenarios' fixed
 // path and window, remembering its id for a later publish.
 func (w *world) iCreateAPlanWithDemandAt(ctx context.Context, demand float64, location string) error {
-	return w.iCreateACapacityPlan(ctx, "WH-1", location, "pick-rebin-pack", "2026-10-05T08:00:00Z", "2026-10-05T16:00:00Z", demand, 2.5, 1)
+	return w.iCreateACapacityPlan(ctx, "WH-1", "SIM1", location, "pick-rebin-pack", "2026-10-05T08:00:00Z", "2026-10-05T16:00:00Z", demand, 2.5, 1)
 }
 
 func registerListSteps(sc *godog.ScenarioContext, w *world) {

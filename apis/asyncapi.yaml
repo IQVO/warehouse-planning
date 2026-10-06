@@ -284,6 +284,7 @@ components:
             data:
               plan_id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
               warehouse_id: "WH-1"
+              site_id: "SIM1"
               location: "PATH-ZONE-A"
               path_id: "pick-rebin-pack"
               window_start: "2026-10-05T08:00:00Z"
@@ -436,6 +437,7 @@ components:
             data:
               plan_id: "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
               warehouse_id: "WH-1"
+              site_id: "SIM1"
               location: "PATH-ZONE-A"
               path_id: "pick-rebin-pack"
               window_start: "2026-10-05T08:00:00Z"
@@ -787,7 +789,11 @@ components:
           example: DRAFT
     CapacityPlanPublishedData:
       type: object
-      description: Payload of CapacityPlanPublished.
+      description: >-
+        Payload of CapacityPlanPublished. site_id is ADDITIVE on the v1
+        payload — present for plans created after migration 0008, omitted for
+        older plans — and a consumer must treat its absence as unknown (never
+        derive it from warehouse_id or location).
       required:
         - plan_id
         - warehouse_id
@@ -810,6 +816,14 @@ components:
           type: string
           description: Warehouse the plan is for.
           example: "WH-1"
+        site_id:
+          type: string
+          description: >-
+            Additive, optional. Canonical site the plan is scoped to (a
+            facility-layout Site site_code, the same identifier its
+            SiteCapabilityChanged event publishes). Omitted for plans stored
+            before migration 0008.
+          example: "SIM1"
         location:
           type: string
           description: ProcessCapacity location the plan evaluates.

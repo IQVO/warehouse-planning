@@ -41,6 +41,7 @@ func (s *Server) handleCreateCapacityPlan(w http.ResponseWriter, r *http.Request
 	// missing-assigned-demand when there is no order data -- never a silent 0.
 	cmd := usecases.CreateCapacityPlanCommand{
 		WarehouseID:      req.WarehouseID,
+		SiteID:           req.SiteID,
 		Location:         req.Location,
 		WindowStart:      windowStart,
 		WindowEnd:        windowEnd,
@@ -126,6 +127,7 @@ func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {
 	resp := capacityPlanResponse{
 		ID:                 p.ID(),
 		WarehouseID:        p.WarehouseID(),
+		SiteID:             p.SiteID(),
 		Location:           p.Location(),
 		WindowStart:        p.Window().Start().UTC().Format(time.RFC3339),
 		WindowEnd:          p.Window().End().UTC().Format(time.RFC3339),

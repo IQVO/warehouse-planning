@@ -11,7 +11,7 @@ func demandSourcePlan(t *testing.T, source DemandSource) *CapacityPlan {
 	t.Helper()
 	rate, bottleneck := phase2PathCapacity(t)
 	plan, err := Create(CreateParams{
-		ID: planID, WarehouseID: warehouseID, Location: location,
+		ID: planID, WarehouseID: warehouseID, SiteID: siteID, Location: location,
 		Window:         mustWindow(t, windowStart, windowEnd),
 		ProcessPathID:  pathID,
 		AssignedDemand: 8500,

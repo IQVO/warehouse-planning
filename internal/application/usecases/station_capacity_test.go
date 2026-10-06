@@ -303,7 +303,7 @@ func newStationPlanFixture(t *testing.T) (*compositionFixture, *CreateCapacityPl
 		Now: func() time.Time { return planCreatedAt },
 	}
 	cmd := CreateCapacityPlanCommand{
-		WarehouseID: "WH-1", Location: "SIM1", WindowStart: planWindowStart, WindowEnd: planWindowEnd,
+		WarehouseID: "WH-1", SiteID: "SIM1", Location: "SIM1", WindowStart: planWindowStart, WindowEnd: planWindowEnd,
 		ProcessPathID: "pick-rebin-pack", AssignedDemand: 20000, UnitsPerOrder: f64ptr(2.5), PackagesPerOrder: f64ptr(1),
 	}
 	return f, create, plans, cmd

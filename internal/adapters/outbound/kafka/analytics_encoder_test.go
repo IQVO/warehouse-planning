@@ -43,12 +43,12 @@ func analyticsGoldenCases() []struct {
 		{
 			name: "CapacityPlanPublished",
 			event: capacityplan.CapacityPlanPublished{
-				Header: h, WarehouseID: "WH-1", Location: "PATH-ZONE-A", PathID: "pick-rebin-pack",
+				Header: h, WarehouseID: "WH-1", SiteID: "SIM1", Location: "PATH-ZONE-A", PathID: "pick-rebin-pack",
 				WindowStart: goldenStart, WindowEnd: goldenEnd,
 				AssignedDemand: 12000, PathCapacity: 1000, CapacityOverWindow: 8000, Shortage: 4000,
 				BottleneckStep: "REBIN", BottleneckConstraint: "STATION",
 			},
-			want: `{"specversion":"1.0","id":"6f1c2b7e-4c3a-4a1d-9f0b-6c2b8a7d1e33","source":"/warehouse/warehouse-planning","type":"com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished","subject":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","datacontenttype":"application/json","dataschema":"urn:warehouse:warehouse-planning:analytics:CapacityPlanPublished:v1","time":"2026-10-04T21:45:10Z","data":{"plan_id":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","warehouse_id":"WH-1","location":"PATH-ZONE-A","path_id":"pick-rebin-pack","window_start":"2026-10-05T08:00:00Z","window_end":"2026-10-05T16:00:00Z","assigned_demand":12000,"path_capacity":1000,"capacity_over_window":8000,"shortage":4000,"bottleneck_step":"REBIN","published_at":"2026-10-04T21:45:10Z","binding_constraint":"STATION"}}`,
+			want: `{"specversion":"1.0","id":"6f1c2b7e-4c3a-4a1d-9f0b-6c2b8a7d1e33","source":"/warehouse/warehouse-planning","type":"com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished","subject":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","datacontenttype":"application/json","dataschema":"urn:warehouse:warehouse-planning:analytics:CapacityPlanPublished:v1","time":"2026-10-04T21:45:10Z","data":{"plan_id":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10","warehouse_id":"WH-1","site_id":"SIM1","location":"PATH-ZONE-A","path_id":"pick-rebin-pack","window_start":"2026-10-05T08:00:00Z","window_end":"2026-10-05T16:00:00Z","assigned_demand":12000,"path_capacity":1000,"capacity_over_window":8000,"shortage":4000,"bottleneck_step":"REBIN","published_at":"2026-10-04T21:45:10Z","binding_constraint":"STATION"}}`,
 		},
 		{
 			name: "CapacityShortageDetected",

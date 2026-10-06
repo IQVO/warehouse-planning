@@ -103,6 +103,8 @@ export type DemandSource = "request" | "orders";
 export interface CapacityPlan {
   id: string;
   warehouse_id: string;
+  /** Canonical site (facility-layout site_code); empty for plans stored before migration 0008. */
+  site_id: string;
   location: string;
   window_start: string;
   window_end: string;
@@ -132,6 +134,8 @@ export interface CapacityPlansResponse {
  *  `missing-assigned-demand` when that has no order for the site and window). */
 export interface CreateCapacityPlanInput {
   warehouse_id: string;
+  /** REQUIRED canonical site (facility-layout site_code). */
+  site_id: string;
   location: string;
   window_start: string;
   window_end: string;

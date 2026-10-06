@@ -120,6 +120,11 @@ const sidebars: SidebarsConfig = {
           label: '0011 Standard metrics adoption',
           href: '/docs/adr/0011-standard-metrics-adoption',
         },
+        {
+          type: 'link',
+          label: '0012 Canonical site_id on capacity plans',
+          href: '/docs/adr/0012-canonical-site-id-on-capacity-plans',
+        },
       ],
     },
   ],

@@ -88,7 +88,11 @@ through the `cloudevents` helper; golden exact-JSON tests in
 
 Payloads (snake_case; quantities are orders; `path_capacity` is ORDER/HOUR;
 times RFC 3339 UTC) are documented field by field in `apis/asyncapi.yaml`.
-`CapacityShortageDetected.data` = `plan_id`, `warehouse_id`, `location`,
+`CapacityPlanPublished.data` additionally carries `site_id` (additive on the
+v1 payload, ADR 0012: a facility-layout Site `site_code`, `omitempty` — a
+plan stored before migration `0008` publishes without it, and a legacy
+payload without it still decodes; never derived from `warehouse_id` or
+`location`). `CapacityShortageDetected.data` = `plan_id`, `warehouse_id`, `location`,
 `path_id`, `window_start`, `window_end`, `assigned_demand`,
 `capacity_over_window`, `shortage`, `bottleneck_step`.
 

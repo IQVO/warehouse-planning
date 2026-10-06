@@ -34,11 +34,12 @@ function baseRoutes(over: Record<string, Parameters<typeof mockApi>[0][string]> 
 
 async function fillCreate(
   user: ReturnType<typeof userEvent.setup>,
-  o: { warehouse?: string; site?: string; path?: string; window?: boolean; demand?: string; units?: string; packages?: string } = {},
+  o: { warehouse?: string; siteId?: string; site?: string; path?: string; window?: boolean; demand?: string; units?: string; packages?: string } = {},
 ) {
   const form = await screen.findByRole("form", { name: "Create capacity plan" });
   const f = within(form);
   await user.type(f.getByLabelText(/Warehouse id/), o.warehouse ?? "WH-1");
+  await user.type(f.getByLabelText(/^Site id/), o.siteId ?? "SIM1");
   const site = f.getByLabelText(/Plan site code/);
   await user.clear(site);
   await user.type(site, o.site ?? "SIM1");
@@ -181,6 +182,7 @@ describe("create form", () => {
     expect(screen.getByText(/Shortage: 4,000 \(bottleneck REBIN\)/)).toBeInTheDocument();
     expect(api.to("POST /capacity-plans")[0].body).toEqual({
       warehouse_id: "WH-1",
+      site_id: "SIM1",
       location: "SIM1",
       window_start: "2026-10-05T08:00:00Z",
       window_end: "2026-10-05T16:00:00Z",
