@@ -35,10 +35,11 @@ Study project: not production software.
    (`.claude/rules/fleet/kafka-testing-and-consumers.md`).
 5. **No live cross-context calls.** Never call a sibling context over REST or
    MCP at request time and never import its Go packages: capacity facts from
-   `workforce-management` and `facility-layout` arrive as Kafka events and
-   live in local read models (ADR 0001). `process-path-management` is
-   deliberately NOT consumed; this context owns its `ProcessPath`. Stock from
-   `inventory-storage` is not capacity and is never read.
+   `workforce-management` and `facility-layout`, and expected demand from
+   `order-management` (ADR 0004), arrive as Kafka events and live in local read
+   models (ADR 0001). `process-path-management` is deliberately NOT consumed;
+   this context owns its `ProcessPath`. Stock from `inventory-storage` is not
+   capacity and is never read.
 6. **Station capacity is composed at READ time** (`stationCount x
    StationStandard`, ADR 0002; nothing derived is stored as a
    `ProcessCapacity`) and a registered window applies when it COVERS the
@@ -48,7 +49,8 @@ Study project: not production software.
    bearer/JWT/API-key middleware (`TestNoAuthMiddlewareReintroduced`).
    **MCP is additive**: `cmd/mcp` and `internal/adapters/inbound/mcp/` depend
    only on application and domain, nothing depends on them, Streamable HTTP
-   only, tool surface capped at 10 (`.claude/rules/mcp.md`,
+   only, tool surface capped at 11 (`maxTools` in
+   `internal/adapters/inbound/mcp/governance_test.go`; `.claude/rules/mcp.md`,
    `.claude/rules/fleet/no-auth-and-mcp.md`).
 8. **Frontend remote in `web/`.** `capacity_mfe` (Vite + React Module Federation
    remote) is lazy-loaded by `warehouse-console`. It talks only to this service's
@@ -61,7 +63,7 @@ Study project: not production software.
    otherwise.
 10. **An ADR comes first** for a new cross-context contract, a custom
     CloudEvents extension attribute or any auth. ADRs live in `docs/adr/`
-    (0001-0003 today).
+    (0001-0011 today).
 
 ## Commands
 
@@ -89,7 +91,9 @@ Run locally: `go run ./cmd/api` (REST `:8080`; in-memory adapters without
 - Skills (recipes with this repo's real files): `how-to-add-a-rest-endpoint`,
   `how-to-add-an-integration-event`, `how-to-test`, `how-to-write-an-adr`;
   review commands `/code-review`, `/domain-review`, `/architecture-review`.
-- `docs/adr/`: decisions. `HARNESS.md`: what each sensor runs and why.
+- `docs/adr/`: decisions. `docs/docs/ddd/`: the ddd-crew DDD artifact pack
+  (canvases, context map, class/ER/sequence diagrams). `HARNESS.md`: what each
+  sensor runs and why.
 
 Scaffolded from `warehouse-harness-template`; harness-template v3 is in effect
 (hooks, guide-lint).
