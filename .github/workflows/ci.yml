@@ -297,7 +297,7 @@ jobs:
   # supposed to mirror. Regenerates them exactly as `gen-api-docs` would and
   # fails the PR if that produces any diff -- i.e. someone changed
   # apis/openapi.yaml (or hand-edited the generated files) without running
-  # `npm run gen-api-docs inventory` and committing the result.
+  # `npm run gen-api-docs warehouse-planning` and committing the result.
   # ============================================================
   docs-api-drift:
     runs-on: ubuntu-latest
