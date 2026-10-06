@@ -1,4 +1,4 @@
-# HARNESS.md — warehouse-harness-template v2
+# HARNESS.md — warehouse-harness-template v3
 
 This file is the canonical description of every sensor and guide in this
 template: what it does, what it costs, and when in the change lifecycle it
@@ -143,7 +143,10 @@ the full instantiation checklist.
 
 ## Versioning
 
-This is `harness-template: v2` (v2 = CloudEvents 1.0 mandatory: the
+This is `harness-template: v3` (CLAUDE.md records the same version; v3 adds
+the runtime-agnostic hooks in `scripts/harness/`, guide-lint, the scoped
+`.claude/rules` and the managed architecture/event/catalogue fitness tests,
+on top of v2 = CloudEvents 1.0 mandatory: the
 generated helper, the rewritten integration-events rule/skill, and the new
 blocking `TestNoEventEnvelopeToggleOrFlatEnvelope`). Record that string in each instantiated
 repo's `AGENTS.md` so a fleet-wide audit (see the `harness-audit` tool in

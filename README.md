@@ -17,7 +17,7 @@ ADRs and a ddd-crew DDD artifact pack (`docs/docs/ddd/`: core domain chart,
 bounded context canvas, context map, aggregate design canvas, domain message
 flows, EventStorming, class, ER and sequence diagrams).
 
-Scaffolded from `warehouse-harness-template: v2`. See `HARNESS.md` for the
+Scaffolded from `warehouse-harness-template: v3`. See `HARNESS.md` for the
 sensor manifest.
 
 ## Study project
