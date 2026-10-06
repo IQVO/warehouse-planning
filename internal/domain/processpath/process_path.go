@@ -1,9 +1,12 @@
-// Package processpath holds a LOCAL, READ-ONLY representation of
-// ProcessPath, a concept owned by a different bounded context
-// (process-path-management). See .claude/rules/domain-model.md and
-// CLAUDE.md's cross-context integration rule: warehouse-planning is a
-// Conformist consumer here, never the owner, so this package deliberately
-// offers construction only and no update/mutation method of any kind.
+// Package processpath holds ProcessPath, the ordered sequence of process
+// steps a workload flows through (Pick -> Rebin -> Pack). It is a LOCALLY
+// OWNED, operator-declared concept of warehouse-planning (declared via
+// POST /process-paths): process-path-management publishes only routing and
+// capability metadata, never a step sequence, so nothing is consumed from
+// it and this is NOT a Conformist copy (ADR 0001 Addendum). The two
+// contexts only share the `path_id` string as a loose cross-reference.
+// ProcessPath is a value-like read model: it offers construction only and
+// no update/mutation method; a changed path replaces the old one wholesale.
 package processpath
 
 import "errors"
@@ -26,15 +29,13 @@ type ProcessType string
 // confusingly wherever it is first used.
 var ErrEmptySteps = errors.New("processpath: steps must not be empty")
 
-// ProcessPath is a LOCAL, READ-ONLY copy of a concept owned by a different
-// bounded context (process-path-management): an ordered sequence of
-// ProcessTypes a given workload must flow through (e.g. Pick -> Rebin ->
-// Pack). warehouse-planning is a Conformist consumer here, never the
-// owner -- THIS TYPE DELIBERATELY EXPOSES NO MUTATION/UPDATE METHOD beyond
-// construction. Once process-path-management's events are consumed (a
-// later phase), a changed path arrives as a brand new ProcessPath that
-// replaces the old read model wholesale via RegisterProcessPath/Save,
-// never as an in-place edit of this struct.
+// ProcessPath is an ordered sequence of ProcessTypes a given workload must
+// flow through (e.g. Pick -> Rebin -> Pack). It is locally owned and
+// operator-declared in warehouse-planning (ADR 0001 Addendum); it is not
+// derived from any process-path-management event. THIS TYPE DELIBERATELY
+// EXPOSES NO MUTATION/UPDATE METHOD beyond construction: a changed path is
+// a brand new ProcessPath that replaces the old one wholesale via
+// RegisterProcessPath/Save, never an in-place edit of this struct.
 type ProcessPath struct {
 	id    string
 	name  string

@@ -45,12 +45,3 @@ are flagged in the last column.
 `ProcessCapacityRegistered` (a native constraint was registered) and
 `ProcessCapacityChanged` (the effective rate changed) exist as domain-model
 vocabulary. Nothing raises or publishes them.
-
-## Stale wording in code comments
-
-The package comment of `internal/domain/processpath` and the doc comment of
-`processcapacity.ProcessType` still describe `ProcessPath` as a *Conformist,
-read-only copy* of `process-path-management`'s concept. That predates the ADR
-0001 Addendum: the path is locally owned and operator-declared, and nothing is
-consumed from `process-path-management`. The ubiquitous language above follows
-the ADR.

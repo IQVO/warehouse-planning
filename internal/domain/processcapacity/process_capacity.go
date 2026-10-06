@@ -6,9 +6,10 @@ import (
 )
 
 // ProcessType names a warehouse process (e.g. "PICK", "PACK", "REBIN").
-// Kept as a thin string type rather than a closed enum -- the set of
-// process types is owned by process-path-management (see
-// domain-model.md), this context treats it as an opaque identifier.
+// Kept as a thin string type rather than a closed enum -- this context
+// treats it as an opaque identifier. Process steps are declared locally by
+// operators (ProcessPath, ADR 0001 Addendum); nothing is consumed from
+// process-path-management.
 type ProcessType string
 
 // ConstraintType names one of the seven limiting factors a ProcessCapacity
