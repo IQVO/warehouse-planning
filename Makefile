@@ -97,14 +97,9 @@ coverage:
 		exit 1; \
 	fi
 
-# Needs a running Postgres and DATABASE_URL, e.g.
-#   docker compose up -d postgres
-#   DATABASE_URL='postgres://warehouse-planning@localhost:5432/warehouse-planning?sslmode=disable' PGPASSWORD='warehouse-planning' make integration
+# Needs only Docker: every integration test boots its own Postgres/Kafka via
+# testcontainers (no DATABASE_URL, no docker compose).
 # Deliberately NOT part of `check` / `check-all`.
-# NOTE: never embed a real password in a postgres://user:pass@host URL in
-# committed files -- some environments' own tooling treats that shape as a
-# credential leak and will silently strip it. Use a separate PGPASSWORD (or
-# your driver's password-injection API) instead. See HARNESS.md.
 integration:
 	$(GO) test -tags=integration ./... -race -count=1
 

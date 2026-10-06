@@ -40,7 +40,7 @@ func startPostgres(t *testing.T) string {
 	return url
 }
 
-// With a real DATABASE_URL the binary migrates a fresh database, then the
+// The binary migrates a fresh testcontainers database, then the
 // section-43 scenario run through MCP tools persists the plan AND its four
 // outbox rows in Postgres (the relay in cmd/api would drain them; this
 // binary starts none).
