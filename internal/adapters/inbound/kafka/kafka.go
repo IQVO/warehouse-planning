@@ -2,10 +2,13 @@
 // LaborCapacityConsumer (workforce-management's ShiftPlanCommitted) and
 // StorageCapacityConsumer (facility-layout's
 // LocationSlotRegistered/LocationSlotDecommissioned). Both decode
-// CloudEvents 1.0 only via internal/adapters/kafka/cloudevents, dispatch
-// on the FULL `type` string, and call the EXISTING
+// CloudEvents 1.0 only via internal/adapters/kafka/cloudevents and dispatch
+// on the FULL `type` string. LaborCapacityConsumer calls the EXISTING
 // usecases.RegisterProcessCapacityConstraint to upsert a ProcessCapacity
-// constraint -- neither consumer duplicates that aggregate logic. See
+// constraint (it does not duplicate that aggregate logic).
+// StorageCapacityConsumer does NOT: since ADR 0002 it only maintains the
+// storage tally (ports.StorageTallyRepository), which feeds the read-side
+// storage capacity and station standards. See
 // docs/adr/0001-warehouse-planning-bounded-context.md's Addendum and
 // .claude/rules/integration-events.md for the confirmed upstream
 // contracts.
