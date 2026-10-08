@@ -22,7 +22,7 @@ we have"; this context answers "how much work can we perform".
 | Property | Value |
 | --- | --- |
 | Subdomain classification | Core Domain ([ADR 0001](/docs/adr/0001-warehouse-planning-bounded-context)) |
-| Tier | `wes` (CloudEvents type prefix `com.warehouse.wes.warehouse-planning.*`; `wms` is reserved for `facility-layout` and `inventory-storage`) |
+| Tier | `wes` (CloudEvents type prefix `com.warehouse.wes.warehouse-planning.*`; `wms` is reserved for `facility-layout`, `inventory-storage` and `product-master`) |
 | Language / style | Go backend, hexagonal architecture (ports and adapters) |
 | Inbound adapters | REST (`cmd/api`, `:8080`) and MCP (`cmd/mcp`, `:8090`, Streamable HTTP) |
 | Integration | Kafka CloudEvents 1.0 (structured mode), transactional outbox for publishing |
@@ -53,8 +53,10 @@ It also keeps an **expected-demand read model** (one row per
 that a capacity plan defaults its demand to when the caller omits it.
 
 It does **not** own labor scheduling (`workforce-management`), storage
-slotting and layout (`facility-layout`), stock levels (`inventory-storage`) or
-path capability and eligibility authoring (`process-path-management`).
+slotting and layout (`facility-layout`), stock levels (`inventory-storage`),
+SKU master data such as handling classification and unit dimensions
+(`product-master`) or path capability and eligibility authoring
+(`process-path-management`).
 
 ## Where to go next
 
