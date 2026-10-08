@@ -25,6 +25,7 @@ flowchart LR
   CON["warehouse-console<br/>frontend shell"]
   PPM["process-path-management<br/>Generic"]
   INV["inventory-storage<br/>Core"]
+  PM["product-master<br/>Supporting"]
   LATER["fulfillment-execution, wes-work-planning Core<br/>network-fulfillment Supporting"]
 
   WFM -- "U: OHS+PL / D: ACL<br/>Kafka ShiftPlanCommitted" --> WP
@@ -35,10 +36,11 @@ flowchart LR
   WP -- "U: OHS / D: hosts the remote<br/>REST via capacity_mfe" --> CON
   PPM ~~~ WP
   INV ~~~ WP
+  PM ~~~ WP
   LATER ~~~ WP
 
   classDef absent fill:#eeeeee,stroke:#999999,color:#555555,stroke-dasharray: 4 4
-  class PPM,INV,LATER absent
+  class PPM,INV,PM,LATER absent
 ```
 
 Source: `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
@@ -67,6 +69,8 @@ upstream and downstream edges readable; it is one context.
 | 7 | `process-path-management` | none | **Separate Ways**: its `ProcessPath` has no physical step sequence; the two contexts share the `path_id` string only as a human cross-reference | none | **Deliberately absent** (ADR 0001 Addendum) | no consumer exists; `POST /process-paths` declares paths locally |
 | 8 | `inventory-storage` | none | **Separate Ways**: stock is not capacity | none | **Deliberately absent** (ADR 0001) | no consumer, no client |
 | 9 | `fulfillment-execution`, `wes-work-planning` (observed capacity), `network-fulfillment` (demand) | `warehouse-planning` | Published Language intended | Kafka (intended) | **Planned, not implemented** (ADR 0001 context map) | none |
+| 10 | `product-master` | none | No relationship: SKU master data (handling classification, unit dimensions and weight) is not a capacity input; `product-master` publishes `warehouse.product-master.events` and calls no sibling | none | **Absent** | no consumer of `warehouse.product-master.events` and no client in this repo; `product-master` (its ADR 0001) has no outbound client and consumes nothing from this context |
+| — | `labor-performance`, `network-inventory-planning` | none | No relationship | none | **Absent** | no consumer, no client, in either direction |
 
 There is no Shared Kernel, no Partnership and no Conformist relationship: no
 sibling Go package is imported (hard rule 5 in `CLAUDE.md`) and every upstream
