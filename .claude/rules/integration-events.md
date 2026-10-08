@@ -49,7 +49,7 @@ there is nothing to "choose" here:
   No custom extension attributes without an ADR.
 - `type` = `com.warehouse.wes.warehouse-planning.<entity>.<EventName>`
   (this context is `wes`-tier; `wms` is reserved for
-  `facility-layout`/`inventory-storage` only). `<entity>` is the AGGREGATE
+  `facility-layout`/`inventory-storage`/`product-master` only). `<entity>` is the AGGREGATE
   that raised the event, lowercase, no separators -- `capacityplan`, never
   `capacity-plan`. The SAME `type` names the
   occurrence on both the integration and the analytics topic; `dataschema`
