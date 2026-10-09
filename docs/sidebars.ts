@@ -64,7 +64,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Operations',
-      items: ['operations/configuration'],
+      items: ['operations/configuration', 'operations/runbook'],
     },
     {
       type: 'category',
