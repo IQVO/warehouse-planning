@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       link: {type: 'doc', id: 'overview/context'},
       items: [
+        'overview/quickstart',
         'overview/aggregates',
         'overview/capacity-composition',
         'overview/runtime',
@@ -30,6 +31,7 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'ddd/ubiquitous-language'},
       items: [
         'ddd/use-cases',
+        'ddd/subdomain-classification',
         {
           type: 'category',
           label: 'DDD artifacts (ddd-crew)',
@@ -53,7 +55,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'API Reference',
       link: {type: 'doc', id: 'api-reference/overview'},
-      items: [...apiSidebar, 'api-reference/events'],
+      items: [...apiSidebar, 'api-reference/events', 'mcp/tools'],
     },
     {
       type: 'category',
@@ -63,8 +65,28 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Operations',
+      items: [
+        'operations/configuration',
+        'operations/runbook',
+        'operations/observability',
+        'operations/troubleshooting',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Development',
+      items: ['development/testing'],
+    },
+    {
+      type: 'category',
       label: 'Architecture Decision Records',
       items: [
+        {
+          type: 'link',
+          label: 'ADR index',
+          href: '/docs/adr',
+        },
         {
           type: 'link',
           label: '0001 Bounded context',
