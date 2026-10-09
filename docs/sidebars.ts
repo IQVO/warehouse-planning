@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'ddd/ubiquitous-language'},
       items: [
         'ddd/use-cases',
+        'ddd/subdomain-classification',
         {
           type: 'category',
           label: 'DDD artifacts (ddd-crew)',
