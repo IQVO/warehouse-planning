@@ -84,6 +84,11 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'link',
+          label: 'ADR index',
+          href: '/docs/adr',
+        },
+        {
+          type: 'link',
           label: '0001 Bounded context',
           href: '/docs/adr/0001-warehouse-planning-bounded-context',
         },
