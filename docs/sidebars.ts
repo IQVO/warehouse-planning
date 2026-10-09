@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       link: {type: 'doc', id: 'overview/context'},
       items: [
+        'overview/quickstart',
         'overview/aggregates',
         'overview/capacity-composition',
         'overview/runtime',
