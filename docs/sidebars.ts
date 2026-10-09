@@ -54,7 +54,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'API Reference',
       link: {type: 'doc', id: 'api-reference/overview'},
-      items: [...apiSidebar, 'api-reference/events'],
+      items: [...apiSidebar, 'api-reference/events', 'mcp/tools'],
     },
     {
       type: 'category',
