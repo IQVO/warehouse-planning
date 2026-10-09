@@ -74,6 +74,11 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Development',
+      items: ['development/testing'],
+    },
+    {
+      type: 'category',
       label: 'Architecture Decision Records',
       items: [
         {
