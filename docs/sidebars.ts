@@ -63,6 +63,11 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Operations',
+      items: ['operations/configuration'],
+    },
+    {
+      type: 'category',
       label: 'Architecture Decision Records',
       items: [
         {
