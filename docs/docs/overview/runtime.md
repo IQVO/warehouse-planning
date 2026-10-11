@@ -24,6 +24,53 @@ Hexagonal architecture, enforced by architecture tests in
 The [class diagrams](/docs/ddd/class-diagram) show the domain types and the
 ports with their adapters.
 
+## Binaries, ports and data stores
+
+| Binary | Role | Port (default) | Probes | Data store |
+| --- | --- | --- | --- | --- |
+| `cmd/api` | REST API, the three domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`; in-memory when unset) |
+| `cmd/mcp` | MCP server (Streamable HTTP, 11 tools); writes outbox rows but never relays them | `MCP_ADDR` `:8090` (`/` and `/mcp`) | `/healthz` | the same OLTP Postgres |
+| `cmd/planning-projector` | the only writer of the analytical database, fed by `warehouse.warehouse-planning.analytics` | `ADMIN_ADDR` `:8091` (admin only) | `/healthz`, `/readyz` | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-write) |
+| `cmd/planning-reports` | read-only `GET /reports/...` over the analytical database | `HTTP_ADDR` `:8092` | `/healthz` | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-only transactions) |
+
+`cmd/api` and `cmd/mcp` both run the OLTP migrations at boot
+(`MIGRATIONS_DATABASE_URL`, falling back to `DATABASE_URL`); the projector runs
+the analytical ones. Every variable is listed on
+[Configuration](/docs/operations/configuration), and the probes are explained
+in the [runbook](/docs/operations/runbook).
+
+```mermaid
+flowchart LR
+  subgraph Callers
+    KONG[Kong :8000 /api/warehouse-planning]
+    AGENT[warehouse-ops-agent]
+  end
+  subgraph warehouse-planning
+    API[cmd/api :8080]
+    MCP[cmd/mcp :8090]
+    PROJ[cmd/planning-projector :8091]
+    REP[cmd/planning-reports :8092]
+  end
+  OLTP[(OLTP Postgres)]
+  ANA[(analytical Postgres)]
+  KAFKA{{Kafka broker}}
+  KONG --> API
+  KONG -- "/reports/..." --> REP
+  AGENT --> MCP
+  API --> OLTP
+  MCP --> OLTP
+  KAFKA -- "workforce, facility, order-management events" --> API
+  API -- "outbox relay: events and analytics topics" --> KAFKA
+  KAFKA -- "warehouse.warehouse-planning.analytics" --> PROJ
+  PROJ --> ANA
+  REP --> ANA
+```
+
+Source: `cmd/api/main.go`, `cmd/mcp/main.go`, `cmd/mcp/router.go`,
+`cmd/planning-projector/main.go`, `cmd/planning-reports/main.go`.
+Omits: the DLQ topics, the OTel Collector and the `web/` remote's own nginx
+workload.
+
 ## Publishing: transactional outbox
 
 There is no dual write. `CreateCapacityPlan` and `PublishCapacityPlan` each run

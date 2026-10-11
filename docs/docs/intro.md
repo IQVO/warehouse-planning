@@ -21,8 +21,8 @@ we have"; this context answers "how much work can we perform".
 
 | Property | Value |
 | --- | --- |
-| Subdomain classification | Core Domain ([ADR 0001](/docs/adr/0001-warehouse-planning-bounded-context)) |
-| Tier | `wes` (CloudEvents type prefix `com.warehouse.wes.warehouse-planning.*`; `wms` is reserved for `facility-layout`, `inventory-storage` and `product-master`) |
+| Subdomain classification | Core Domain ([ADR 0001](/docs/adr/0001-warehouse-planning-bounded-context); reasoning and neighbours on [Subdomain classification](/docs/ddd/subdomain-classification)) |
+| Tier | `wes` (CloudEvents type prefix `com.warehouse.wes.warehouse-planning.*`; `wms` is the tier of `facility-layout`, `inventory-storage`, `product-master`, `inbound-receiving` and `slotting-optimization`) |
 | Language / style | Go backend, hexagonal architecture (ports and adapters) |
 | Inbound adapters | REST (`cmd/api`, `:8080`) and MCP (`cmd/mcp`, `:8090`, Streamable HTTP) |
 | Integration | Kafka CloudEvents 1.0 (structured mode), transactional outbox for publishing |
@@ -60,10 +60,25 @@ SKU master data such as handling classification and unit dimensions
 
 ## Where to go next
 
+Understand the model:
+
 - [Bounded context](/docs/overview/context): purpose, context map, the no-live-lookup rule.
 - [Aggregates](/docs/overview/aggregates): `ProcessCapacity` and `CapacityPlan` and their invariants.
 - [Capacity composition](/docs/overview/capacity-composition): how a step's capacity is resolved (window coverage, station capacity).
+- [Runtime](/docs/overview/runtime): the four binaries and how they are wired.
+- [Use cases](/docs/ddd/use-cases) and [Subdomain classification](/docs/ddd/subdomain-classification).
 - [DDD artifacts](/docs/ddd/ddd-artifacts): the ddd-crew pack (core domain chart, canvases, context map, EventStorming, class, ER and sequence diagrams).
-- [Upstream contracts](/docs/ecosystem/upstream-contracts): the events consumed from sibling contexts.
+- [Integration contracts](/docs/ecosystem/upstream-contracts): every upstream, downstream and caller, with failure behaviour.
+
+Run and operate it:
+
+- [Quickstart](/docs/overview/quickstart): build, test and run locally, first calls.
+- [Configuration](/docs/operations/configuration): every environment variable per binary.
+- [Runbook](/docs/operations/runbook), [Observability](/docs/operations/observability) and [Troubleshooting](/docs/operations/troubleshooting).
+- [Testing](/docs/development/testing): the test pyramid, `make` targets and CI jobs.
+
+Reference:
+
 - [API reference](/docs/api-reference): REST (generated from `apis/openapi.yaml`) and the event catalogue.
-- [Architecture decision records](/docs/adr/0001-warehouse-planning-bounded-context).
+- [MCP tools](/docs/mcp/tools): every tool of `cmd/mcp`.
+- [Architecture decision records](/docs/adr): the index of all twelve ADRs.
