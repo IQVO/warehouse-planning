@@ -26,12 +26,14 @@ flowchart LR
   PPM["process-path-management<br/>Generic"]
   INV["inventory-storage<br/>Core"]
   PM["product-master<br/>Supporting"]
+  NIP["network-inventory-planning<br/>Core<br/>as plan consumer"]
   LATER["fulfillment-execution, wes-work-planning Core<br/>network-fulfillment Supporting"]
 
   WFM -- "U: OHS+PL / D: ACL<br/>Kafka ShiftPlanCommitted" --> WP
   FL -- "U: OHS+PL / D: ACL<br/>Kafka LocationSlotRegistered, LocationSlotDecommissioned" --> WP
   OMU -. "U: OHS+PL / D: ACL, opt-in<br/>Kafka OrderAllocated, OrderPartiallyAllocated" .-> WP
   WP -. "U: OHS+PL / D: ACL, opt-in<br/>Kafka CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected" .-> OMD
+  WP -- "U: OHS+PL / D: ACL<br/>Kafka CapacityPlanPublished (with site_id, ADR 0012)" --> NIP
   WP -- "U: OHS / D: Customer, ACL<br/>MCP get_process_path_capacity, 3 more read tools wired" --> OPS
   WP -- "U: OHS / D: hosts the remote<br/>REST via capacity_mfe" --> CON
   PPM ~~~ WP
@@ -49,6 +51,7 @@ Source: `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
 `cmd/api/demand.go`, `internal/adapters/inbound/mcp/tools.go`, `web/src/api.ts`,
 ADR 0001 and its Addendum, ADR 0004; on the sibling side
 `order-management` `internal/adapters/inbound/kafka/planned_capacity_consumer.go`,
+`network-inventory-planning` `internal/adapters/inbound/kafka/consumers.go`,
 `warehouse-ops-agent` `internal/adapters/outbound/mcpclient/warehouse_planning.go`
 and `warehouse-console` `src/App.tsx` (all on `develop`).
 Omits: this context's own analytics topic and projector (internal, not a
@@ -70,7 +73,8 @@ upstream and downstream edges readable; it is one context.
 | 8 | `inventory-storage` | none | **Separate Ways**: stock is not capacity | none | **Deliberately absent** (ADR 0001) | no consumer, no client |
 | 9 | `fulfillment-execution`, `wes-work-planning` (observed capacity), `network-fulfillment` (demand) | `warehouse-planning` | Published Language intended | Kafka (intended) | **Planned, not implemented** (ADR 0001 context map) | none |
 | 10 | `product-master` | none | No relationship: SKU master data (handling classification, unit dimensions and weight) is not a capacity input; `product-master` publishes `warehouse.product-master.events` and calls no sibling | none | **Absent** | no consumer of `warehouse.product-master.events` and no client in this repo; `product-master` (its ADR 0001) has no outbound client and consumes nothing from this context |
-| — | `labor-performance`, `network-inventory-planning` | none | No relationship | none | **Absent** | no consumer, no client, in either direction |
+| 11 | `warehouse-planning` | `network-inventory-planning` | OHS + PL / ACL on NIP's side (it folds each published plan into its own `PublishedCapacityPlan` read model and refuses to plan from a stale or missing one) | Kafka `warehouse.warehouse-planning.events`, `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished`; NIP needs the additive canonical `site_id` this context adds in ADR 0012 | **Live** on NIP's side (its `CAPACITY_PLAN_CONSUMER_GROUP`); exercised by the e2e inter-warehouse-transfer scenario, where plans created through this service's REST API and relayed by its outbox are what let NIP approve a transfer | this context: `capacityplan.CapacityPlanPublished` and its `site_id` (ADR 0012); NIP: `internal/adapters/inbound/kafka/consumers.go` (capacity-plan consumer) |
+| — | `labor-performance` | none | No relationship | none | **Absent** | no consumer, no client, in either direction |
 
 There is no Shared Kernel, no Partnership and no Conformist relationship: no
 sibling Go package is imported (hard rule 5 in `CLAUDE.md`) and every upstream
