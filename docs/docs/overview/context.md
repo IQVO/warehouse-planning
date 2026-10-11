@@ -47,6 +47,7 @@ DDD pattern of every edge and its code evidence, is on the
 | `warehouse-planning` to `warehouse-ops-agent` | read-only MCP tools (`get_process_path_capacity`, `get_capacity_plan`, `get_storage_capacity`, `list_station_standards`) | implemented (the agent's MCP client) |
 | `warehouse-planning` to `warehouse-console` | REST through the `capacity_mfe` remote in `web/` | implemented |
 | `fulfillment-execution`, `wes-work-planning`, `network-fulfillment` | observed capacity feedback and demand ingestion | planned in ADR 0001, **not** implemented |
+| `product-master` | none: SKU master data (handling classification, unit dimensions) is not a capacity input | no relationship in either direction |
 
 ## No live cross-context lookup
 

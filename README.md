@@ -12,13 +12,27 @@ See `CLAUDE.md` for the full repo guide, `.claude/rules/domain-model.md`
 for the ubiquitous language/aggregates, and
 `docs/adr/0001-warehouse-planning-bounded-context.md` for why this context
 exists and its context map. The Docusaurus site under `docs/` (published at
-https://iqvo.github.io/warehouse-planning/) carries the product docs, the 11
+https://iqvo.github.io/warehouse-planning/) carries the product docs, the 12
 ADRs and a ddd-crew DDD artifact pack (`docs/docs/ddd/`: core domain chart,
 bounded context canvas, context map, aggregate design canvas, domain message
 flows, EventStorming, class, ER and sequence diagrams).
 
 Scaffolded from `warehouse-harness-template: v3`. See `HARNESS.md` for the
 sensor manifest.
+
+## Documentation
+
+Published at https://iqvo.github.io/warehouse-planning/ (sources under
+`docs/docs/` and `docs/adr/`).
+
+| Area | Pages |
+| --- | --- |
+| Overview | [Introduction](docs/docs/intro.md), [Bounded context](docs/docs/overview/context.md), [Runtime and binaries](docs/docs/overview/runtime.md), [Quickstart](docs/docs/overview/quickstart.md), [Aggregates](docs/docs/overview/aggregates.md), [Capacity composition](docs/docs/overview/capacity-composition.md) |
+| Operations | [Configuration](docs/docs/operations/configuration.md) (every env var per binary), [Runbook](docs/docs/operations/runbook.md), [Observability](docs/docs/operations/observability.md), [Troubleshooting](docs/docs/operations/troubleshooting.md) |
+| Development | [Testing](docs/docs/development/testing.md) (test pyramid, `make` targets, CI jobs) |
+| Domain-Driven Design | [Use cases](docs/docs/ddd/use-cases.md), [Subdomain classification](docs/docs/ddd/subdomain-classification.md), [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [DDD artifacts index](docs/docs/ddd/ddd-artifacts.md) |
+| Ecosystem | [Integration contracts](docs/docs/ecosystem/upstream-contracts.md) (every upstream, downstream and caller) |
+| Reference | [API overview](docs/docs/api-reference/overview.md), [Event catalogue](docs/docs/api-reference/events.md), [MCP tools](docs/docs/mcp/tools.md), [ADR index](docs/adr/index.md) |
 
 ## Study project
 
