@@ -66,7 +66,7 @@ Feature: Station standards and the facility tally lifecycle
     Then the response status is 200
     And the storage capacity lists 2 SimShelf storage positions in zone "SIM1-STOR-AMB"
 
-  Scenario: A site only sees the zones whose id starts with its own code and a dash
+  Scenario: A site only sees the zones whose id starts with its own code and a dash, and its read model needs a location
     Given facility-layout registered 2 PACK work-center slots in zone "SIM1-OPS-WC"
     And facility-layout registered 3 PACK work-center slots in zone "SIM10-OPS-WC"
     And I register a LABOR constraint of 2500 PACKAGE per HOUR for PACK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
@@ -77,8 +77,6 @@ Feature: Station standards and the facility tally lifecycle
     And the storage capacity lists no zone "SIM10-OPS-WC"
     When I look up the capacity of process path "pack-only" at "SIM1" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with units_per_order 2.5 and packages_per_order 1
     Then the step breakdown is "PACK:200:STATION"
-
-  Scenario: The storage capacity read model requires a location
     When I look up the storage capacity of ""
     Then the response status is 400
     And the problem detail type is "missing-location"
