@@ -76,6 +76,10 @@ type world struct {
 	// planClock is the creation time of the last capacity plan; see
 	// nextPlanTime.
 	planClock time.Time
+
+	// w2 holds the wave-2 state (labor consumer, slot bookkeeping); see
+	// features_wave2_test.go.
+	w2 wave2State
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -104,6 +108,7 @@ func (w *world) start() {
 	}
 	w.orderSeq = 0
 	w.planClock = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	w.w2 = newWave2State(repo)
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
@@ -410,6 +415,7 @@ func (w *world) facilityRegistered(payload func(code string) map[string]any, zon
 	for i := 0; i < n; i++ {
 		w.slotSeq++
 		code := fmt.Sprintf("%s-%03d", zone, w.slotSeq)
+		w.w2.noteSlot(zone, code)
 		data := payload(code)
 		data["locationCode"], data["zoneId"] = code, zone
 
@@ -637,4 +643,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 
 	registerDemandSteps(sc, w)
 	registerListSteps(sc, w)
+	registerWave2Steps(sc, w)
 }
