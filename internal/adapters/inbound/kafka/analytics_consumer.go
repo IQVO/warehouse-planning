@@ -251,6 +251,10 @@ func newDLQWriter(brokers []string, dlqTopic string) DeadLetterWriter {
 		Topic:                  dlqTopic,
 		AllowAutoTopicCreation: true,
 		BatchTimeout:           10 * time.Millisecond,
+		// RequiredAcks: kafka-go defaults to RequireNone (acks=0), so the
+		// broker never confirms the write and a broker blip silently drops the
+		// poison message while the consumer commits past it.
+		RequiredAcks: kafkago.RequireAll,
 	}
 }
 
