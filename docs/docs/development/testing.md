@@ -16,16 +16,16 @@ sub-tests.
 | Layer | Where | Count | How it runs | Needs |
 | --- | --- | --- | --- | --- |
 | Domain unit tests | `internal/domain/{processcapacity,capacityplan,processpath,demand}` | 91 tests in 12 files | `make test` | nothing |
-| Application (use case) tests | `internal/application/usecases` | 68 tests in 10 files | `make test`, with the in-memory adapters | nothing |
+| Application (use case) tests | `internal/application/usecases`, `internal/application/outbox` | 69 tests in 11 files | `make test`, with the in-memory adapters | nothing |
 | Analytics report tests | `internal/analytics/report` | 17 tests in 2 files | `make test` | nothing |
-| Adapter tests (httptest, fake Kafka reader/writer, in-memory stores) | `internal/adapters/...` (http 57, kafka inbound 65, mcp 19, outbound kafka 22, memory 16, outbox 8, cloudevents 6, analyticsstore 3) | 196 tests | `make test` | nothing |
-| Composition-root tests | `cmd/*/main_test.go`, `cmd/api/demand_test.go` | 26 tests | `make test` | nothing |
+| Adapter tests (httptest, fake Kafka reader/writer, in-memory stores) | `internal/adapters/...` (http 57, kafka inbound 65, mcp 19, outbound kafka 22, memory 16, outbox 12, cloudevents 6, analyticsstore 3) | 200 tests | `make test` | nothing |
+| Composition-root tests | `cmd/*/main_test.go`, `cmd/api/{demand,logger_level,outbox_relay_config}_test.go`, `cmd/planning-projector/telemetry_test.go` | 31 tests | `make test` | nothing |
 | BDD acceptance (godog) | `features/*.feature`, driven by `features_test.go`, `features_demand_test.go`, `features_list_test.go` at the repo root | 6 features, 34 scenarios | `make bdd` (`go test ./... -run TestFeatures -v`), also part of `make test` | nothing |
-| Integration (`-tags=integration`) | 18 files: the Postgres repositories and unit of work, the outbox relay, the three Kafka consumers, the analytics store, `cmd/mcp`, and `analytics_e2e_integration_test.go` | 56 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
-| Architecture fitness | `internal/architecture` | 12 tests | `make arch-test` | nothing |
+| Integration (`-tags=integration`) | 24 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the three Kafka consumers, the analytics store, `cmd/mcp`, and `analytics_e2e_integration_test.go` | 75 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
+| Architecture fitness | `internal/architecture` | 16 tests | `make arch-test` | nothing |
 | Mutation | `.gremlins.yaml` | see below | `make mutation-fast`, `make mutation-full` | `gremlins` v0.6.0 |
 | Frontend remote | `web/src/**/*.test.ts(x)` (8 files, vitest + Testing Library) | | `cd web && npm test` | Node, a built `../../warehouse-ui-kit` |
-| Chart wiring | `charts/warehouse-planning/tests/test_service_selectors.py` | | `python3 charts/warehouse-planning/tests/test_service_selectors.py` | Python with `pyyaml`, Helm |
+| Chart wiring | `charts/warehouse-planning/tests/test_service_selectors.py`, `charts/warehouse-planning/tests/render_test.sh` | | `python3 charts/warehouse-planning/tests/test_service_selectors.py`, `bash charts/warehouse-planning/tests/render_test.sh` | Python with `pyyaml`, Helm |
 | Agent harness | `scripts/harness/test_hook.py`, `test_repo_lint.py`; `guide_lint.py`, `repo_lint.py` | | `make harness-test`, `make guide-lint` | Python |
 
 Not present in this repo: contract tests against the live API (no schemathesis
@@ -57,6 +57,22 @@ widest one, `analytics_e2e_integration_test.go`, covers the whole read side:
 plan created and published, outbox, relay, Kafka, projector, analytical
 database, report.
 
+Gap-fix tests (2026-10-12 wave), all in `internal/adapters/outbound/outbox`:
+
+- `relay_cap_integration_test.go` ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)), real Postgres: `TestOutboxRelay_MaxAttempts_PoisonRowExcludedThenGoodRowPublishes`, `TestOutboxRelay_MaxAttempts_ReArmedRowIsClaimedAgain`, `TestOutboxRelay_NoCap_PoisonRowBlocksLaterRows`. Their in-memory twins live in `relay_cap_test.go` (`TestRelay_MaxAttempts_*`, `TestRelay_NoCap_*`, `TestRelay_SendFailureCarriesTheRow`).
+- `outbox_trace_integration_test.go` ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)), real Postgres and its own Kafka container: `TestOutboxTrace_TraceparentCrossesTheOutboxToKafka`, `TestOutboxTrace_RowWithoutTraceHeadersRelaysUnchanged`.
+
+### Chart render tests
+
+`charts/warehouse-planning/tests/render_test.sh` renders the chart with `helm
+template` and asserts: the `api` Deployment mounts the ConfigMap with
+`envFrom` and the other Deployments do not (D14); `OUTBOX_MAX_ATTEMPTS`
+defaults to `20` and `0` renders as is (D12); every backend Deployment sets
+`ENVIRONMENT`, `SERVICE_VERSION` and, while `otel.enabled`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, and the `api` sets `SHUTDOWN_DRAIN_DELAY` when
+configured (D21). The `chart-tests` CI job runs it with the Service-selector
+test on every push and PR.
+
 ### Architecture fitness tests
 
 | Test | Enforces |
@@ -69,6 +85,8 @@ database, report.
 | `TestNoEventEnvelopeToggleOrFlatEnvelope`, `TestCloudEventsOnly` | CloudEvents 1.0 is the only envelope; no envelope toggle; kafka-go users must build envelopes with the CloudEvents SDK |
 | `TestReplayConsumersSetCommitInterval` | a full-replay cache consumer (unique group) must set its commit interval |
 | `TestEventCatalogueMatchesContract`, `TestEventCatalogueDetector` | every type this service declares in `apis/asyncapi.yaml` appears in the CloudEvents catalogue ADR (`docs/adr/0006-...`); the detector is itself tested |
+| `TestOutboxRelaysPassAttemptCap`, `TestOutboxRelayCapSensorFailsOnBadFixtures` | every non-test file under `cmd/` that builds an outbox relay passes `WithMaxAttempts` ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)); the sensor is proven to fail |
+| `TestMCPOptionalToolInputsCarryOmitempty`, `TestMCPOptionalToolInputsSensorFailsOnBadFixtures` | an MCP tool input whose `jsonschema` description says optional/omitted carries `omitempty` (else the SDK marks it required); the sensor is proven to fail |
 
 `internal/adapters/inbound/mcp/governance_test.go` also pins the MCP tool
 budget (`maxTools` = 11).
@@ -119,6 +137,7 @@ Triggers: push and pull request on `main` and `develop`, a weekly schedule
 | `vuln` | `govulncheck ./...` | every push/PR |
 | `docs-api-drift` | regenerates `docs/docs/api-reference/rest` from the OpenAPI spec and fails on a diff | every push/PR |
 | `helm-lint` | `ct lint` on the chart and the Service-selector test | pull requests |
+| `chart-tests` | `render_test.sh` and the Service-selector test | every push/PR |
 | `arch-test` | `go test ./internal/architecture/... -v` | every push/PR |
 | `web` | `web/` lint (oxlint), `tsc -b`, vitest, build, against a sibling `warehouse-ui-kit` checkout | every push/PR |
 | `trivy-scan` | builds the image and scans it (blocks on fixable CRITICAL/HIGH) | pull requests |

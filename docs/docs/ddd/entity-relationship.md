@@ -108,10 +108,10 @@ erDiagram
     bytea key
     text dataschema
     bytea value "structured CloudEvent"
-    jsonb headers
+    jsonb headers "content-type plus traceparent, ADR 0014"
     timestamptz created_at
     timestamptz published_at "null until relayed"
-    integer attempts
+    integer attempts "relay excludes the row at OUTBOX_MAX_ATTEMPTS, ADR 0013"
     text last_error
   }
   schema_migrations {

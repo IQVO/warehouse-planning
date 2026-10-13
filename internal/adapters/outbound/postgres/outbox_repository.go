@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 )
@@ -48,17 +51,64 @@ func unmarshalHeaders(b []byte) ([]outbox.Header, error) {
 	return out, nil
 }
 
+// traceHeaders returns the W3C trace context of ctx as outbox headers, in a
+// stable key order, using the global propagator telemetry.Setup installs
+// (trace-context + baggage). Empty when ctx carries no span.
+func traceHeaders(ctx context.Context) []outbox.Header {
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	keys := carrier.Keys()
+	sort.Strings(keys)
+	out := make([]outbox.Header, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, outbox.Header{Key: k, Value: carrier.Get(k)})
+	}
+	return out
+}
+
+// withTraceHeaders appends trace to hs, skipping a key hs already has (an
+// encoder-set header always wins). hs itself is never modified.
+func withTraceHeaders(hs, trace []outbox.Header) []outbox.Header {
+	if len(trace) == 0 {
+		return hs
+	}
+	out := append(make([]outbox.Header, 0, len(hs)+len(trace)), hs...)
+	for _, t := range trace {
+		if !hasHeader(hs, t.Key) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func hasHeader(hs []outbox.Header, key string) bool {
+	for _, h := range hs {
+		if h.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 // Insert stores msgs as unpublished rows. Called with a UnitOfWork ctx it
 // runs on that transaction (no commit of its own), so the rows land
 // atomically with the aggregate; outside a UnitOfWork the batch is its own
 // transaction.
+//
+// The W3C trace context of ctx (the request span that ran the use case) is
+// injected into each row's headers with the global propagator (gap fix D27,
+// ADR 0014): `traceparent` and, when present, `tracestate`/`baggage` are
+// appended after the CloudEvents content-type header. The relay copies the
+// stored headers onto the Kafka message, so a consumer can continue the
+// trace. Without an active span nothing is added.
 func (r *OutboxRepo) Insert(ctx context.Context, msgs ...outbox.Message) error {
 	if len(msgs) == 0 {
 		return nil
 	}
+	trace := traceHeaders(ctx)
 	return inTx(ctx, r.pool, func(q querier) error {
 		for _, m := range msgs {
-			headers, err := marshalHeaders(m.Headers)
+			headers, err := marshalHeaders(withTraceHeaders(m.Headers, trace))
 			if err != nil {
 				return fmt.Errorf("marshal outbox headers for %s: %w", m.EventType, err)
 			}
@@ -83,20 +133,27 @@ type pendingRow struct {
 // claim the same row), sends them ONE AT A TIME in id order via send and
 // marks each published as it goes. It returns how many rows were
 // published. On the first send failure it stops (a later event for the
-// same aggregate must never overtake a failed earlier one), records the
-// error on that row, commits what was already sent and returns the error.
+// same aggregate must never overtake a failed earlier one that is still
+// being retried), records the error on that row, commits what was already
+// sent and returns an *outbox.SendFailure carrying the row's new attempts.
+//
+// With maxAttempts > 0 a row whose attempts already reached the cap is not
+// claimed (gap fix D12, ADR 0013): it stays in outbox_events with attempts
+// and last_error for inspection, and later rows -- including rows with the
+// same key -- overtake it. 0 claims every unpublished row (unlimited
+// retries).
 //
 // Delivery is at-least-once: a crash between a successful send and the
 // UPDATE republishes that row on the next pass -- with the SAME persisted
 // event id, which is what lets consumers dedupe.
-func (r *OutboxRepo) Drain(ctx context.Context, limit int, send func(context.Context, outbox.Message) error) (int, error) {
+func (r *OutboxRepo) Drain(ctx context.Context, limit, maxAttempts int, send func(context.Context, outbox.Message) error) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin outbox pass: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	batch, err := claim(ctx, tx, limit)
+	batch, err := claim(ctx, tx, limit, maxAttempts)
 	if err != nil {
 		return 0, err
 	}
@@ -104,17 +161,7 @@ func (r *OutboxRepo) Drain(ctx context.Context, limit int, send func(context.Con
 	published := 0
 	for _, row := range batch {
 		if err := send(ctx, row.msg); err != nil {
-			// Record the failure and keep what was already sent. The
-			// UPDATE/COMMIT use a ctx that survives cancellation so a
-			// shutdown mid-pass still persists the rows already sent.
-			dctx := context.WithoutCancel(ctx)
-			if _, uerr := tx.Exec(dctx, `UPDATE outbox_events SET attempts = attempts + 1, last_error = $2 WHERE id = $1`, row.id, err.Error()); uerr != nil {
-				err = errors.Join(err, fmt.Errorf("record outbox failure: %w", uerr))
-			}
-			if cerr := tx.Commit(dctx); cerr != nil {
-				err = errors.Join(err, fmt.Errorf("commit outbox pass: %w", cerr))
-			}
-			return published, fmt.Errorf("outbox row %d (%s): %w", row.id, row.msg.EventType, err)
+			return published, recordFailure(ctx, tx, row, err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE outbox_events SET published_at = now(), attempts = attempts + 1, last_error = NULL WHERE id = $1`, row.id); err != nil {
 			return published, fmt.Errorf("mark outbox row %d published: %w", row.id, err)
@@ -127,15 +174,39 @@ func (r *OutboxRepo) Drain(ctx context.Context, limit int, send func(context.Con
 	return published, nil
 }
 
-func claim(ctx context.Context, tx pgx.Tx, limit int) ([]pendingRow, error) {
+// recordFailure stores the send error on the row, commits the pass (keeping
+// the rows already sent) and returns the failure with the row's new attempt
+// count. The UPDATE/COMMIT use a ctx that survives cancellation so a
+// shutdown mid-pass still persists the rows already sent.
+func recordFailure(ctx context.Context, tx pgx.Tx, row pendingRow, sendErr error) error {
+	dctx := context.WithoutCancel(ctx)
+	failure := &outbox.SendFailure{RowID: row.id, Message: row.msg, Err: sendErr}
+	if uerr := tx.QueryRow(dctx, `UPDATE outbox_events SET attempts = attempts + 1, last_error = $2 WHERE id = $1 RETURNING attempts`,
+		row.id, sendErr.Error()).Scan(&failure.Attempts); uerr != nil {
+		failure.Err = errors.Join(failure.Err, fmt.Errorf("record outbox failure: %w", uerr))
+	}
+	if cerr := tx.Commit(dctx); cerr != nil {
+		failure.Attempts = 0
+		failure.Err = errors.Join(failure.Err, fmt.Errorf("commit outbox pass: %w", cerr))
+	}
+	return failure
+}
+
+func claim(ctx context.Context, tx pgx.Tx, limit, maxAttempts int) ([]pendingRow, error) {
+	var capFilter string
+	args := []any{limit}
+	if maxAttempts > 0 {
+		capFilter = "AND attempts < $2"
+		args = append(args, maxAttempts)
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT id, event_id, topic, event_type, subject, key, dataschema, value, headers
 		FROM outbox_events
-		WHERE published_at IS NULL
+		WHERE published_at IS NULL `+capFilter+`
 		ORDER BY id
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
-	`, limit)
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox rows: %w", err)
 	}

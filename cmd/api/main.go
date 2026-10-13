@@ -242,7 +242,8 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 
 	// The first outbound dial of an injected pod is reset ~10s after start
 	// (Istio native sidecars), so migrations and the first ping retry with
-	// backoff (~31s budget); on exhaustion the LAST error is returned and
+	// backoff (internal/bootretry: 5 attempts, 1+2+4+8 = 15 s of backoff);
+	// on exhaustion the LAST error is returned and
 	// the process still refuses to boot.
 	migrationsURL := migrationsDatabaseURL(databaseURL)
 	if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
@@ -408,6 +409,23 @@ func parseRelayInterval(raw string, logger *slog.Logger) time.Duration {
 	return d
 }
 
+// outboxMaxAttempts reads OUTBOX_MAX_ATTEMPTS (gap fix D12, ADR 0013): how
+// many times an outbox row may fail before the relay excludes it from
+// claims. Unset = the fleet default (20); 0 = unlimited; negative or
+// unparsable values log a warning and use the default, so a typo never
+// silently removes the cap.
+func outboxMaxAttempts(raw string, logger *slog.Logger) int {
+	if raw == "" {
+		return outboxrelay.DefaultMaxAttempts
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		logger.Warn("invalid OUTBOX_MAX_ATTEMPTS; using the default", "value", raw, "default", outboxrelay.DefaultMaxAttempts)
+		return outboxrelay.DefaultMaxAttempts
+	}
+	return n
+}
+
 // startOutboxRelay starts the outbox relay goroutine. EVENT_PUBLISHER
 // picks the sink: kafka (needs KAFKA_BROKERS) or log (default). Kafka is
 // dialled lazily inside the relay loop on the first send, never here.
@@ -436,14 +454,15 @@ func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (runningCons
 	}
 
 	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
-	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval))
+	maxAttempts := outboxMaxAttempts(os.Getenv("OUTBOX_MAX_ATTEMPTS"), logger)
+	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval), outboxrelay.WithMaxAttempts(maxAttempts))
 
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		defer closeSink()
-		logger.Info("outbox relay running", "publisher", mode, "interval", interval, "topic", outboundkafka.Topic)
+		logger.Info("outbox relay running", "publisher", mode, "interval", interval, "max_attempts", maxAttempts, "topic", outboundkafka.Topic)
 		if err := relay.Run(ctx); !errors.Is(err, context.Canceled) {
 			logger.Error("outbox relay stopped", "error", err)
 		}
@@ -592,14 +611,15 @@ func setupTelemetry(logger *slog.Logger) (closer func(), metrics *telemetry.Plan
 }
 
 // newLogger builds the process-wide structured logger. LOG_LEVEL maps
-// debug|info|warn|error (case-insensitive) to the matching slog.Level,
+// debug|info|warn|warning|error (case-insensitive; "warning" is accepted
+// like "warn" fleet-wide, gap fix D22) to the matching slog.Level,
 // defaulting to Info for unset/unrecognized values.
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
 		lvl = slog.LevelDebug
-	case "warn":
+	case "warn", "warning":
 		lvl = slog.LevelWarn
 	case "error":
 		lvl = slog.LevelError

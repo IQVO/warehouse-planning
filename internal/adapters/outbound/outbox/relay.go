@@ -23,14 +23,25 @@ import (
 const (
 	DefaultInterval  = time.Second
 	DefaultBatchSize = 100
+	// DefaultMaxAttempts is the attempt cap a composition root uses when
+	// OUTBOX_MAX_ATTEMPTS is unset (fleet convention, gap fix D12, ADR
+	// 0013). The relay's own zero value stays 0 (unlimited), so the cap is
+	// always an explicit WithMaxAttempts at the composition root.
+	DefaultMaxAttempts = 20
 )
 
+// AttemptCapReachedMsg is the ERROR log message written once for a row whose
+// failure reached the attempt cap.
+const AttemptCapReachedMsg = "outbox relay: row reached the attempt cap and is excluded from future claims; re-arm it with attempts = 0 after fixing the cause"
+
 // Store is the relay's view of the outbox table: Drain claims up to limit
-// unpublished rows in id order, calls send for each one at a time, marks a
-// row published only after send returned nil, and stops at the first send
-// error. postgres.OutboxRepo and memory.OutboxRepo implement it.
+// unpublished rows in id order -- skipping rows that already failed
+// maxAttempts times when maxAttempts > 0 -- calls send for each one at a
+// time, marks a row published only after send returned nil, and stops at
+// the first send error, which it returns as an *outbox.SendFailure.
+// postgres.OutboxRepo and memory.OutboxRepo implement it.
 type Store interface {
-	Drain(ctx context.Context, limit int, send func(context.Context, outbox.Message) error) (int, error)
+	Drain(ctx context.Context, limit, maxAttempts int, send func(context.Context, outbox.Message) error) (int, error)
 }
 
 // Sink is where drained messages go.
@@ -40,11 +51,12 @@ type Sink interface {
 
 // Relay drains a Store into a Sink.
 type Relay struct {
-	store     Store
-	sink      Sink
-	logger    *slog.Logger
-	interval  time.Duration
-	batchSize int
+	store       Store
+	sink        Sink
+	logger      *slog.Logger
+	interval    time.Duration
+	batchSize   int
+	maxAttempts int
 }
 
 // Option customises a Relay.
@@ -70,6 +82,21 @@ func WithBatchSize(n int) Option {
 	}
 }
 
+// WithMaxAttempts caps how many times a row may fail before it is excluded
+// from future claims (gap fix D12, ADR 0013). The excluded row stays in the
+// outbox with its attempts and last error for inspection, the failure that
+// reaches the cap is logged at ERROR with the row's id, topic, type and key,
+// and later rows -- including rows with the same key -- overtake it. 0 means
+// unlimited (the default); negative values are ignored. Every cmd/* that
+// builds a relay must pass it (fitness test TestOutboxRelaysPassAttemptCap).
+func WithMaxAttempts(n int) Option {
+	return func(r *Relay) {
+		if n >= 0 {
+			r.maxAttempts = n
+		}
+	}
+}
+
 // NewRelay constructs a relay draining store into sink.
 func NewRelay(store Store, sink Sink, logger *slog.Logger, opts ...Option) *Relay {
 	if logger == nil {
@@ -83,10 +110,27 @@ func NewRelay(store Store, sink Sink, logger *slog.Logger, opts ...Option) *Rela
 }
 
 // RelayOnce performs a single pass and returns how many rows it published.
+// When the pass failed on a row whose failure count reached the attempt
+// cap, that row is logged once at ERROR (AttemptCapReachedMsg).
 func (r *Relay) RelayOnce(ctx context.Context) (int, error) {
-	return r.store.Drain(ctx, r.batchSize, func(ctx context.Context, m outbox.Message) error {
+	n, err := r.store.Drain(ctx, r.batchSize, r.maxAttempts, func(ctx context.Context, m outbox.Message) error {
 		return r.sink.Send(ctx, m)
 	})
+	r.logAttemptCap(ctx, err)
+	return n, err
+}
+
+// logAttemptCap logs the row whose failure has just reached the cap: from
+// the next pass on it is excluded from claims and stays in the outbox until
+// an operator re-arms it (UPDATE outbox_events SET attempts = 0 WHERE id = ...).
+func (r *Relay) logAttemptCap(ctx context.Context, err error) {
+	var sf *outbox.SendFailure
+	if r.maxAttempts == 0 || !errors.As(err, &sf) || sf.Attempts < r.maxAttempts {
+		return
+	}
+	r.logger.ErrorContext(ctx, AttemptCapReachedMsg,
+		"outbox_id", sf.RowID, "topic", sf.Message.Topic, "event_type", sf.Message.EventType,
+		"key", string(sf.Message.Key), "attempts", sf.Attempts, "max_attempts", r.maxAttempts, "error", sf.Err)
 }
 
 // Run drains the outbox until ctx is cancelled and then returns ctx.Err().

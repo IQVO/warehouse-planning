@@ -21,12 +21,15 @@ decision amends or supersedes an earlier one by its own ADR.
 | [0004](0004-demand-ingestion-from-order-management.md) | Demand is ingested from order-management's published events into a local read model; `assigned_demand` becomes optional | Accepted (2026-10-04). Additive |
 | [0005](0005-analytics-read-side.md) | Analytics read side: an analytics stream, a projector and read-only reports over a separate analytical database | Accepted (2026-10-04). Additive |
 | [0006](0006-cloudevents-envelope-and-type-catalogue.md) | CloudEvents 1.0 is the only envelope, and this is the type catalogue | Accepted (2026-10-05). Records a decision already in effect |
-| [0007](0007-outbox-and-resilient-consumers.md) | Transactional outbox and resilient, idempotent Kafka consumers (adoption) | Accepted (2026-10-05). Records decisions already in effect, plus the dead-letter fix for the three domain consumers |
+| [0007](0007-outbox-and-resilient-consumers.md) | Transactional outbox and resilient, idempotent Kafka consumers (adoption) | Accepted (2026-10-05). Records decisions already in effect, plus the dead-letter fix for the three domain consumers. Amended by ADR 0013 |
 | [0008](0008-mcp-server-adoption.md) | MCP server adoption (unauthenticated, additive) | Accepted (2026-10-05). Records a decision already in effect |
 | [0009](0009-hpa-and-pgxpool-tuning.md) | Horizontal Pod Autoscaling and pgxpool connection-count tuning (adoption) | Accepted (2026-10-05). Records decisions already in effect |
 | [0010](0010-migrations-over-direct-connection.md) | Database migrations run over a direct Postgres connection | Accepted (2026-10-05). Records a decision already in effect |
 | [0011](0011-standard-metrics-adoption.md) | Standard metrics adoption (otelchi + a Tier-2 business counter) | Accepted (2026-10-05) |
 | [0012](0012-canonical-site-id-on-capacity-plans.md) | Canonical site_id on CapacityPlan and CapacityPlanPublished | Accepted (2026-10-06) |
+| [0013](0013-outbox-relay-attempt-cap.md) | Outbox relay attempt cap | Accepted (2026-10-13). Amends ADR 0007 §1's ordering guarantee |
+| [0014](0014-trace-context-crosses-the-outbox.md) | The W3C trace context crosses the outbox to Kafka | Accepted (2026-10-13). Additive |
+| [0015](0015-projector-telemetry-and-chart-otel-env.md) | Projector telemetry and the chart's OTel environment | Accepted (2026-10-13). Extends ADR 0011 |
 
-All twelve are Accepted; none is Superseded as a whole. Where a page in the
+All fifteen are Accepted; none is Superseded as a whole. Where a page in the
 main documentation states a rule, it links the ADR that decided it.

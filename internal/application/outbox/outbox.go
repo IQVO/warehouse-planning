@@ -6,6 +6,8 @@
 // it carries no Kafka or Postgres types.
 package outbox
 
+import "fmt"
+
 // Header is one Kafka message header.
 type Header struct {
 	Key   string
@@ -35,3 +37,24 @@ type Message struct {
 	// Headers are the Kafka headers (always includes content-type).
 	Headers []Header
 }
+
+// SendFailure is the error a relay store's Drain returns when send failed
+// for one row: the pass stopped there, the failure was recorded on the row
+// and Attempts is the row's failure count AFTER this one (0 when recording
+// it failed too). The relay uses it to log the row that reaches the attempt
+// cap (OUTBOX_MAX_ATTEMPTS, ADR 0013) with its id, topic, type and key.
+type SendFailure struct {
+	RowID    int64
+	Message  Message
+	Attempts int
+	Err      error
+}
+
+// Error keeps the historic "outbox row <id> (<type>): <cause>" wording the
+// runbook and log queries grep for.
+func (f *SendFailure) Error() string {
+	return fmt.Sprintf("outbox row %d (%s): %v", f.RowID, f.Message.EventType, f.Err)
+}
+
+// Unwrap exposes the send error.
+func (f *SendFailure) Unwrap() error { return f.Err }
