@@ -63,6 +63,10 @@ spec:
             - name: OUTBOX_RELAY_INTERVAL
               value: {{ . | quote }}
             {{- end }}
+            # D12 / ADR 0013: the relay excludes a row after this many
+            # failures (0 = unlimited).
+            - name: OUTBOX_MAX_ATTEMPTS
+              value: {{ .Values.config.outboxMaxAttempts | quote }}
             {{- with .Values.config.corsAllowedOrigins }}
             - name: CORS_ALLOWED_ORIGINS
               value: {{ . | quote }}

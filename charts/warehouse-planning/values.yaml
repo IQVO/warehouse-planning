@@ -133,6 +133,12 @@ config:
   # OUTBOX_RELAY_INTERVAL: Go duration ("500ms", "2s") or plain seconds.
   # Empty = not rendered; the binary defaults to 1s.
   outboxRelayInterval: ""
+  # OUTBOX_MAX_ATTEMPTS (gap fix D12, docs/adr/0013): how many times one
+  # outbox row may fail before the relay excludes it from claims, so a
+  # poison row cannot block the relay forever. The excluded row stays in
+  # outbox_events (attempts, last_error) until an operator re-arms it with
+  # `UPDATE outbox_events SET attempts = 0 WHERE id = ...`. 0 = unlimited.
+  outboxMaxAttempts: 20
   # Consumer-group ids of the two inbound Kafka consumers. Env-driven, never
   # literals in the template: a STABLE id lets a rescheduled pod resume from
   # its committed offsets. The values below equal the binary's own defaults.

@@ -101,7 +101,7 @@ func TestOutboxRepo_DrainSendsInOrderAndMarksPublished(t *testing.T) {
 		}
 	}
 	var sent []string
-	n, err := ob.Drain(ctx, 2, func(_ context.Context, m outbox.Message) error {
+	n, err := ob.Drain(ctx, 2, 0, func(_ context.Context, m outbox.Message) error {
 		sent = append(sent, m.EventID)
 		return nil
 	})
@@ -111,7 +111,7 @@ func TestOutboxRepo_DrainSendsInOrderAndMarksPublished(t *testing.T) {
 	if ob.Unpublished() != 1 {
 		t.Fatalf("Unpublished = %d, want 1", ob.Unpublished())
 	}
-	n, err = ob.Drain(ctx, 10, func(_ context.Context, m outbox.Message) error {
+	n, err = ob.Drain(ctx, 10, 0, func(_ context.Context, m outbox.Message) error {
 		sent = append(sent, m.EventID)
 		return nil
 	})
@@ -128,7 +128,7 @@ func TestOutboxRepo_DrainStopsAtFirstFailureAndKeepsRow(t *testing.T) {
 	}
 	boom := errors.New("broker down")
 	calls := 0
-	n, err := ob.Drain(ctx, 10, func(_ context.Context, m outbox.Message) error {
+	n, err := ob.Drain(ctx, 10, 0, func(_ context.Context, m outbox.Message) error {
 		calls++
 		if m.EventID == "a" {
 			return boom
@@ -143,7 +143,7 @@ func TestOutboxRepo_DrainStopsAtFirstFailureAndKeepsRow(t *testing.T) {
 	}
 	// Retry republishes the same message (same id).
 	var ids []string
-	if _, err := ob.Drain(ctx, 10, func(_ context.Context, m outbox.Message) error { ids = append(ids, m.EventID); return nil }); err != nil {
+	if _, err := ob.Drain(ctx, 10, 0, func(_ context.Context, m outbox.Message) error { ids = append(ids, m.EventID); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if len(ids) != 2 || ids[0] != "a" || ob.LastError(0) != "" {

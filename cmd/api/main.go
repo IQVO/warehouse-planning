@@ -409,6 +409,23 @@ func parseRelayInterval(raw string, logger *slog.Logger) time.Duration {
 	return d
 }
 
+// outboxMaxAttempts reads OUTBOX_MAX_ATTEMPTS (gap fix D12, ADR 0013): how
+// many times an outbox row may fail before the relay excludes it from
+// claims. Unset = the fleet default (20); 0 = unlimited; negative or
+// unparsable values log a warning and use the default, so a typo never
+// silently removes the cap.
+func outboxMaxAttempts(raw string, logger *slog.Logger) int {
+	if raw == "" {
+		return outboxrelay.DefaultMaxAttempts
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		logger.Warn("invalid OUTBOX_MAX_ATTEMPTS; using the default", "value", raw, "default", outboxrelay.DefaultMaxAttempts)
+		return outboxrelay.DefaultMaxAttempts
+	}
+	return n
+}
+
 // startOutboxRelay starts the outbox relay goroutine. EVENT_PUBLISHER
 // picks the sink: kafka (needs KAFKA_BROKERS) or log (default). Kafka is
 // dialled lazily inside the relay loop on the first send, never here.
@@ -437,14 +454,15 @@ func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (runningCons
 	}
 
 	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
-	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval))
+	maxAttempts := outboxMaxAttempts(os.Getenv("OUTBOX_MAX_ATTEMPTS"), logger)
+	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval), outboxrelay.WithMaxAttempts(maxAttempts))
 
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		defer closeSink()
-		logger.Info("outbox relay running", "publisher", mode, "interval", interval, "topic", outboundkafka.Topic)
+		logger.Info("outbox relay running", "publisher", mode, "interval", interval, "max_attempts", maxAttempts, "topic", outboundkafka.Topic)
 		if err := relay.Run(ctx); !errors.Is(err, context.Canceled) {
 			logger.Error("outbox relay stopped", "error", err)
 		}
