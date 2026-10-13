@@ -344,7 +344,7 @@ jobs:
         run: ct lint --charts charts/warehouse-planning --validate-maintainers=false --check-version-increment=false
       - name: Chart wiring tests (each Service selects exactly one Deployment)
         run: |
-          pip install pyyaml
+          pip install --require-hashes -r .github/requirements/chart-tests.txt
           python3 charts/warehouse-planning/tests/test_service_selectors.py
 
   # ============================================================
@@ -373,7 +373,7 @@ jobs:
         run: bash charts/warehouse-planning/tests/render_test.sh
       - name: Service selector test
         run: |
-          pip install pyyaml
+          pip install --require-hashes -r .github/requirements/chart-tests.txt
           python3 charts/warehouse-planning/tests/test_service_selectors.py
 
   # ============================================================
