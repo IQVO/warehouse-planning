@@ -348,6 +348,35 @@ jobs:
           python3 charts/warehouse-planning/tests/test_service_selectors.py
 
   # ============================================================
+  # CLASSIFICATION: PACKAGING VALIDATION (Helm chart render tests)
+  # Runs on EVERY push and PR (unlike helm-lint above): the render
+  # assertions guard behaviour, not packaging -- the api Deployment mounting
+  # the chart ConfigMap via envFrom (gap fix D14), the outbox attempt cap
+  # default (D12, ADR 0013), the OTel environment on every backend
+  # Deployment (D21, ADR 0015), and every Service selecting exactly one
+  # Deployment. Same scripts as
+  # `bash charts/warehouse-planning/tests/render_test.sh` and
+  # `python3 charts/warehouse-planning/tests/test_service_selectors.py`.
+  # ============================================================
+  chart-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v3.16.4
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.x"
+      - name: Chart render assertions
+        run: bash charts/warehouse-planning/tests/render_test.sh
+      - name: Service selector test
+        run: |
+          pip install pyyaml
+          python3 charts/warehouse-planning/tests/test_service_selectors.py
+
+  # ============================================================
   # CLASSIFICATION: LINTERS & STATIC ANALYSIS (architecture fitness)
   # ============================================================
   arch-test:
