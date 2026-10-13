@@ -26,7 +26,11 @@ binding the bottleneck step; `""` when unknown). Only this service's
 Every message, published or consumed, is a **CloudEvents 1.0** event in
 structured content mode with the Kafka header
 `content-type: application/cloudevents+json; charset=UTF-8`. There is no flat
-envelope and no toggle.
+envelope and no toggle. Events this service publishes also carry the optional
+W3C trace headers (`traceparent`, and `tracestate` / `baggage` when present)
+of the request that wrote the outbox row
+([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)); consumers may
+extract them and must not require them.
 
 | Attribute | Value |
 | --- | --- |
