@@ -115,6 +115,11 @@ autoscaling:
     maxReplicas: 3
     targetCPUUtilizationPercentage: 70
 
+# deployment.environment.name on every span, metric and log (ENVIRONMENT),
+# rendered on the api, mcp, projector and reports Deployments (gap fix D21,
+# docs/adr/0015).
+environment: "local"
+
 # Environment read by cmd/api/main.go. Every key maps 1:1 to one env var.
 config:
   httpAddr: ":8080"                  # HTTP_ADDR
@@ -146,6 +151,11 @@ config:
   laborCapacityConsumerGroup: "warehouse-planning-labor-capacity"
   # STORAGE_CAPACITY_CONSUMER_GROUP (reads warehouse.facility.events)
   storageCapacityConsumerGroup: "warehouse-planning-storage-capacity"
+  # SHUTDOWN_DRAIN_DELAY: wait after /readyz flips before closing the
+  # listener (cmd/api only; the other binaries do not read it). Empty = not
+  # rendered; the binary defaults to 5s. Keep terminationGracePeriodSeconds
+  # above it plus the drains.
+  shutdownDrainDelay: ""
 
 # Order-demand consumer (docs/adr/0004): order-management's OrderAllocated /
 # OrderPartiallyAllocated events (warehouse.order-management.events) into the
@@ -187,6 +197,16 @@ database:
 kafka:
   enabled: false
   brokers: "kafka:9092"
+
+# OpenTelemetry traces + metrics, pushed over OTLP/gRPC to a Collector (gap
+# fix D21, docs/adr/0015). The endpoint below is the in-cluster Collector
+# Service in the warehouse-infra kind cluster (the same value every sibling
+# chart uses). Export is non-blocking, so a Collector that is down costs
+# telemetry and nothing else; otel.enabled=false skips the env entirely (the
+# binaries then default to localhost:4317).
+otel:
+  enabled: true
+  endpoint: "otel-collector.observability.svc.cluster.local:4317"
 
 # Extra env vars appended to the OLTP container as a raw list.
 extraEnv: []

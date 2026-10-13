@@ -71,6 +71,19 @@ spec:
             - name: CORS_ALLOWED_ORIGINS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.config.shutdownDrainDelay }}
+            - name: SHUTDOWN_DRAIN_DELAY
+              value: {{ . | quote }}
+            {{- end }}
+            # D21 / ADR 0015: OTel resource attributes and the Collector.
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
             # Consumer-group ids come from values, never literals: a stable id
             # is what makes a restarted/rescheduled pod resume from its
             # committed offsets instead of re-reading from the start.

@@ -48,6 +48,15 @@ spec:
               value: {{ .Values.analytics.reports.httpAddr | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
+            # D21 / ADR 0015: OTel resource attributes and the Collector.
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
             # The reports binary reads ANALYTICS_DATABASE_URL; it is fed the
             # READER DSN so even a bug cannot mutate the read model.
             - name: ANALYTICS_DATABASE_URL
