@@ -57,6 +57,16 @@ spec:
               value: {{ .Values.analytics.migrationsPath | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
+            # D21 / ADR 0015: the projector calls telemetry.Setup like the
+            # other three binaries.
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
             - name: ANALYTICS_DATABASE_URL
               valueFrom:
                 secretKeyRef:

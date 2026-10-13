@@ -11,6 +11,12 @@
 // the process; the analytical database dial and migrations are retried
 // through internal/bootretry because the first outbound connection of an
 // Istio-injected pod is reset ~10s after start.
+//
+// Telemetry (gap fix D21, ADR 0015): like cmd/api, cmd/mcp and
+// cmd/planning-reports it calls telemetry.Setup with service name
+// warehouse-planning-projector and reads OTEL_EXPORTER_OTLP_ENDPOINT
+// (default localhost:4317), SERVICE_VERSION (default dev) and ENVIRONMENT
+// (default local). Export never blocks boot.
 package main
 
 import (
@@ -32,6 +38,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/analyticsstore"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/warehouse-planning/internal/bootretry"
 )
 
@@ -49,6 +56,9 @@ const (
 	// defaultMigrationsPath is the analytical migrations directory relative
 	// to the repo root / the image's /app.
 	defaultMigrationsPath = "analytics/migrations"
+
+	// projectorServiceName is this binary's OTel service.name.
+	projectorServiceName = "warehouse-planning-projector"
 )
 
 // config is the projector's environment.
@@ -110,6 +120,12 @@ func run() error {
 	}
 	logger := newLogger(cfg.logLevel)
 	slog.SetDefault(logger)
+
+	otelShutdown, err := setupTelemetry(logger)
+	if err != nil {
+		return err
+	}
+	defer flushTelemetry(logger, otelShutdown) // runs after the pool and the consumer are closed
 
 	pool, err := openAnalyticsPool(context.Background(), logger, cfg.analyticsURL, cfg.migrationsPath)
 	if err != nil {
@@ -209,6 +225,44 @@ func openAnalyticsPool(ctx context.Context, logger *slog.Logger, url, migrations
 		return nil, err
 	}
 	return pool, nil
+}
+
+// setupTelemetry installs the OTLP trace and metric providers exactly like
+// the other three binaries (gap fix D21, ADR 0015): service name
+// warehouse-planning-projector, SERVICE_VERSION, ENVIRONMENT (read by the
+// telemetry adapter) and OTEL_EXPORTER_OTLP_ENDPOINT. Export never blocks:
+// an unreachable Collector only drops telemetry.
+func setupTelemetry(logger *slog.Logger) (func(context.Context) error, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	version := getenvOr("SERVICE_VERSION", "dev")
+	endpoint := getenvOr("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	shutdown, err := telemetry.Setup(ctx, projectorServiceName, version, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry setup: %w", err)
+	}
+	logger.Info("telemetry configured", "service_name", projectorServiceName, "service_version", version,
+		"environment", telemetry.Environment(), "otlp_endpoint", endpoint)
+	return shutdown, nil
+}
+
+// flushTelemetry flushes and closes the providers, bounded; a failure is
+// logged, never returned.
+func flushTelemetry(logger *slog.Logger, shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		logger.Error("telemetry shutdown failed", "error", err)
+	}
+}
+
+// getenvOr returns the environment variable key, or fallback when it is
+// unset or empty.
+func getenvOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func newLogger(level string) *slog.Logger {

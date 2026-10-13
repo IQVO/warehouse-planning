@@ -80,5 +80,5 @@ capacity.
   optionally the `mcp`, `frontend` and analytics components (off by default).
 
 Telemetry is pushed over OTLP (`OTEL_EXPORTER_OTLP_ENDPOINT`, ADR 0011) by
-`cmd/api`, `cmd/mcp` and `cmd/planning-reports`; no binary serves a `/metrics`
-endpoint, and `cmd/planning-projector` sets up no telemetry yet.
+all four binaries, `cmd/api`, `cmd/mcp`, `cmd/planning-projector` (since
+ADR 0015) and `cmd/planning-reports`; no binary serves a `/metrics` endpoint.

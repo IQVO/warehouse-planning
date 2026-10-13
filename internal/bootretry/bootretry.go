@@ -24,9 +24,11 @@ import (
 
 // Retries and Delay bound the startup retry budget.
 //
-// ~31s total (1+2+4+8+16), comfortably past the ~10s first-dial reset and
-// still far inside the liveness probe's own tolerance, so a genuinely
-// unreachable dependency still fails the pod rather than hanging it.
+// 5 attempts with the backoff slept only BETWEEN them: 1+2+4+8 = 15 s of
+// backoff in total (no sleep after the fifth attempt), comfortably past the
+// ~10s first-dial reset and still far inside the startup probe's ~60 s
+// window, so a genuinely unreachable dependency still fails the pod rather
+// than hanging it.
 const (
 	Retries = 5
 	Delay   = time.Second
@@ -40,7 +42,7 @@ func Retry(ctx context.Context, logger *slog.Logger, what string, op func() erro
 }
 
 // RetryWithDelay is Retry with the base delay injected, so tests can
-// exercise the give-up path without sleeping out the real ~31s budget. A
+// exercise the give-up path without sleeping out the real 15 s budget. A
 // cancelled ctx abandons the retries (the error wraps ctx.Err()).
 func RetryWithDelay(ctx context.Context, logger *slog.Logger, what string, base time.Duration, op func() error) error {
 	if logger == nil {

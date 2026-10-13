@@ -81,7 +81,13 @@ encoding and persisted, so a relay retry republishes the same bytes and id.
 The relay in `cmd/api` drains the table every `OUTBOX_RELAY_INTERVAL` (default
 `1s`), claiming rows `FOR UPDATE SKIP LOCKED` in id order, sending one at a
 time and stopping at the first failure, so a later event for a plan never
-overtakes an earlier one. Delivery is at-least-once; consumers dedupe on `id`.
+overtakes an earlier one that is still being retried. A row that has failed
+`OUTBOX_MAX_ATTEMPTS` times (default 20) is excluded from claims and stays in
+the table until an operator re-arms it, so later rows, including the same
+plan's, overtake it ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)).
+Each row carries the writing request's W3C `traceparent`, which the relay
+sends as a Kafka header ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)).
+Delivery is at-least-once; consumers dedupe on `id`.
 `EVENT_PUBLISHER=kafka|log` (default `log`) selects the Kafka sink or a log
 sink; `kafka` requires `KAFKA_BROKERS`. Kafka is dialled lazily by the first
 send, never at boot.

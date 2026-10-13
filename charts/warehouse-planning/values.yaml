@@ -135,13 +135,18 @@ autoscaling:
     maxReplicas: 3
     targetCPUUtilizationPercentage: 70
 
+# deployment.environment.name on every span, metric and log (ENVIRONMENT),
+# rendered on the api, mcp, projector and reports Deployments (gap fix D21,
+# docs/adr/0015).
+environment: "local"
+
 # Environment read by cmd/api/main.go. Every key maps 1:1 to one env var.
 config:
   httpAddr: ":8080"                  # HTTP_ADDR
   # Relative to the image WORKDIR (/app): the Dockerfile copies
   # internal/adapters/outbound/postgres/migrations to /app/migrations.
   migrationsPath: "migrations"       # MIGRATIONS_PATH
-  logLevel: "info"                   # LOG_LEVEL: debug | info | warn | error
+  logLevel: "info"                   # LOG_LEVEL: debug | info | warn (or warning) | error
   # CORS_ALLOWED_ORIGINS (comma-separated). Empty = not rendered, so the
   # binary's own local-dev default applies. In the kind cluster Kong's global
   # CORS plugin handles browsers; set this only for a direct-to-pod caller.
@@ -153,6 +158,12 @@ config:
   # OUTBOX_RELAY_INTERVAL: Go duration ("500ms", "2s") or plain seconds.
   # Empty = not rendered; the binary defaults to 1s.
   outboxRelayInterval: ""
+  # OUTBOX_MAX_ATTEMPTS (gap fix D12, docs/adr/0013): how many times one
+  # outbox row may fail before the relay excludes it from claims, so a
+  # poison row cannot block the relay forever. The excluded row stays in
+  # outbox_events (attempts, last_error) until an operator re-arms it with
+  # `UPDATE outbox_events SET attempts = 0 WHERE id = ...`. 0 = unlimited.
+  outboxMaxAttempts: 20
   # Consumer-group ids of the two inbound Kafka consumers. Env-driven, never
   # literals in the template: a STABLE id lets a rescheduled pod resume from
   # its committed offsets. The values below equal the binary's own defaults.
@@ -160,6 +171,11 @@ config:
   laborCapacityConsumerGroup: "warehouse-planning-labor-capacity"
   # STORAGE_CAPACITY_CONSUMER_GROUP (reads warehouse.facility.events)
   storageCapacityConsumerGroup: "warehouse-planning-storage-capacity"
+  # SHUTDOWN_DRAIN_DELAY: wait after /readyz flips before closing the
+  # listener (cmd/api only; the other binaries do not read it). Empty = not
+  # rendered; the binary defaults to 5s. Keep terminationGracePeriodSeconds
+  # above it plus the drains.
+  shutdownDrainDelay: ""
 
 # Order-demand consumer (docs/adr/0004): order-management's OrderAllocated /
 # OrderPartiallyAllocated events (warehouse.order-management.events) into the
@@ -202,12 +218,23 @@ kafka:
   enabled: false
   brokers: "kafka:9092"
 
+# OpenTelemetry traces + metrics, pushed over OTLP/gRPC to a Collector (gap
+# fix D21, docs/adr/0015). The endpoint below is the in-cluster Collector
+# Service in the warehouse-infra kind cluster (the same value every sibling
+# chart uses). Export is non-blocking, so a Collector that is down costs
+# telemetry and nothing else; otel.enabled=false skips the env entirely (the
+# binaries then default to localhost:4317).
+otel:
+  enabled: true
+  endpoint: "otel-collector.observability.svc.cluster.local:4317"
+
 # Extra env vars appended to the OLTP container as a raw list.
 extraEnv: []
 
 # The Postgres dial (migrations + ping) at boot is wrapped in a bounded retry
-# (~31s). periodSeconds * failureThreshold gives a ~60s window, comfortably
-# past that, before the kubelet gives up. Once startupProbe succeeds,
+# (internal/bootretry: 5 attempts, 1+2+4+8 = 15 s of backoff in total, no
+# sleep after the last attempt). periodSeconds * failureThreshold gives a ~60s
+# window, comfortably past that, before the kubelet gives up. Once startupProbe succeeds,
 # liveness takes over; readiness uses the separate /readyz endpoint (flipped
 # to not-ready as the FIRST step of graceful shutdown).
 startupProbe:

@@ -4,9 +4,9 @@
 // business-metrics port (metrics.go).
 //
 // It sits in the same tier as the postgres/kafka adapters -- the domain and
-// application layers never import it. A composition root (cmd/api,
-// cmd/mcp, cmd/planning-reports) calls Setup once at startup and defers
-// the returned shutdown func.
+// application layers never import it. A composition root (cmd/api, cmd/mcp,
+// cmd/planning-projector, cmd/planning-reports) calls Setup once at startup
+// and defers the returned shutdown func.
 //
 // Export is deliberately non-blocking: if no Collector is listening at the
 // configured endpoint, spans and metrics are dropped silently and the
