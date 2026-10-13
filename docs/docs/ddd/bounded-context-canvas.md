@@ -16,10 +16,10 @@ Every message row below maps to a route in `NewRouter`
 
 ## Canvas at a glance
 
-One picture of the sections below, laid out like the ddd-crew canvas:
-inbound collaborators on the left, this context in the middle (purpose,
-domain roles and the business decisions it enforces), outbound
-collaborators on the right. Arrows follow the message type: **solid blue**
+Two pictures of the sections below, laid out like the ddd-crew canvas:
+first the inbound collaborators feeding this context (purpose, domain roles
+and the business decisions it enforces), then the outbound collaborators it
+calls or notifies. Arrows follow the message type: **solid blue**
 commands (`cmd`), **dotted green** queries (`qry`), **thick orange** events
 (`evt`); each arrow names its channel and the messages it carries. Box shapes
 mark the collaborator kind: rounded = people, UI or any client; blue =
@@ -30,8 +30,10 @@ abbreviated (REST, MCP, Kafka, HTTP, port); the Inbound and Outbound
 Communication tables carry the exact route, tool, topic and CloudEvents
 type for every message.
 
+### Inbound
+
 ```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 18, "rankSpacing": 36, "padding": 8}}}%%
+%%{init: {"flowchart": {"nodeSpacing": 14, "rankSpacing": 40, "padding": 6}}}%%
 flowchart LR
     classDef bc fill:#fff3bf,stroke:#e67700,stroke-width:1.5px,color:#000
     classDef card fill:#fff9db,stroke:#f08c00,color:#000,text-align:left
@@ -42,7 +44,7 @@ flowchart LR
     classDef none fill:#f8f9fa,stroke:#adb5bd,stroke-dasharray:5 5,color:#495057
     subgraph IN["Inbound - who commands, queries or feeds it"]
         direction TB
-        in0(["Operator, warehouse-console remote, analyst dashboard"]):::actor
+        in0(["Operator,<br/>warehouse-console remote,<br/>analyst dashboard"]):::actor
         in1["warehouse-ops-agent"]:::ctx
         in2["workforce-management"]:::ctx
         in3["facility-layout"]:::ctx
@@ -50,31 +52,18 @@ flowchart LR
     end
     subgraph BC["warehouse-planning - Core subdomain - WES tier"]
         direction TB
-        purpose["<b>Purpose</b><br/>Answer whether this warehouse can<br/>process the demand assigned to it<br/>given its labor, location,<br/>equipment, station, conveyor and<br/>buffer constraints: hold<br/>ProcessCapacity per process, site<br/>and window, compose path capacity at<br/>read time, compare with demand in a<br/>CapacityPlan, announce shortages and<br/>bottlenecks."]:::card
+        purpose["<b>Purpose</b><br/>Answer whether this warehouse can process the demand<br/>assigned to it given its labor, location, equipment,<br/>station, conveyor and buffer constraints: hold<br/>ProcessCapacity per process, site and window, compose path<br/>capacity at read time, compare with demand in a<br/>CapacityPlan, announce shortages and bottlenecks."]:::card
         roles["<b>Domain roles</b><br/>- Analysis context (primary)<br/>- Specification context (declared constraints and standards)<br/>- Gateway / Open Host Service<br/>- Own analytics read side"]:::card
-        rules["<b>Business decisions it enforces</b><br/>- A capacity number always carries a<br/>window; newest covering window wins<br/>per type<br/>- Station capacity is count x<br/>StationStandard, composed at read<br/>time, never stored<br/>- Every rate is normalized to ORDER<br/>per hour; LINE is rejected<br/>- shortage = max(0, demand - capacity<br/>over window)<br/>- A plan is published at most once;<br/>shortage and bottleneck events only<br/>at publish<br/>- No live cross-context lookup, ever"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- A capacity number always carries a window; newest covering<br/>window wins per type<br/>- Station capacity is count x StationStandard, composed at<br/>read time, never stored<br/>- Every rate is normalized to ORDER per hour; LINE is<br/>rejected<br/>- shortage = max(0, demand - capacity over window)<br/>- A plan is published at most once; shortage and bottleneck<br/>events only at publish<br/>- No live cross-context lookup, ever"]:::card
         purpose ~~~ roles ~~~ rules
     end
-    subgraph OUT["Outbound - whom it calls or notifies"]
-        direction TB
-        out0["order-management (opt-in consumer)"]:::ctx
-        out1["network-inventory-planning"]:::ctx
-        out2["none today"]:::none
-        out3["own cmd/planning-projector"]:::self
-        out4["operators (dead-letter triage)"]:::self
-    end
     in0 -->|"cmd - REST or MCP<br/>Register process capacity<br/>constraint, Register process<br/>path, Create capacity plan,<br/>Publish capacity plan, Declare<br/>station standard"| BC
-    in0 -.->|"qry - REST or MCP<br/>Get effective process capacity,<br/>List process paths, Get process<br/>path capacity, Get / list<br/>capacity plans, List station<br/>standards, Get storage capacity,<br/>Get expected demand"| BC
+    in0 -.->|"qry - REST or MCP<br/>Get effective process<br/>capacity, List process paths,<br/>Get process path capacity, Get<br/>/ list capacity plans, List<br/>station standards, Get storage<br/>capacity, Get expected demand"| BC
     in0 -.->|"qry - REST (reports)<br/>Bottleneck frequency, shortage<br/>trend, plan throughput,<br/>freshness"| BC
     in1 -.->|"qry - MCP<br/>get_process_path_capacity,<br/>get_capacity_plan,<br/>list_station_standards,<br/>get_storage_capacity"| BC
     in2 ==>|"evt - Kafka<br/>warehouse.workforce.events<br/>ShiftPlanCommitted"| BC
     in3 ==>|"evt - Kafka<br/>warehouse.facility.events<br/>LocationSlotRegistered,<br/>LocationSlotDecommissioned"| BC
     in4 ==>|"evt - Kafka<br/>warehouse.order-management.events<br/>OrderAllocated,<br/>OrderPartiallyAllocated"| BC
-    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>CapacityPlanCreated,<br/>CapacityPlanPublished,<br/>CapacityShortageDetected"| out0
-    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>CapacityPlanPublished"| out1
-    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>BottleneckDetected"| out2
-    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.analytics<br/>the same four types"| out3
-    BC ==>|"evt - Kafka workforce, facility,<br/>order-management .dlq<br/>a message that failed 5 times"| out4
     linkStyle 0 stroke:#1971c2,stroke-width:1.5px
     linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
     linkStyle 2 stroke:#2f9e44,stroke-width:1.5px
@@ -82,12 +71,40 @@ flowchart LR
     linkStyle 4 stroke:#e8590c,stroke-width:2.5px
     linkStyle 5 stroke:#e8590c,stroke-width:2.5px
     linkStyle 6 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 7 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 8 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 9 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 10 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 11 stroke:#e8590c,stroke-width:2.5px
     class BC bc
+```
+
+### Outbound
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 14, "rankSpacing": 40, "padding": 6}}}%%
+flowchart LR
+    classDef bc fill:#fff3bf,stroke:#e67700,stroke-width:1.5px,color:#000
+    classDef card fill:#fff9db,stroke:#f08c00,color:#000,text-align:left
+    classDef ctx fill:#e7f5ff,stroke:#1c7ed6,color:#000
+    classDef actor fill:#fff4e6,stroke:#e8590c,color:#000
+    classDef ext fill:#ffe3e3,stroke:#c92a2a,color:#000
+    classDef self fill:#f1f3f5,stroke:#868e96,color:#000
+    classDef none fill:#f8f9fa,stroke:#adb5bd,stroke-dasharray:5 5,color:#495057
+    BC["<b>warehouse-planning - Core subdomain - WES tier</b>"]:::bc
+    subgraph OUT["Outbound - whom it calls or notifies"]
+        direction TB
+        out0["order-management (opt-in<br/>consumer)"]:::ctx
+        out1["network-inventory-planning"]:::ctx
+        out2["none today"]:::none
+        out3["own cmd/planning-projector"]:::self
+        out4["operators (dead-letter<br/>triage)"]:::self
+    end
+    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>CapacityPlanCreated,<br/>CapacityPlanPublished,<br/>CapacityShortageDetected"| out0
+    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>CapacityPlanPublished"| out1
+    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>BottleneckDetected"| out2
+    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.analytics<br/>the same four types"| out3
+    BC ==>|"evt - Kafka workforce,<br/>facility, order-management<br/>.dlq<br/>a message that failed 5 times"| out4
+    linkStyle 0 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 1 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 2 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 3 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 4 stroke:#e8590c,stroke-width:2.5px
 ```
 
 Source: the Inbound Communication and Outbound Communication tables of this
