@@ -40,13 +40,22 @@ spec:
             - name: MCP_ADDR
               value: {{ .Values.mcp.httpAddr | quote }}
             # Env contract verified against cmd/mcp/main.go: MCP_ADDR,
-            # MIGRATIONS_PATH, LOG_LEVEL, DATABASE_URL and (migration step
+            # MIGRATIONS_PATH, LOG_LEVEL, ENVIRONMENT, SERVICE_VERSION,
+            # OTEL_EXPORTER_OTLP_ENDPOINT, DATABASE_URL and (migration step
             # only) MIGRATIONS_DATABASE_URL. cmd/mcp has no auth env, starts
             # no outbox relay and never dials Kafka.
             - name: MIGRATIONS_PATH
               value: {{ .Values.config.migrationsPath | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

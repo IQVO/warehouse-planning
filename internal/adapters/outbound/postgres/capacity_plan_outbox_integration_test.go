@@ -380,7 +380,7 @@ func TestOutbox_Postgres_InsertRoundTripAndDrain(t *testing.T) {
 	// Pass 1: e1 sends, e2 fails -> e1 is marked published, e2 records the error, e3 untouched.
 	boom := errors.New("broker down")
 	var sent []string
-	n, err := ob.Drain(ctx, 10, func(_ context.Context, m outbox.Message) error {
+	n, err := ob.Drain(ctx, 10, 0, func(_ context.Context, m outbox.Message) error {
 		if m.EventID == "e2" {
 			return boom
 		}
@@ -401,7 +401,7 @@ func TestOutbox_Postgres_InsertRoundTripAndDrain(t *testing.T) {
 
 	// Pass 2 (broker back): e2 is republished with the same id and content, then e3.
 	var second []outbox.Message
-	n, err = ob.Drain(ctx, 10, func(_ context.Context, m outbox.Message) error {
+	n, err = ob.Drain(ctx, 10, 0, func(_ context.Context, m outbox.Message) error {
 		second = append(second, m)
 		return nil
 	})
@@ -416,7 +416,7 @@ func TestOutbox_Postgres_InsertRoundTripAndDrain(t *testing.T) {
 	}
 
 	// Headers survive the JSONB round trip.
-	n, err = ob.Drain(ctx, 10, func(context.Context, outbox.Message) error { t.Error("published rows were drained again"); return nil })
+	n, err = ob.Drain(ctx, 10, 0, func(context.Context, outbox.Message) error { t.Error("published rows were drained again"); return nil })
 	if err != nil || n != 0 {
 		t.Fatalf("empty drain = %d, %v", n, err)
 	}
@@ -445,7 +445,7 @@ func TestOutbox_Postgres_DrainRespectsBatchLimitAndSkipsLockedRows(t *testing.T)
 	done := make(chan []string, 1)
 	go func() {
 		var ids []string
-		_, _ = ob.Drain(ctx, 2, func(_ context.Context, m outbox.Message) error {
+		_, _ = ob.Drain(ctx, 2, 0, func(_ context.Context, m outbox.Message) error {
 			ids = append(ids, m.EventID)
 			if len(ids) == 1 {
 				close(holding)
@@ -457,7 +457,7 @@ func TestOutbox_Postgres_DrainRespectsBatchLimitAndSkipsLockedRows(t *testing.T)
 	}()
 	<-holding
 	var other []string
-	n, err := ob.Drain(ctx, 10, func(_ context.Context, m outbox.Message) error {
+	n, err := ob.Drain(ctx, 10, 0, func(_ context.Context, m outbox.Message) error {
 		other = append(other, m.EventID)
 		return nil
 	})

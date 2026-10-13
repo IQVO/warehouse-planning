@@ -47,6 +47,13 @@ SDK marks every field without `omitempty` as **required**, which is why
 | `publish_capacity_plan` | false | `id` | none | publishes once (`PublishCapacityPlan`) and queues `CapacityPlanPublished`, plus `CapacityShortageDetected` and `BottleneckDetected` when there is a shortage; a second call fails with `capacity-plan-already-published` |
 | `declare_station_standard` | true | `location`, `process_type`, `quantity` (> 0), `unit` (`UNIT`, `PACKAGE` or `ORDER`), `period_seconds` | none | upserts a StationStandard (`DeclareStationStandard`); `created` is true for a new one, false when replaced |
 
+Every **Optional inputs** field above carries `omitempty` on its JSON tag, so
+the input schema the SDK derives lists it as optional and a call may leave it
+out. The architecture fitness test `TestMCPOptionalToolInputsCarryOmitempty`
+(`internal/architecture/mcp_optional_inputs_test.go`, gap fix D16) fails when
+a tool input whose `jsonschema` description says "optional" or "omitted" lacks
+it.
+
 Eleven tools in total; `maxTools` in
 `internal/adapters/inbound/mcp/governance_test.go` pins the budget at 11.
 

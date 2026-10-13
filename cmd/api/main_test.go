@@ -45,7 +45,7 @@ func TestParseRelayInterval(t *testing.T) {
 
 type countingStore struct{ drains chan struct{} }
 
-func (s countingStore) Drain(ctx context.Context, _ int, _ func(context.Context, outbox.Message) error) (int, error) {
+func (s countingStore) Drain(ctx context.Context, _, _ int, _ func(context.Context, outbox.Message) error) (int, error) {
 	select {
 	case s.drains <- struct{}{}:
 	default:

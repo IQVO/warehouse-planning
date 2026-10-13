@@ -169,7 +169,36 @@ acks). At the first failure it records `attempts` and `last_error` on that row
 and ends the pass. A full batch is followed at once by another pass. Otherwise
 the relay sleeps `OUTBOX_RELAY_INTERVAL`. The Kafka message key is the plan id
 (Hash balancer), so one plan's events share a partition. Delivery is
-at-least-once, and consumers dedupe on the CloudEvents `id`.
+at-least-once, and consumers dedupe on the CloudEvents `id`. Each row also
+carries the W3C `traceparent` of the request that wrote it, which the relay
+sends as a Kafka header ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)).
+
+**Attempt cap** ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)). A row
+that has failed `OUTBOX_MAX_ATTEMPTS` times (default 20, chart
+`config.outboxMaxAttempts`; `0` = unlimited) is no longer claimed, so one
+poison row (a message the broker will never accept) cannot stop the relay for
+every plan. The failure that reaches the cap is logged once at ERROR
+(`outbox relay: row reached the attempt cap and is excluded from future claims; ...`
+with `outbox_id`, `topic`, `event_type`, `key`, `attempts`). The row stays in
+`outbox_events`, unpublished, with its `attempts` and `last_error`. Later rows,
+**including later events of the same plan**, overtake it. A broker outage
+longer than about 20 passes also excludes the rows at the head of the queue,
+one per pass.
+
+To find and re-arm excluded rows, after fixing the cause:
+
+```sql
+-- excluded rows (use your OUTBOX_MAX_ATTEMPTS value)
+SELECT id, topic, event_type, key, attempts, last_error, created_at
+FROM outbox_events
+WHERE published_at IS NULL AND attempts >= 20
+ORDER BY id;
+
+-- re-arm one row: the relay claims it again on its next pass
+UPDATE outbox_events SET attempts = 0 WHERE id = 123;
+```
+
+A re-armed row is a late delivery under its original CloudEvents `id`.
 
 ### Dead-letter behaviour
 

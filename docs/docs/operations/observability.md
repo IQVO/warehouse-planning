@@ -7,15 +7,18 @@ sidebar_label: Observability
 # Observability
 
 Telemetry is pushed, not scraped. **No binary serves a `/metrics`
-endpoint.** `cmd/api`, `cmd/mcp` and `cmd/planning-reports` call
-`telemetry.Setup` (`internal/adapters/outbound/telemetry/telemetry.go`,
-[ADR 0011](/docs/adr/0011-standard-metrics-adoption)). Setup installs a
-TracerProvider and a MeterProvider, both exporting over OTLP/gRPC without TLS
-to `OTEL_EXPORTER_OTLP_ENDPOINT` (default `localhost:4317`). Metrics are pushed
-every 30 s. The exporter connects lazily, so a missing Collector drops
-telemetry and never blocks boot. **`cmd/planning-projector` sets up no
-OpenTelemetry at all**: its only signals are its logs and its `/healthz` and
-`/readyz` endpoints.
+endpoint.** All four binaries, `cmd/api`, `cmd/mcp`, `cmd/planning-projector`
+and `cmd/planning-reports`, call `telemetry.Setup`
+(`internal/adapters/outbound/telemetry/telemetry.go`,
+[ADR 0011](/docs/adr/0011-standard-metrics-adoption); the projector since
+[ADR 0015](/docs/adr/0015-projector-telemetry-and-chart-otel-env)). Setup
+installs a TracerProvider and a MeterProvider, both exporting over OTLP/gRPC
+without TLS to `OTEL_EXPORTER_OTLP_ENDPOINT` (default `localhost:4317`).
+Metrics are pushed every 30 s. The exporter connects lazily, so a missing
+Collector drops telemetry and never blocks boot. The projector logs
+`telemetry configured` with `service_name`, `service_version`, `environment`
+and `otlp_endpoint` at boot; it creates no spans and records no business
+metric, only the Go runtime metrics.
 
 The global propagator is W3C `traceparent` plus baggage, so an incoming
 request's trace context continues into the server span.
@@ -24,15 +27,19 @@ request's trace context continues into the server span.
 
 | Attribute | Value |
 | --- | --- |
-| `service.name` | `warehouse-planning` (`cmd/api`), `warehouse-planning-mcp` (`cmd/mcp`), `warehouse-planning-reports` (`cmd/planning-reports`) |
+| `service.name` | `warehouse-planning` (`cmd/api`), `warehouse-planning-mcp` (`cmd/mcp`), `warehouse-planning-projector` (`cmd/planning-projector`), `warehouse-planning-reports` (`cmd/planning-reports`) |
 | `service.version` | `SERVICE_VERSION`, default `dev` |
 | `deployment.environment.name` | `ENVIRONMENT`, default `local` |
 | SDK defaults | `telemetry.sdk.*` from `resource.Default()` |
 
-Neither the chart nor `warehouse-infra` sets `OTEL_EXPORTER_OTLP_ENDPOINT`,
-`SERVICE_VERSION` or `ENVIRONMENT` for this service, so a deployed pod reports
-`service.version=dev` and `deployment.environment.name=local` and exports to
-`localhost:4317`, unless a values override adds them through `extraEnv`.
+The chart renders `OTEL_EXPORTER_OTLP_ENDPOINT` (`otel.endpoint`, default
+`otel-collector.observability.svc.cluster.local:4317`, while `otel.enabled`),
+`SERVICE_VERSION` (`image.tag`) and `ENVIRONMENT` (`environment`, default
+`local`) on the `api`, `mcp`, projector and reports Deployments
+([ADR 0015](/docs/adr/0015-projector-telemetry-and-chart-otel-env)), the same
+values as the sibling charts. `warehouse-infra` sets none of them for this
+service, so in the kind cluster every pod exports to the in-cluster Collector
+with the image tag as `service.version`.
 
 ## Metric instruments
 
@@ -40,7 +47,7 @@ Neither the chart nor `warehouse-infra` sets `OTEL_EXPORTER_OTLP_ENDPOINT`,
 | --- | --- | --- | --- | --- | --- |
 | `warehouse_planning.capacity_plans.created` | Int64 counter | `{plan}` | `outcome` = `created` or `rejected` | every `CreateCapacityPlan` attempt, through REST (`cmd/api`) or MCP (`cmd/mcp`). Every error counts as `rejected`: validation failures, a missing path, missing capacity, missing demand, and infrastructure failures as well. | `internal/adapters/outbound/telemetry/metrics.go`, recorded in `internal/application/usecases/create_capacity_plan.go` |
 | `http.server.request.duration` | Float64 histogram | `s` | `http.method`, `http.scheme`, `http.route` (chi route pattern). **No status-code attribute** in otelchi v0.12.3. The `service.name` is set as an instrumentation-scope attribute. | every request on the `api`, `mcp` and reports routers | `otelchimetric.NewServerRequestDuration` in `internal/adapters/inbound/http/process_capacity_handler.go`, `reports_handler.go`, `cmd/mcp/router.go` |
-| `go.memory.used`, `go.memory.limit`, `go.memory.allocated`, `go.memory.allocations`, `go.memory.gc.goal`, `go.goroutine.count`, `go.processor.limit`, `go.config.gogc` | runtime gauges and counters | per OTel Go semconv | as defined by `go.opentelemetry.io/contrib/instrumentation/runtime` v0.71.0 | `cmd/api`, `cmd/mcp`, `cmd/planning-reports` | `runtime.Start` in `telemetry.go` |
+| `go.memory.used`, `go.memory.limit`, `go.memory.allocated`, `go.memory.allocations`, `go.memory.gc.goal`, `go.goroutine.count`, `go.processor.limit`, `go.config.gogc` | runtime gauges and counters | per OTel Go semconv | as defined by `go.opentelemetry.io/contrib/instrumentation/runtime` v0.71.0 | `cmd/api`, `cmd/mcp`, `cmd/planning-projector`, `cmd/planning-reports` | `runtime.Start` in `telemetry.go` |
 
 The histogram's bucket boundaries are 0.005, 0.01, 0.025, 0.05, 0.075, 0.1,
 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5 and 10 s. In Prometheus, after the Collector's
@@ -56,7 +63,8 @@ database and the broker (see [Suggested alerts](#suggested-alerts)).
 ## Traces
 
 - **Server spans**: `otelchi.Middleware` on the same three routers creates one span per request. With `WithChiRoutes`, the span name is the chi route pattern without the method, for example `/capacity-plans/{id}/publish` or `/reports/shortage-trend`. Spans carry `http.route` and the response `http.status_code`.
-- **Nothing else is traced.** The Kafka consumers, the outbox relay, the use cases and the Postgres calls create no spans, and the produced CloudEvents carry no trace context. A trace therefore ends at the HTTP handler.
+- **Trace context crosses the outbox** ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)). `postgres.OutboxRepo.Insert` injects the request span's W3C context (`traceparent`, plus `tracestate` / `baggage` when present) into each row's `outbox_events.headers`, and the relay copies the stored headers onto the Kafka message. A consumer that extracts them continues the request's trace. Rows written without an active span (or before this change) carry only `content-type`. The in-memory outbox (no `DATABASE_URL`) does not inject.
+- **Nothing else is traced.** The Kafka consumers, the outbox relay, the use cases and the Postgres calls create no spans of their own; this service's consumers do not extract incoming trace headers because they open no span.
 
 ## Logs
 
@@ -72,7 +80,9 @@ Every binary writes JSON lines to stdout through `log/slog`
 | `attempts` | `... handling failed after the maximum attempts; dead-lettering the message` |
 | `dlq_topic` | `analytics: dead-lettering a message that can never be projected` |
 | `suppressed_since_last_warning` | `analytics: skipping message that is not a CloudEvents 1.0 event ...` (at most one line a minute) |
-| `publisher`, `interval` | `outbox relay running` |
+| `publisher`, `interval`, `max_attempts` | `outbox relay running` |
+| `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error` | ERROR `outbox relay: row reached the attempt cap and is excluded from future claims; ...`, logged once for the failure that reaches `OUTBOX_MAX_ATTEMPTS` ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)) |
+| `service_name`, `service_version`, `environment`, `otlp_endpoint` | `telemetry configured` (`cmd/planning-projector`) |
 | `topic`, `type`, `subject`, `id` | `event published (log sink)`, written for every relayed event when `EVENT_PUBLISHER=log` |
 | `op`, `attempt`, `in`, `err` | `retrying` and `succeeded after retry` from the boot retry (migrations, first ping) |
 | `migrations_path` | `postgres adapters configured` |
@@ -97,7 +107,7 @@ Log lines carry **no** `trace_id` or `span_id`: no code in this repo adds them.
 Three caveats, all visible in code:
 
 - The service 5xx panel filters on `http_response_status_code` or `http_status_code`. The histogram has neither attribute (see above), so that panel stays empty. Use the Kong 5xx panel instead.
-- The projector emits no metrics, so it never appears on the HTTP or runtime panels, even though a panel description names it.
+- The projector serves no HTTP route, so it never appears on the HTTP panels; it does appear on the Go runtime panels as `warehouse-planning-projector` since ADR 0015.
 - A panel description says that log lines embed `trace_id` and `span_id`. They do not in this service.
 
 ## Suggested alerts
@@ -107,6 +117,7 @@ These are built only from signals that exist today:
 | Alert | Signal | Why |
 | --- | --- | --- |
 | Outbox backlog | `SELECT count(*), min(created_at) FROM outbox_events WHERE published_at IS NULL` rising, or `max(attempts)` growing with a `last_error` | The relay is failing (broker down, `EVENT_PUBLISHER=log` left on) and order-management is not seeing plans. |
+| Outbox rows excluded by the attempt cap | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` (the `OUTBOX_MAX_ATTEMPTS` value) above 0, or the Loki ERROR line `row reached the attempt cap` | A poison row (or a long broker outage) was excluded; it is never retried until an operator re-arms it ([Runbook](/docs/operations/runbook#outbox-relay)). |
 | DLQ growth | the end offsets of `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq` and `warehouse.warehouse-planning.analytics.dlq` increasing | A message was given up on and nothing re-drives it. |
 | Consumer lag | `kafka-consumer-groups.sh --describe` for the four groups | A wedged partition: the analytics consumer retries transient errors forever. |
 | Analytics freshness | `GET /reports/freshness` `lag_seconds` above a threshold | The projector is stuck or down (it has no metrics of its own). |

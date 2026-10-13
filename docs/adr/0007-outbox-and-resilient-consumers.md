@@ -7,7 +7,9 @@ with no ADR of their own, found by the 2026-10-04 ADR-conformance audit.
 No behaviour changes here beyond §3's dead-letter fix for the three domain
 consumers (storage/labor/order-demand), a real bug this phase of work
 found and closed (a transient failure previously retried the same message
-forever instead of being bounded and dead-lettered).
+forever instead of being bounded and dead-lettered). Amended by
+[ADR 0013](./0013-outbox-relay-attempt-cap.md) (outbox relay attempt cap: a
+row excluded by the cap is overtaken by later rows).
 
 ## Context
 

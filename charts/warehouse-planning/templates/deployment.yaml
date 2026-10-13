@@ -50,6 +50,18 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+          # D14 (2026-10-12): every config.* value (OUTBOX_RELAY_INTERVAL,
+          # OUTBOX_MAX_ATTEMPTS, SHUTDOWN_DRAIN_DELAY, CORS_ALLOWED_ORIGINS,
+          # ...) reaches cmd/api through the chart ConfigMap. The explicit
+          # `env` entries below win over envFrom for the same key and carry
+          # the same values, so nothing changes for the variables already set
+          # here; the checksum/config annotation above rolls the pods when the
+          # ConfigMap changes. Only this Deployment mounts it: the other
+          # binaries read their own explicit env (the reports binary would
+          # otherwise bind the api's HTTP_ADDR).
+          envFrom:
+            - configMapRef:
+                name: {{ include "warehouse-planning.fullname" . }}
           env:
             - name: HTTP_ADDR
               value: {{ .Values.config.httpAddr | quote }}
@@ -63,9 +75,26 @@ spec:
             - name: OUTBOX_RELAY_INTERVAL
               value: {{ . | quote }}
             {{- end }}
+            # D12 / ADR 0013: the relay excludes a row after this many
+            # failures (0 = unlimited).
+            - name: OUTBOX_MAX_ATTEMPTS
+              value: {{ .Values.config.outboxMaxAttempts | quote }}
             {{- with .Values.config.corsAllowedOrigins }}
             - name: CORS_ALLOWED_ORIGINS
               value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.shutdownDrainDelay }}
+            - name: SHUTDOWN_DRAIN_DELAY
+              value: {{ . | quote }}
+            {{- end }}
+            # D21 / ADR 0015: OTel resource attributes and the Collector.
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
             {{- end }}
             # Consumer-group ids come from values, never literals: a stable id
             # is what makes a restarted/rescheduled pod resume from its

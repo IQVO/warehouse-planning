@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
@@ -70,28 +69,38 @@ func (r *OutboxRepo) LastError(i int) string {
 }
 
 // Drain sends up to limit unpublished rows to send, oldest first and one
-// at a time, marking each published once send returned nil. It stops at
-// the first send error (preserving per-key order), records it on that row
-// and returns it, together with how many rows were published.
-func (r *OutboxRepo) Drain(ctx context.Context, limit int, send func(context.Context, outbox.Message) error) (int, error) {
+// at a time, marking each published once send returned nil. With
+// maxAttempts > 0 a row that already failed that many times is skipped (it
+// stays unpublished with its last error; ADR 0013). Drain stops at the
+// first send error (preserving per-key order among the claimable rows),
+// records it on that row and returns it as an *outbox.SendFailure, together
+// with how many rows were published.
+func (r *OutboxRepo) Drain(ctx context.Context, limit, maxAttempts int, send func(context.Context, outbox.Message) error) (int, error) {
+	type claimed struct {
+		id  int64
+		row *outboxRow
+	}
 	r.mu.Lock()
-	var pending []*outboxRow
-	for _, row := range r.rows {
-		if !row.published && len(pending) < limit {
-			pending = append(pending, row)
+	var pending []claimed
+	for i, row := range r.rows {
+		// An unpublished row's attempts are all failures.
+		if !row.published && (maxAttempts == 0 || row.attempts < maxAttempts) && len(pending) < limit {
+			pending = append(pending, claimed{id: int64(i + 1), row: row})
 		}
 	}
 	r.mu.Unlock()
 
 	published := 0
-	for _, row := range pending {
+	for _, c := range pending {
+		row := c.row
 		err := send(ctx, row.msg)
 		r.mu.Lock()
 		row.attempts++
 		if err != nil {
 			row.lastError = err.Error()
+			attempts := row.attempts
 			r.mu.Unlock()
-			return published, fmt.Errorf("outbox drain: send %s: %w", row.msg.EventType, err)
+			return published, &outbox.SendFailure{RowID: c.id, Message: row.msg, Attempts: attempts, Err: err}
 		}
 		row.published = true
 		row.lastError = ""
