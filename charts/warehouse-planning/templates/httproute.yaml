@@ -5,6 +5,10 @@ metadata:
   name: {{ include "warehouse-planning.fullname" . }}
   labels:
     {{- include "warehouse-planning.labels" . | nindent 4 }}
+  {{- with include "warehouse-planning.kongPluginNames" . }}
+  annotations:
+    konghq.com/plugins: {{ . | quote }}
+  {{- end }}
 spec:
   parentRefs:
     {{- range .Values.gatewayApi.parentRefs }}

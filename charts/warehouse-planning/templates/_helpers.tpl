@@ -175,3 +175,20 @@ consumer would be silently disabled). Fail at render instead.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+
+{{/*
+Comma-joined names of this chart's enabled KongPlugins, for the
+konghq.com/plugins annotation on every HTTPRoute this chart renders.
+Empty string (annotation omitted) when none are enabled — standalone
+installs without Kong are unaffected.
+*/}}
+{{- define "warehouse-planning.kongPluginNames" -}}
+{{- $names := list -}}
+{{- range $name, $cfg := .Values.kongPlugins -}}
+{{- if $cfg.enabled -}}
+{{- $names = append $names (printf "%s-%s" (include "warehouse-planning.fullname" $) $name) -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}
