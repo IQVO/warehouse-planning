@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 )
@@ -48,17 +51,64 @@ func unmarshalHeaders(b []byte) ([]outbox.Header, error) {
 	return out, nil
 }
 
+// traceHeaders returns the W3C trace context of ctx as outbox headers, in a
+// stable key order, using the global propagator telemetry.Setup installs
+// (trace-context + baggage). Empty when ctx carries no span.
+func traceHeaders(ctx context.Context) []outbox.Header {
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	keys := carrier.Keys()
+	sort.Strings(keys)
+	out := make([]outbox.Header, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, outbox.Header{Key: k, Value: carrier.Get(k)})
+	}
+	return out
+}
+
+// withTraceHeaders appends trace to hs, skipping a key hs already has (an
+// encoder-set header always wins). hs itself is never modified.
+func withTraceHeaders(hs, trace []outbox.Header) []outbox.Header {
+	if len(trace) == 0 {
+		return hs
+	}
+	out := append(make([]outbox.Header, 0, len(hs)+len(trace)), hs...)
+	for _, t := range trace {
+		if !hasHeader(hs, t.Key) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func hasHeader(hs []outbox.Header, key string) bool {
+	for _, h := range hs {
+		if h.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 // Insert stores msgs as unpublished rows. Called with a UnitOfWork ctx it
 // runs on that transaction (no commit of its own), so the rows land
 // atomically with the aggregate; outside a UnitOfWork the batch is its own
 // transaction.
+//
+// The W3C trace context of ctx (the request span that ran the use case) is
+// injected into each row's headers with the global propagator (gap fix D27,
+// ADR 0014): `traceparent` and, when present, `tracestate`/`baggage` are
+// appended after the CloudEvents content-type header. The relay copies the
+// stored headers onto the Kafka message, so a consumer can continue the
+// trace. Without an active span nothing is added.
 func (r *OutboxRepo) Insert(ctx context.Context, msgs ...outbox.Message) error {
 	if len(msgs) == 0 {
 		return nil
 	}
+	trace := traceHeaders(ctx)
 	return inTx(ctx, r.pool, func(q querier) error {
 		for _, m := range msgs {
-			headers, err := marshalHeaders(m.Headers)
+			headers, err := marshalHeaders(withTraceHeaders(m.Headers, trace))
 			if err != nil {
 				return fmt.Errorf("marshal outbox headers for %s: %w", m.EventType, err)
 			}

@@ -55,7 +55,11 @@ info:
 
     **Envelope (mandatory).** Every message is a CloudEvents 1.0 event in
     *structured content mode* (Kafka value = JSON event format) with the Kafka
-    header `content-type: application/cloudevents+json; charset=UTF-8`. All of
+    header `content-type: application/cloudevents+json; charset=UTF-8`.
+    Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+    `baggage` when present) carry the trace of the request that wrote the
+    outbox row (ADR 0014); consumers may extract them, and must not require
+    them. All of
     `specversion` (`1.0`), `id`, `source` (`/warehouse/warehouse-planning`),
     `type`, `subject`, `time`, `datacontenttype` (`application/json`) and
     `dataschema` are required; the payload sits under `data`. No flat
@@ -96,7 +100,8 @@ channels:
       This service's integration topic (`Topic` in
       `internal/adapters/outbound/kafka/encoder.go`). Written by the outbox
       relay; key = capacity plan id; every message carries the
-      `content-type: application/cloudevents+json; charset=UTF-8` header.
+      `content-type: application/cloudevents+json; charset=UTF-8` header
+      (plus the optional W3C `traceparent` of the writing request, ADR 0014).
       Dispatch on the full `type`, ignore unknown types, dedupe on `id`.
     subscribe:
       operationId: receiveCapacityPlanEvents

@@ -53,6 +53,24 @@ func failingPasses(t *testing.T, r *relay.Relay, n int) {
 	}
 }
 
+// assertOneCapRecordFor checks exactly one attempt-cap ERROR record was
+// logged and that it names the poison row (id, topic, type and key).
+func assertOneCapRecordFor(t *testing.T, logs *bytes.Buffer, rowID int64, key string) {
+	t.Helper()
+	recs := capRecords(t, logs)
+	if len(recs) != 1 {
+		t.Fatalf("want exactly 1 attempt-cap ERROR record, got %d", len(recs))
+	}
+	if got, _ := recs[0]["outbox_id"].(float64); int64(got) != rowID {
+		t.Errorf("outbox_id = %v, want %d", recs[0]["outbox_id"], rowID)
+	}
+	for field, want := range map[string]string{"topic": "test.integration", "event_type": "Poison", "key": key} {
+		if recs[0][field] != want {
+			t.Errorf("%s = %v, want %q", field, recs[0][field], want)
+		}
+	}
+}
+
 // TestOutboxRelay_MaxAttempts_PoisonRowExcludedThenGoodRowPublishes is the
 // gap-fix D12 reference test (ADR 0013) over real Postgres: a poison row
 // blocks the relay only until it has failed maxAttempts times. The pass that
@@ -74,18 +92,7 @@ func TestOutboxRelay_MaxAttempts_PoisonRowExcludedThenGoodRowPublishes(t *testin
 		t.Fatalf("no attempt-cap ERROR expected below the cap, got %v", recs)
 	}
 	failingPasses(t, r, 1)
-	recs := capRecords(t, &logs)
-	if len(recs) != 1 {
-		t.Fatalf("want exactly 1 attempt-cap ERROR record, got %d", len(recs))
-	}
-	if got, _ := recs[0]["outbox_id"].(float64); int64(got) != poisonID {
-		t.Errorf("outbox_id = %v, want %d", recs[0]["outbox_id"], poisonID)
-	}
-	for field, want := range map[string]string{"topic": "test.integration", "event_type": "Poison", "key": "PLAN-CAP-1"} {
-		if recs[0][field] != want {
-			t.Errorf("%s = %v, want %q", field, recs[0][field], want)
-		}
-	}
+	assertOneCapRecordFor(t, &logs, poisonID, "PLAN-CAP-1")
 
 	if published, err := r.RelayOnce(ctx); err != nil || published != 1 {
 		t.Fatalf("pass after the cap: want the good row published, got published=%d err=%v", published, err)

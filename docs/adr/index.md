@@ -28,6 +28,7 @@ decision amends or supersedes an earlier one by its own ADR.
 | [0011](0011-standard-metrics-adoption.md) | Standard metrics adoption (otelchi + a Tier-2 business counter) | Accepted (2026-10-05) |
 | [0012](0012-canonical-site-id-on-capacity-plans.md) | Canonical site_id on CapacityPlan and CapacityPlanPublished | Accepted (2026-10-06) |
 | [0013](0013-outbox-relay-attempt-cap.md) | Outbox relay attempt cap | Accepted (2026-10-13). Amends ADR 0007 §1's ordering guarantee |
+| [0014](0014-trace-context-crosses-the-outbox.md) | The W3C trace context crosses the outbox to Kafka | Accepted (2026-10-13). Additive |
 
-All thirteen are Accepted; none is Superseded as a whole. Where a page in the
+All fourteen are Accepted; none is Superseded as a whole. Where a page in the
 main documentation states a rule, it links the ADR that decided it.
