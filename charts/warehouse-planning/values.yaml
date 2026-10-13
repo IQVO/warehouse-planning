@@ -121,7 +121,7 @@ config:
   # Relative to the image WORKDIR (/app): the Dockerfile copies
   # internal/adapters/outbound/postgres/migrations to /app/migrations.
   migrationsPath: "migrations"       # MIGRATIONS_PATH
-  logLevel: "info"                   # LOG_LEVEL: debug | info | warn | error
+  logLevel: "info"                   # LOG_LEVEL: debug | info | warn (or warning) | error
   # CORS_ALLOWED_ORIGINS (comma-separated). Empty = not rendered, so the
   # binary's own local-dev default applies. In the kind cluster Kong's global
   # CORS plugin handles browsers; set this only for a direct-to-pod caller.
@@ -186,8 +186,9 @@ kafka:
 extraEnv: []
 
 # The Postgres dial (migrations + ping) at boot is wrapped in a bounded retry
-# (~31s). periodSeconds * failureThreshold gives a ~60s window, comfortably
-# past that, before the kubelet gives up. Once startupProbe succeeds,
+# (internal/bootretry: 5 attempts, 1+2+4+8 = 15 s of backoff in total, no
+# sleep after the last attempt). periodSeconds * failureThreshold gives a ~60s
+# window, comfortably past that, before the kubelet gives up. Once startupProbe succeeds,
 # liveness takes over; readiness uses the separate /readyz endpoint (flipped
 # to not-ready as the FIRST step of graceful shutdown).
 startupProbe:

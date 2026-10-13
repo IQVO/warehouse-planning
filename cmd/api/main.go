@@ -242,7 +242,8 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 
 	// The first outbound dial of an injected pod is reset ~10s after start
 	// (Istio native sidecars), so migrations and the first ping retry with
-	// backoff (~31s budget); on exhaustion the LAST error is returned and
+	// backoff (internal/bootretry: 5 attempts, 1+2+4+8 = 15 s of backoff);
+	// on exhaustion the LAST error is returned and
 	// the process still refuses to boot.
 	migrationsURL := migrationsDatabaseURL(databaseURL)
 	if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
@@ -592,14 +593,15 @@ func setupTelemetry(logger *slog.Logger) (closer func(), metrics *telemetry.Plan
 }
 
 // newLogger builds the process-wide structured logger. LOG_LEVEL maps
-// debug|info|warn|error (case-insensitive) to the matching slog.Level,
+// debug|info|warn|warning|error (case-insensitive; "warning" is accepted
+// like "warn" fleet-wide, gap fix D22) to the matching slog.Level,
 // defaulting to Info for unset/unrecognized values.
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
 		lvl = slog.LevelDebug
-	case "warn":
+	case "warn", "warning":
 		lvl = slog.LevelWarn
 	case "error":
 		lvl = slog.LevelError
