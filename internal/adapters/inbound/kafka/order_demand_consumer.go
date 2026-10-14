@@ -101,7 +101,7 @@ func NewOrderDemandConsumer(
 		Record:   record,
 		Location: location,
 		Logger:   defaultLogger(logger),
-		DLQ:      newDomainDLQWriter(brokers, OrderTopic),
+		DLQ:      newDomainDLQWriter(brokers),
 		DLQTopic: OrderTopic + DLQSuffix,
 	}
 }

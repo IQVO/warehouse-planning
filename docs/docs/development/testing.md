@@ -94,7 +94,7 @@ budget (`maxTools` = 11).
 
 ### Coverage and mutation gates
 
-- **Coverage**: `make coverage` and the CI `test` job run `go test ./... -race -coverprofile=coverage.out -coverpkg=./internal/domain/...,./internal/application/...,./internal/analytics/...` and fail below **90 %**.
+- **Coverage**: `make coverage` (which the CI `test` job runs; the Makefile is the single source of the scope and threshold, gap 16d, and harness `repo_lint` rule R11 forbids a workflow passing `-coverpkg` itself) runs `go test ./... -race -coverprofile=coverage.out -coverpkg=./internal/domain/...,./internal/application/...,./internal/analytics/...` and fails below **90 %**.
 - **Mutation** (`.gremlins.yaml`, gremlins v0.6.0): `workers: 1`, `timeout-coefficient: 30`, thresholds **efficacy 99** and **mutant-coverage 99** (gremlins fails when the value is ≤ the threshold, so any surviving mutant fails). `make mutation-fast` and the `mutation-fast` job run one `gremlins unleash` per package: `./internal/domain/processcapacity`, `./internal/domain/capacityplan`, `./internal/domain/processpath`, `./internal/domain/demand`, `./internal/analytics/report`. `make mutation-full` and the scheduled `mutation` job run `./internal/domain` as a whole. The last recorded measurement (comments in `.gremlins.yaml`) is 100 % efficacy and coverage in every package.
 
 ## Make targets
@@ -128,7 +128,7 @@ Triggers: push and pull request on `main` and `develop`, a weekly schedule
 | `lint` | golangci-lint v2.14.0 | every push/PR |
 | `guide-lint` | `guide_lint.py`, `repo_lint.py`, `test_hook.py`, `test_repo_lint.py` | every push/PR |
 | `complexity` | golangci-lint with only `gocyclo`, `gocognit`, `cyclop`, `funlen`, `nestif` (cyclomatic 15, cognitive 20, nesting 5, 80 lines / 50 statements) plus an informational gocyclo > 10 report | every push/PR |
-| `test` | build, vet, race tests with coverage, the 90 % gate | every push/PR |
+| `test` | build, vet, then `make coverage` (race tests with the Makefile's coverage scope and 90 % gate) | every push/PR |
 | `bdd` | `go test ./... -run TestFeatures -v` | every push/PR |
 | `integration` | `go test -tags=integration ./... -race -count=1` on the runner's Docker | every push/PR |
 | `mutation-fast` | gremlins on the five packages | every push/PR |

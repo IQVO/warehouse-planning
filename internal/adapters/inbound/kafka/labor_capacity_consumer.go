@@ -107,7 +107,7 @@ func NewLaborCapacityConsumer(
 		ProcessedEvents: processedEvents,
 		UoW:             uow,
 		Logger:          defaultLogger(logger),
-		DLQ:             newDomainDLQWriter(brokers, LaborTopic),
+		DLQ:             newDomainDLQWriter(brokers),
 		DLQTopic:        LaborTopic + DLQSuffix,
 	}
 }

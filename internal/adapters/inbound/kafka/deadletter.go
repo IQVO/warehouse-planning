@@ -43,8 +43,8 @@ import (
 // still bounding the previously-infinite retry.
 const domainMaxHandlerAttempts = 5
 
-// newDomainDLQWriter builds the dead-letter writer for one of the three
-// domain Kafka consumers, publishing to topic+DLQSuffix. It follows the
+// newDomainDLQWriter builds the dead-letter writer for the three domain
+// Kafka consumers. It follows the
 // SAME sync-writer settings as this service's outbox relay
 // (outbound/kafka.RelaySink): a Hash balancer on the message key (so one
 // key's dead-lettered messages land on one partition, preserving
@@ -52,10 +52,16 @@ const domainMaxHandlerAttempts = 5
 // (the DLQ topic has never been written to before the first poison
 // message) and a short BatchTimeout so a lone synchronous write is not
 // held for kafka-go's 1s default.
-func newDomainDLQWriter(brokers []string, topic string) DeadLetterWriter {
+//
+// The writer has NO fixed Topic: publishDeadLetter names "<topic>.dlq" on
+// every message, and kafka-go refuses a message whose Topic is set when the
+// Writer's is too ("Topic must not be specified for both Writer and
+// Message"). With both set, every dead-letter write failed, so a poison
+// message retried the dead-letter publish and wedged its partition (the
+// same escape slotting-optimization fixed in its ADR 0010 work).
+func newDomainDLQWriter(brokers []string) DeadLetterWriter {
 	return &kafkago.Writer{
 		Addr:                   kafkago.TCP(brokers...),
-		Topic:                  topic + DLQSuffix,
 		Balancer:               &kafkago.Hash{},
 		RequiredAcks:           kafkago.RequireAll,
 		BatchTimeout:           10 * time.Millisecond,

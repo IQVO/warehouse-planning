@@ -103,7 +103,7 @@ func NewStorageCapacityConsumer(
 		ProcessedEvents: processedEvents,
 		UoW:             uow,
 		Logger:          defaultLogger(logger),
-		DLQ:             newDomainDLQWriter(brokers, FacilityTopic),
+		DLQ:             newDomainDLQWriter(brokers),
 		DLQTopic:        FacilityTopic + DLQSuffix,
 	}
 }
