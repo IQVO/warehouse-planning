@@ -30,5 +30,20 @@ func TestNewDLQWriter_WaitsForAllInSyncReplicas(t *testing.T) {
 }
 
 func TestNewDomainDLQWriter_WaitsForAllInSyncReplicas(t *testing.T) {
-	assertAcksAll(t, newDomainDLQWriter([]string{"localhost:9092"}, OrderTopic))
+	assertAcksAll(t, newDomainDLQWriter([]string{"localhost:9092"}))
+}
+
+// TestNewDomainDLQWriter_HasNoFixedTopic pins the E6 escape: publishDeadLetter
+// names the DLQ topic on every message, and kafka-go refuses every write whose
+// Message.Topic is set when Writer.Topic is too, so a fixed writer Topic made
+// every dead letter fail and wedged the partition.
+func TestNewDomainDLQWriter_HasNoFixedTopic(t *testing.T) {
+	w, ok := newDomainDLQWriter([]string{"localhost:9092"}).(*kafkago.Writer)
+	if !ok {
+		t.Fatal("domain DLQ writer must be a *kafkago.Writer")
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	if w.Topic != "" {
+		t.Fatalf("domain DLQ writer Topic = %q, want none: publishDeadLetter names the DLQ topic on each message", w.Topic)
+	}
 }
