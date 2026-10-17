@@ -15,6 +15,11 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
+var (
+	// pcEventTime stamps the events AddConstraint raises in these tests.
+	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+)
+
 func newMigratedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	databaseURL := startPostgres(t)
@@ -54,7 +59,7 @@ func (r uowRepos) touch(t *testing.T, ctx context.Context) {
 	w, _ := processcapacity.NewCapacityWindow(time.Unix(0, 0).UTC(), time.Unix(3600, 0).UTC())
 	pc := processcapacity.NewProcessCapacity("PICK", "WH1", w)
 	rate, _ := processcapacity.NewCapacityRate(5, processcapacity.UnitUnit, time.Hour)
-	if err := pc.AddConstraint(processcapacity.ConstraintLabor, rate); err != nil {
+	if err := pc.AddConstraint(processcapacity.ConstraintLabor, rate, pcEventTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.pcs.Save(ctx, pc); err != nil {

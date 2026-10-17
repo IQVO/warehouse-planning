@@ -15,11 +15,15 @@ the two must agree.
 ## Decision
 
 1. CloudEvents 1.0 structured mode is the only envelope. There is no flat or dual mode and no envelope toggle.
-2. `type` is `com.warehouse.wes.warehouse-planning.<entity>.<EventName>`, built by `cloudevents.Type(Entity, ev.EventName())`
-   in `internal/adapters/outbound/kafka/encoder.go`. The entity segment is `capacityplan`.
-3. `subject` is the aggregate id (`ev.AggregateID()`), here the capacity plan id.
-4. Each event is published twice: as an integration event on `warehouse.warehouse-planning.events` and as an analytics
-   record on `warehouse.warehouse-planning.analytics`. Both go through the transactional outbox.
+2. `type` is `com.warehouse.wes.warehouse-planning.<entity>.<EventName>`, built by `cloudevents.Type(entity, ev.EventName())`
+   in `internal/adapters/outbound/kafka/encoder.go`. The entity segment is the raising aggregate, lowercase:
+   `capacityplan` or `processcapacity`.
+3. `subject` is the aggregate id (`ev.AggregateID()`): the capacity plan id, or a ProcessCapacity's canonical identity
+   `<processType>/<location>/<windowStart>/<windowEnd>`.
+4. Each CapacityPlan event is published twice: as an integration event on `warehouse.warehouse-planning.events` and as
+   an analytics record on `warehouse.warehouse-planning.analytics`. Both go through the transactional outbox.
+   ProcessCapacity events (constraint registrations) are integration-stream only: the analytics stream is plan facts
+   only (ADR 0005), and the analytics encoder refuses one rather than silently dropping it.
 
 ### This service's types
 
@@ -29,6 +33,8 @@ the two must agree.
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | capacity plan id |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | capacity plan id |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | capacity plan id |
+| `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered` | `<processType>/<location>/<windowStart>/<windowEnd>` |
+| `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged` | `<processType>/<location>/<windowStart>/<windowEnd>` |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated` | capacity plan id |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | capacity plan id |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | capacity plan id |

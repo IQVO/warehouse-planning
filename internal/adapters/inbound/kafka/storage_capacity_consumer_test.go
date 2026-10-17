@@ -16,6 +16,11 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
+var (
+	// pcEventTime stamps the events AddConstraint raises in these tests.
+	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+)
+
 // locationSlotEvent builds the exact CloudEvents 1.0 structured-mode
 // bytes facility-layout publishes for either LocationSlotRegistered or
 // LocationSlotDecommissioned (per docs/adr/0001-...'s Addendum), using
@@ -184,7 +189,7 @@ func TestStorageCapacityConsumer_StationTallyFeedsPathCapacityByComposition(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pack.AddConstraint(processcapacity.ConstraintLabor, rate); err != nil {
+	if err := pack.AddConstraint(processcapacity.ConstraintLabor, rate, pcEventTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := pcs.Save(ctx, pack); err != nil {

@@ -57,7 +57,7 @@ Feature: Expected demand from order-management
     And the stored capacity plan remembers its demand source is orders
     When I publish the capacity plan
     Then the response status is 200
-    And the outbox event types are CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
+    And the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
 
   Scenario: An explicit assigned_demand always wins over the orders
     Given I register a LABOR constraint of 5 UNIT per HOUR for PICK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z"
@@ -74,7 +74,7 @@ Feature: Expected demand from order-management
     When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "SIM1" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z" without assigned demand, units_per_order 1 and packages_per_order 1
     Then the response status is 422
     And the problem detail type is "missing-assigned-demand"
-    And the outbox is empty
+    And the outbox holds no capacity plan events
 
   Scenario: The demand request validates its inputs with RFC 7807 problems
     When I request the expected demand for "SIM1" for the window "2026-10-05T16:00:00Z" to "2026-10-05T08:00:00Z"

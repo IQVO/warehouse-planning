@@ -73,7 +73,7 @@ func analyticsGoldenCases() []struct {
 func TestGolden_AnalyticsTypes(t *testing.T) {
 	for _, tc := range analyticsGoldenCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			msgs, err := goldenAnalyticsEncoder().Encode(tc.event)
+			msgs, err := goldenAnalyticsEncoder().EncodeCapacityPlanEvents(tc.event)
 			if err != nil || len(msgs) != 1 {
 				t.Fatalf("Encode = %d msgs, %v", len(msgs), err)
 			}
@@ -107,7 +107,7 @@ func assertAnalyticsGolden(t *testing.T, name, want string, m outbox.Message) {
 
 func TestAnalyticsEncoder_TopicOverrideAndRandomIDs(t *testing.T) {
 	h := capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}
-	msgs, err := (&AnalyticsEncoder{Topic: "unique.analytics"}).Encode(
+	msgs, err := (&AnalyticsEncoder{Topic: "unique.analytics"}).EncodeCapacityPlanEvents(
 		capacityplan.CapacityPlanCreated{Header: h}, capacityplan.BottleneckDetected{Header: h})
 	if err != nil || len(msgs) != 2 {
 		t.Fatalf("Encode = %d, %v", len(msgs), err)
@@ -121,7 +121,7 @@ func TestAnalyticsEncoder_TopicOverrideAndRandomIDs(t *testing.T) {
 }
 
 func TestAnalyticsEncoder_FailsOnAnUnknownEventInsteadOfDroppingIt(t *testing.T) {
-	_, err := goldenAnalyticsEncoder().Encode(unpublishedEvent{capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
+	_, err := goldenAnalyticsEncoder().EncodeCapacityPlanEvents(unpublishedEvent{capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
 	if err == nil || !strings.Contains(err.Error(), "SomethingElse") {
 		t.Fatalf("err = %v, want a not-published error naming the event", err)
 	}
@@ -130,7 +130,7 @@ func TestAnalyticsEncoder_FailsOnAnUnknownEventInsteadOfDroppingIt(t *testing.T)
 // The binding constraint is a plain string on the wire; an empty one (a plan
 // stored before it was recorded) is emitted as "" rather than omitted.
 func TestAnalyticsPublished_EmptyBindingConstraintIsEmittedAsEmptyString(t *testing.T) {
-	msgs, err := goldenAnalyticsEncoder().Encode(capacityplan.CapacityPlanPublished{
+	msgs, err := goldenAnalyticsEncoder().EncodeCapacityPlanEvents(capacityplan.CapacityPlanPublished{
 		Header: capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}, BottleneckStep: "REBIN",
 	})
 	if err != nil {
@@ -147,7 +147,7 @@ func TestFanoutEncoder_OneOccurrenceTwoMessagesSameIDAndType(t *testing.T) {
 	f.NewID = func() string { id := ids[0]; ids = ids[1:]; return id }
 	h := capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}
 
-	msgs, err := f.Encode(
+	msgs, err := f.EncodeCapacityPlanEvents(
 		capacityplan.CapacityPlanCreated{Header: h, BottleneckStep: "REBIN"},
 		capacityplan.CapacityPlanPublished{Header: h, BottleneckStep: "REBIN", BottleneckConstraint: "LABOR"},
 	)
@@ -187,18 +187,18 @@ func TestFanoutEncoder_IntegrationMessagesAreByteIdenticalToTheIntegrationEncode
 	f := NewFanoutEncoder()
 	f.NewID = func() string { return goldenEvtID }
 	for _, tc := range analyticsGoldenCases() {
-		fan, err := f.Encode(tc.event)
+		fan, err := f.EncodeCapacityPlanEvents(tc.event)
 		if err != nil || len(fan) != 2 {
 			t.Fatalf("%s: Fanout = %d, %v", tc.name, len(fan), err)
 		}
-		plain, err := goldenEncoder().Encode(tc.event)
+		plain, err := goldenEncoder().EncodeCapacityPlanEvents(tc.event)
 		if err != nil || len(plain) != 1 {
 			t.Fatalf("%s: Encode = %d, %v", tc.name, len(plain), err)
 		}
 		if !equalMessages(fan[0], plain[0]) {
 			t.Errorf("%s: integration message changed under the fan-out:\n%+v\nvs\n%+v", tc.name, fan[0], plain[0])
 		}
-		analytics, err := goldenAnalyticsEncoder().Encode(tc.event)
+		analytics, err := goldenAnalyticsEncoder().EncodeCapacityPlanEvents(tc.event)
 		if err != nil || !equalMessages(fan[1], analytics[0]) {
 			t.Errorf("%s: analytics message differs from AnalyticsEncoder's: %v", tc.name, err)
 		}
@@ -207,7 +207,7 @@ func TestFanoutEncoder_IntegrationMessagesAreByteIdenticalToTheIntegrationEncode
 
 func TestFanoutEncoder_RandomIDsDifferPerOccurrenceButMatchWithinOne(t *testing.T) {
 	h := capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}
-	msgs, err := NewFanoutEncoder().Encode(capacityplan.CapacityPlanPublished{Header: h}, capacityplan.BottleneckDetected{Header: h})
+	msgs, err := NewFanoutEncoder().EncodeCapacityPlanEvents(capacityplan.CapacityPlanPublished{Header: h}, capacityplan.BottleneckDetected{Header: h})
 	if err != nil || len(msgs) != 4 {
 		t.Fatalf("Encode = %d, %v", len(msgs), err)
 	}
@@ -220,12 +220,12 @@ func TestFanoutEncoder_RandomIDsDifferPerOccurrenceButMatchWithinOne(t *testing.
 }
 
 func TestFanoutEncoder_FailsOnAnUnknownEvent(t *testing.T) {
-	_, err := NewFanoutEncoder().Encode(unpublishedEvent{capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
+	_, err := NewFanoutEncoder().EncodeCapacityPlanEvents(unpublishedEvent{capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
 	if err == nil {
 		t.Fatal("want an error for an event neither stream publishes")
 	}
 	var empty []capacityplan.Event
-	if msgs, err := NewFanoutEncoder().Encode(empty...); err != nil || len(msgs) != 0 {
+	if msgs, err := NewFanoutEncoder().EncodeCapacityPlanEvents(empty...); err != nil || len(msgs) != 0 {
 		t.Fatalf("no events = %v, %v", msgs, errors.Unwrap(err))
 	}
 }

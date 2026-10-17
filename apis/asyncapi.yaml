@@ -2,7 +2,7 @@ asyncapi: 2.6.0
 
 info:
   title: warehouse-planning Domain Events
-  version: "0.5.0"
+  version: "0.6.0"
   contact:
     name: warehouse-planning maintainers
     url: https://github.com/IQVO/warehouse-planning
@@ -22,7 +22,13 @@ info:
     `CapacityPlanCreated` on creation; on publication
     `CapacityPlanPublished`, plus `CapacityShortageDetected` and
     `BottleneckDetected` only when the plan has a shortage.
-    `ProcessCapacityRegistered`/`ProcessCapacityChanged` are NOT published yet.
+    The `ProcessCapacity` aggregate publishes on the same topic and the same
+    outbox: `ProcessCapacityRegistered` when its first (native) constraint
+    brings it into being, `ProcessCapacityChanged` when a registration
+    moves the effective rate (the minimum rate value, the binding
+    constraint, or both); a registration the effective rate does not notice
+    raises nothing. ProcessCapacity events are integration-stream only: the
+    analytics fanout carries plan facts only (ADR 0005).
 
     **Consumed (Phase 3).** `ShiftPlanCommitted` (workforce-management) and
     `LocationSlotRegistered`/`LocationSlotDecommissioned` (facility-layout) keep
@@ -67,11 +73,13 @@ info:
 
     **Type naming.** `com.warehouse.wes.warehouse-planning.<entity>.<EventName>`
     where `<entity>` is the aggregate that raised the event, lowercase, no
-    separators -- here `capacityplan`. **dataschema** =
+    separators -- `capacityplan` or `processcapacity`. **dataschema** =
     `urn:warehouse:warehouse-planning:events:<EventName>:v1`. **subject** and
-    the Kafka message key = the capacity plan id (one plan's events stay
-    ordered on one partition). A breaking payload change gets a new `.v2`
-    type and dataschema, never a mutation.
+    the Kafka message key = the aggregate's id: the capacity plan id, or
+    `<processType>/<location>/<windowStart>/<windowEnd>` for a
+    ProcessCapacity (one aggregate's events stay ordered on one partition).
+    A breaking payload change gets a new `.v2` type and dataschema, never a
+    mutation.
 
 servers:
   production:
@@ -89,6 +97,8 @@ tags:
     description: The warehouse-planning bounded context (WES subdomain).
   - name: capacity-plan
     description: Events raised by the CapacityPlan aggregate (published, Phase 4).
+  - name: process-capacity
+    description: Events raised by the ProcessCapacity aggregate on constraint registration (published).
   - name: consumed
     description: Events produced by sibling contexts that this service consumes (Phase 3).
   - name: analytics
@@ -99,24 +109,32 @@ channels:
     description: |
       This service's integration topic (`Topic` in
       `internal/adapters/outbound/kafka/encoder.go`). Written by the outbox
-      relay; key = capacity plan id; every message carries the
-      `content-type: application/cloudevents+json; charset=UTF-8` header
-      (plus the optional W3C `traceparent` of the writing request, ADR 0014).
-      Dispatch on the full `type`, ignore unknown types, dedupe on `id`.
+      relay; key = the raising aggregate's id (plan id, or
+      processType/location/window for a ProcessCapacity); every message
+      carries the `content-type: application/cloudevents+json; charset=UTF-8`
+      header (plus the optional W3C `traceparent` of the writing request,
+      ADR 0014). Dispatch on the full `type`, ignore unknown types, dedupe
+      on `id`.
     subscribe:
-      operationId: receiveCapacityPlanEvents
-      summary: Receive CapacityPlan events.
+      operationId: receiveWarehousePlanningEvents
+      summary: Receive CapacityPlan and ProcessCapacity events.
       description: |
-        Subscribe to the CapacityPlan event stream. Route on the full `type`
-        (`com.warehouse.wes.warehouse-planning.capacityplan.<EventName>`).
+        Subscribe to this service's event stream. Route on the full `type`:
+        `com.warehouse.wes.warehouse-planning.capacityplan.<EventName>` for
+        CapacityPlan events,
+        `com.warehouse.wes.warehouse-planning.processcapacity.<EventName>`
+        for ProcessCapacity events.
       tags:
         - name: capacity-plan
+        - name: process-capacity
       message:
         oneOf:
           - $ref: "#/components/messages/CapacityPlanCreated"
           - $ref: "#/components/messages/CapacityPlanPublished"
           - $ref: "#/components/messages/CapacityShortageDetected"
           - $ref: "#/components/messages/BottleneckDetected"
+          - $ref: "#/components/messages/ProcessCapacityRegistered"
+          - $ref: "#/components/messages/ProcessCapacityChanged"
 
   warehouse.warehouse-planning.analytics:
     description: |
@@ -373,6 +391,91 @@ components:
               window_end: "2026-10-05T16:00:00Z"
               bottleneck_step: "REBIN"
               path_capacity: 1000
+
+    ProcessCapacityRegistered:
+      name: ProcessCapacityRegistered
+      title: Process capacity registered
+      summary: The first constraint brought a ProcessCapacity into being.
+      description: |
+        Raised by `ProcessCapacity.AddConstraint` when the FIRST constraint of
+        (processType, location, window) is registered -- the one that
+        establishes the native unit; its rate is the effective rate at that
+        moment. Raised on `POST /process-capacities` and by the labor-capacity
+        consumer, queued in the transactional outbox in the same transaction
+        as the aggregate. `type` =
+        `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered`;
+        `subject` and Kafka key =
+        `<processType>/<location>/<windowStart>/<windowEnd>`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: process-capacity
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/ProcessCapacityRegisteredEvent"
+      examples:
+        - name: pickLabor
+          summary: "PICK at PATH-ZONE-A for one hour, native LABOR constraint 4000 UNIT/h."
+          payload:
+            specversion: "1.0"
+            id: "5d4c3b2a-1f2e-4a3b-9c8d-7e6f5a4b3c2d"
+            source: "/warehouse/warehouse-planning"
+            type: "com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered"
+            subject: "PICK/PATH-ZONE-A/2026-10-05T08:00:00Z/2026-10-05T09:00:00Z"
+            time: "2026-10-04T21:45:10Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:warehouse-planning:events:ProcessCapacityRegistered:v1"
+            data:
+              process_type: "PICK"
+              location: "PATH-ZONE-A"
+              window_start: "2026-10-05T08:00:00Z"
+              window_end: "2026-10-05T09:00:00Z"
+              constraint_type: "LABOR"
+              quantity: 4000
+              unit: "UNIT"
+              period_seconds: 3600
+
+    ProcessCapacityChanged:
+      name: ProcessCapacityChanged
+      title: Process capacity changed
+      summary: A registration moved a ProcessCapacity's effective rate.
+      description: |
+        Raised by `ProcessCapacity.AddConstraint` when a registration (new or
+        re-registered) changes the effective rate: the minimum rate value,
+        the binding constraint, or both. A registration that leaves the
+        effective rate untouched raises nothing. `type` =
+        `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: process-capacity
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/ProcessCapacityChangedEvent"
+      examples:
+        - name: locationTakesOver
+          summary: "LOCATION 3500 UNIT/h drops below LABOR 4000 UNIT/h and binds."
+          payload:
+            specversion: "1.0"
+            id: "4c3b2a19-0e1d-4f2a-8b7c-6d5e4f3a2b1c"
+            source: "/warehouse/warehouse-planning"
+            type: "com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged"
+            subject: "PICK/PATH-ZONE-A/2026-10-05T08:00:00Z/2026-10-05T09:00:00Z"
+            time: "2026-10-04T21:46:10Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:warehouse-planning:events:ProcessCapacityChanged:v1"
+            data:
+              process_type: "PICK"
+              location: "PATH-ZONE-A"
+              window_start: "2026-10-05T08:00:00Z"
+              window_end: "2026-10-05T09:00:00Z"
+              constraint_type: "LOCATION"
+              previous_quantity: 4000
+              previous_unit: "UNIT"
+              previous_period_seconds: 3600
+              previous_binding_constraint: "LABOR"
+              effective_quantity: 3500
+              effective_unit: "UNIT"
+              effective_period_seconds: 3600
+              effective_binding_constraint: "LOCATION"
 
     CapacityPlanCreatedAnalytics:
       name: CapacityPlanCreatedAnalytics
@@ -773,6 +876,155 @@ components:
           format: double
           description: Normalized path capacity, ORDER per HOUR.
           example: 1000
+    ProcessCapacityRegisteredEvent:
+      description: CloudEvents 1.0 envelope of ProcessCapacityRegistered.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered"
+            dataschema:
+              const: "urn:warehouse:warehouse-planning:events:ProcessCapacityRegistered:v1"
+            data:
+              $ref: "#/components/schemas/ProcessCapacityRegisteredData"
+    ProcessCapacityRegisteredData:
+      type: object
+      description: Payload of ProcessCapacityRegistered -- the native constraint that created the aggregate.
+      required:
+        - process_type
+        - location
+        - window_start
+        - window_end
+        - constraint_type
+        - quantity
+        - unit
+        - period_seconds
+      properties:
+        process_type:
+          type: string
+          description: The warehouse process (PICK, PACK, REBIN, ...).
+          example: "PICK"
+        location:
+          type: string
+          description: ProcessCapacity location.
+          example: "PATH-ZONE-A"
+        window_start:
+          type: string
+          format: date-time
+          description: Capacity window start (RFC 3339, UTC).
+          example: "2026-10-05T08:00:00Z"
+        window_end:
+          type: string
+          format: date-time
+          description: Capacity window end, exclusive (RFC 3339, UTC).
+          example: "2026-10-05T09:00:00Z"
+        constraint_type:
+          type: string
+          description: "The native constraint type (LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT)."
+          example: "LABOR"
+        quantity:
+          type: number
+          format: double
+          description: The constraint's rate quantity; also the effective rate at registration.
+          example: 4000
+        unit:
+          type: string
+          description: "The aggregate's native unit (UNIT, LINE, ORDER, PACKAGE)."
+          example: "UNIT"
+        period_seconds:
+          type: number
+          format: double
+          description: The rate's time base in seconds.
+          example: 3600
+    ProcessCapacityChangedEvent:
+      description: CloudEvents 1.0 envelope of ProcessCapacityChanged.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged"
+            dataschema:
+              const: "urn:warehouse:warehouse-planning:events:ProcessCapacityChanged:v1"
+            data:
+              $ref: "#/components/schemas/ProcessCapacityChangedData"
+    ProcessCapacityChangedData:
+      type: object
+      description: Payload of ProcessCapacityChanged -- the effective rate before and after the causing registration.
+      required:
+        - process_type
+        - location
+        - window_start
+        - window_end
+        - constraint_type
+        - previous_quantity
+        - previous_unit
+        - previous_period_seconds
+        - previous_binding_constraint
+        - effective_quantity
+        - effective_unit
+        - effective_period_seconds
+        - effective_binding_constraint
+      properties:
+        process_type:
+          type: string
+          description: The warehouse process (PICK, PACK, REBIN, ...).
+          example: "PICK"
+        location:
+          type: string
+          description: ProcessCapacity location.
+          example: "PATH-ZONE-A"
+        window_start:
+          type: string
+          format: date-time
+          description: Capacity window start (RFC 3339, UTC).
+          example: "2026-10-05T08:00:00Z"
+        window_end:
+          type: string
+          format: date-time
+          description: Capacity window end, exclusive (RFC 3339, UTC).
+          example: "2026-10-05T09:00:00Z"
+        constraint_type:
+          type: string
+          description: The constraint whose registration caused the change.
+          example: "LOCATION"
+        previous_quantity:
+          type: number
+          format: double
+          description: Effective rate quantity before the registration.
+          example: 4000
+        previous_unit:
+          type: string
+          description: Native unit (identical across constraints of one aggregate).
+          example: "UNIT"
+        previous_period_seconds:
+          type: number
+          format: double
+          description: Effective rate time base before the registration, in seconds.
+          example: 3600
+        previous_binding_constraint:
+          type: string
+          description: The binding constraint before the registration.
+          example: "LABOR"
+        effective_quantity:
+          type: number
+          format: double
+          description: Effective rate quantity after the registration.
+          example: 3500
+        effective_unit:
+          type: string
+          description: Native unit (identical across constraints of one aggregate).
+          example: "UNIT"
+        effective_period_seconds:
+          type: number
+          format: double
+          description: Effective rate time base after the registration, in seconds.
+          example: 3600
+        effective_binding_constraint:
+          type: string
+          description: The binding constraint after the registration.
+          example: "LOCATION"
         capacity_over_window:
           type: number
           format: double

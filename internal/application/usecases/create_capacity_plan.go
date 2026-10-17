@@ -211,10 +211,10 @@ func (uc *CreateCapacityPlan) resolveDemand(ctx context.Context, cmd CreateCapac
 // request and the published events saw.
 func utcNow() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
-// enqueue encodes events and inserts them into the outbox through ctx (the
-// caller's UnitOfWork transaction).
+// enqueue encodes CapacityPlan events and inserts them into the outbox
+// through ctx (the caller's UnitOfWork transaction).
 func enqueue(ctx context.Context, enc ports.EventEncoder, out ports.OutboxRepository, events []capacityplan.Event) error {
-	msgs, err := enc.Encode(events...)
+	msgs, err := enc.EncodeCapacityPlanEvents(events...)
 	if err != nil {
 		return err
 	}

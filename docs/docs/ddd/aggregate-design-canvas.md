@@ -75,8 +75,15 @@ adds a constraint before saving.
 
 ### 7. Created Events
 
-None. `ProcessCapacityRegistered` and `ProcessCapacityChanged` are domain
-vocabulary only; nothing raises or publishes them.
+| Event | Raised | Published as |
+| --- | --- | --- |
+| `ProcessCapacityRegistered` | `AddConstraint`, when the first (native) constraint registers the aggregate | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered` |
+| `ProcessCapacityChanged` | `AddConstraint`, when a registration moves the effective rate (value, binding, or both); a registration it does not notice raises nothing | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged` |
+
+`subject` and the Kafka key are the aggregate's canonical identity
+`<processType>/<location>/<windowStart>/<windowEnd>`; the events are outboxed
+in the same unit of work as the save and get no analytics copy (plan facts
+only, ADR 0005).
 
 ### 8. Throughput (estimate)
 

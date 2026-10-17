@@ -77,7 +77,7 @@ this context never makes a live cross-context REST/MCP call instead.
 Implemented in Phase 4 (encoded by `internal/adapters/outbound/kafka/encoder.go`
 through the `cloudevents` helper; golden exact-JSON tests in
 `encoder_test.go`). Topic `warehouse.warehouse-planning.events`, Kafka key =
-`subject` = the capacity plan id, source `/warehouse/warehouse-planning`.
+`subject` = the raising aggregate's id, source `/warehouse/warehouse-planning`.
 
 | `type` | raised | `dataschema` |
 | --- | --- | --- |
@@ -85,6 +85,8 @@ through the `cloudevents` helper; golden exact-JSON tests in
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | publish | `urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:CapacityShortageDetected:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:BottleneckDetected:v1` |
+| `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered` | `RegisterProcessCapacityConstraint` (REST, MCP, labor consumer) — the FIRST constraint of a (process, location, window) | `urn:warehouse:warehouse-planning:events:ProcessCapacityRegistered:v1` |
+| `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged` | `RegisterProcessCapacityConstraint`, when a registration moves the effective rate (value, binding, or both) | `urn:warehouse:warehouse-planning:events:ProcessCapacityChanged:v1` |
 
 Payloads (snake_case; quantities are orders; `path_capacity` is ORDER/HOUR;
 times RFC 3339 UTC) are documented field by field in `apis/asyncapi.yaml`.
@@ -96,9 +98,11 @@ payload without it still decodes; never derived from `warehouse_id` or
 `path_id`, `window_start`, `window_end`, `assigned_demand`,
 `capacity_over_window`, `shortage`, `bottleneck_step`.
 
-NOT implemented (do not list them as published): `ProcessCapacityRegistered`
-and `ProcessCapacityChanged` exist as domain-model vocabulary only -- nothing
-raises or publishes them yet.
+The ProcessCapacity events' `subject` and Kafka key are the aggregate's
+canonical identity `<processType>/<location>/<windowStart>/<windowEnd>`; they
+are outboxed in the same unit of work as the aggregate save and get NO
+analytics copy (the analytics stream is plan facts only; `AnalyticsEncoder`
+refuses one rather than silently dropping it).
 
 ### The analytics stream (ADR 0005)
 

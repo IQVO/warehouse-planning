@@ -16,6 +16,7 @@ import (
 
 	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
 
@@ -44,11 +45,21 @@ type wave2State struct {
 	slotCodes map[string][]string
 }
 
-func newWave2State(repo *memory.ProcessCapacityRepo) wave2State {
+// newWave2State wires the labor consumer the way cmd/api does: the
+// consumer's unit of work wraps (and the use case's Do joins it) the same
+// outbox the HTTP surface writes, so a ShiftPlanCommitted that registers
+// or changes a LABOR constraint also leaves its ProcessCapacity events
+// there.
+func newWave2State(repo *memory.ProcessCapacityRepo, outboxRepo *memory.OutboxRepo, encoder ports.EventEncoder, uow ports.UnitOfWork) wave2State {
 	processed := memory.NewProcessedEventRepo()
 	return wave2State{
 		labor: &inboundkafka.LaborCapacityConsumer{
-			Register:        &usecases.RegisterProcessCapacityConstraint{Repo: repo},
+			Register: &usecases.RegisterProcessCapacityConstraint{
+				Repo: repo,
+				// Same contract as cmd/api: the events raised by the
+				// registration join the consumer's open unit of work.
+				Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
+			},
 			ProcessedEvents: processed,
 			UoW:             memory.NewUnitOfWork(repo, processed),
 			Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),

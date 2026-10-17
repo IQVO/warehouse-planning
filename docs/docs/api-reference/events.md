@@ -37,8 +37,8 @@ extract them and must not require them.
 | `specversion` | `1.0` |
 | `id` | UUID v4 minted once per domain event and persisted with the outbox row; consumers dedupe on it |
 | `source` | `/warehouse/warehouse-planning` |
-| `type` | `com.warehouse.wes.warehouse-planning.<entity>.<EventName>` (here `<entity>` is `capacityplan`) |
-| `subject` | the aggregate instance id (the capacity plan id); also the Kafka key |
+| `type` | `com.warehouse.wes.warehouse-planning.<entity>.<EventName>` (`<entity>` is `capacityplan` or `processcapacity`) |
+| `subject` | the aggregate instance id (the capacity plan id, or `<process_type>/<location>/<window_start>/<window_end>`); also the Kafka key |
 | `time` | domain occurred-at, UTC |
 | `datacontenttype` | `application/json` |
 | `dataschema` | `urn:warehouse:warehouse-planning:events:<EventName>:v1` |
@@ -57,10 +57,18 @@ Topic `warehouse.warehouse-planning.events`, written by the outbox relay.
 | `CapacityShortageDetected` | publication, only when `shortage > 0` | `plan_id`, `warehouse_id`, `location`, `path_id`, `window_start`, `window_end`, `assigned_demand`, `capacity_over_window`, `shortage`, `bottleneck_step` |
 | `BottleneckDetected` | publication, only when `shortage > 0` | `plan_id`, `warehouse_id`, `location`, `path_id`, `window_start`, `window_end`, `bottleneck_step`, `path_capacity` |
 
-Quantities are orders; `path_capacity` is ORDER per hour; times are RFC 3339 UTC.
-`ProcessCapacityRegistered` and `ProcessCapacityChanged` are **not** published.
-Each occurrence is also written once more to the analytics topic (see
-"Analytics stream" above).
+Each plan-event occurrence is also written once more to the analytics topic
+(see "Analytics stream" above).
+
+`ProcessCapacity` publishes on the same topic, suffix after
+`com.warehouse.wes.warehouse-planning.processcapacity.`; `subject` and the
+Kafka key are `<process_type>/<location>/<window_start>/<window_end>`. No
+analytics copy: the analytics stream is plan facts only.
+
+| Type suffix (after `com.warehouse.wes.warehouse-planning.processcapacity.`) | Raised | Payload (`data`) |
+| --- | --- | --- |
+| `ProcessCapacityRegistered` | `POST /process-capacities` / MCP / labor consumer — the FIRST constraint of a process, location and window | `process_type`, `location`, `window_start`, `window_end`, `constraint_type`, `quantity`, `unit`, `period_seconds` |
+| `ProcessCapacityChanged` | a later registration that moves the effective rate (value, binding, or both) | `process_type`, `location`, `window_start`, `window_end`, `constraint_type`, `previous_quantity`, `previous_unit`, `previous_period_seconds`, `previous_binding_constraint`, `effective_quantity`, `effective_unit`, `effective_period_seconds`, `effective_binding_constraint` |
 
 ## Consumed
 

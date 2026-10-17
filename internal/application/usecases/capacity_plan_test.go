@@ -25,7 +25,7 @@ var (
 // stand-in for the Kafka adapter's CloudEvents encoder.
 type fakeEncoder struct{ err error }
 
-func (e fakeEncoder) Encode(events ...capacityplan.Event) ([]outbox.Message, error) {
+func (e fakeEncoder) EncodeCapacityPlanEvents(events ...capacityplan.Event) ([]outbox.Message, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -35,6 +35,23 @@ func (e fakeEncoder) Encode(events ...capacityplan.Event) ([]outbox.Message, err
 			EventID:   fmt.Sprintf("evt-%s-%d", ev.EventName(), i),
 			EventType: ev.EventName(),
 			Subject:   ev.AggregateID(),
+		})
+	}
+	return out, nil
+}
+
+// EncodeProcessCapacityEvents implements ports.EventEncoder for the
+// ProcessCapacity events (unused by the plan use cases under test; a real
+// encoder is exercised by the kafka adapter's own tests).
+func (e fakeEncoder) EncodeProcessCapacityEvents(events ...processcapacity.Event) ([]outbox.Message, error) {
+	if e.err != nil {
+		return nil, e.err
+	}
+	out := make([]outbox.Message, 0, len(events))
+	for i, ev := range events {
+		out = append(out, outbox.Message{
+			EventID:   fmt.Sprintf("evt-%s-%d", ev.EventName(), i),
+			EventType: ev.EventName(),
 		})
 	}
 	return out, nil

@@ -56,3 +56,14 @@ Feature: Labor capacity from committed shift plans
     When I look up the effective capacity for PICK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
     Then the response status is 404
     And the problem detail type is "process-capacity-not-found"
+
+  # The registration the consumer performs raises the aggregate's own
+  # events into the same outbox (integration stream), exactly as an HTTP
+  # registration does.
+  Scenario: A shift plan that raises the labor rate publishes the capacity events
+    Given workforce-management committed shift plan "shift-ev-1" for building "SIM1" on path "pick" with 10 heads at 400 per head per hour for 8 hours starting "2026-10-05T08:00:00Z"
+    And workforce-management committed shift plan "shift-ev-2" for building "SIM1" on path "pick" with 20 heads at 400 per head per hour for 8 hours starting "2026-10-05T08:00:00Z"
+    When I look up the effective capacity for PICK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    Then the response status is 200
+    And the effective capacity response reports 8000 UNIT per HOUR bound by LABOR
+    And the outbox event types are ProcessCapacityRegistered, ProcessCapacityChanged

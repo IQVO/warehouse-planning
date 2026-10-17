@@ -10,6 +10,11 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
+var (
+	// pcEventTime stamps the events AddConstraint raises in these tests.
+	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+)
+
 const (
 	planID      = "0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10"
 	warehouseID = "WH-1"
@@ -52,7 +57,7 @@ func phase2PathCapacity(t *testing.T) (processcapacity.CapacityRate, processcapa
 	w := mustWindow(t, windowStart, windowEnd)
 	mk := func(pt processcapacity.ProcessType, q float64, u processcapacity.CapacityUnit) *processcapacity.ProcessCapacity {
 		pc := processcapacity.NewProcessCapacity(pt, location, w)
-		if err := pc.AddConstraint(processcapacity.ConstraintLabor, mustRate(t, q, u, time.Hour)); err != nil {
+		if err := pc.AddConstraint(processcapacity.ConstraintLabor, mustRate(t, q, u, time.Hour), pcEventTime); err != nil {
 			t.Fatalf("constraint: %v", err)
 		}
 		return pc

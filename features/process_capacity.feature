@@ -29,3 +29,24 @@ Feature: Effective ProcessCapacity
     And I register an EQUIPMENT constraint of 50 PACKAGE per HOUR for PICK at PICK-ZONE-B for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z"
     Then the response status is 409
     And the problem detail type is "unit-mismatch"
+
+  # ProcessCapacityRegistered / ProcessCapacityChanged (see
+  # docs/docs/ddd/domain-events.md): the first constraint registers the
+  # aggregate, a registration that moves the effective rate changes it, and
+  # one that leaves the effective rate untouched raises nothing.
+  Scenario: The first constraint publishes ProcessCapacityRegistered
+    When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at OUTBOX-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z"
+    Then the response status is 201
+    And the outbox event types are ProcessCapacityRegistered
+
+  Scenario: A registration that lowers the effective rate publishes ProcessCapacityChanged
+    When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at OUTBOX-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z"
+    And I register a LOCATION constraint of 3500 UNIT per HOUR for PICK at OUTBOX-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z"
+    Then the response status is 201
+    And the outbox event types are ProcessCapacityRegistered, ProcessCapacityChanged
+
+  Scenario: A registration that leaves the effective rate untouched publishes nothing
+    When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at OUTBOX-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z"
+    And I register an EQUIPMENT constraint of 5000 UNIT per HOUR for PICK at OUTBOX-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z"
+    Then the response status is 201
+    And the outbox event types are ProcessCapacityRegistered
