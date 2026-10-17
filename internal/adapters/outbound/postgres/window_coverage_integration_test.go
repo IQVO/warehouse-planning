@@ -19,10 +19,6 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
-var (
-	// pcEventTime stamps the events AddConstraint raises in these tests.
-	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
-)
 
 // Window coverage against a REAL Postgres (docs/adr/0003): FindCovering's
 // range predicate (window_start <= requested start AND window_end >= requested

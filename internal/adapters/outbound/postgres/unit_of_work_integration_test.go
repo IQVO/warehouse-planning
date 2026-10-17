@@ -15,10 +15,6 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
-var (
-	// pcEventTime stamps the events AddConstraint raises in these tests.
-	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
-)
 
 func newMigratedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
