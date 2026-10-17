@@ -25,17 +25,17 @@ func pickRebinPackCapacities(t *testing.T) map[ProcessType]*ProcessCapacity {
 	window := pickZoneAWindow(t)
 
 	pick := NewProcessCapacity("PICK", "PATH-ZONE-A", window)
-	if err := pick.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour)); err != nil {
+	if err := pick.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding PICK's constraint: %v", err)
 	}
 
 	rebin := NewProcessCapacity("REBIN", "PATH-ZONE-A", window)
-	if err := rebin.AddConstraint(ConstraintLabor, mustRate(t, 2500, UnitUnit, time.Hour)); err != nil {
+	if err := rebin.AddConstraint(ConstraintLabor, mustRate(t, 2500, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding REBIN's constraint: %v", err)
 	}
 
 	pack := NewProcessCapacity("PACK", "PATH-ZONE-A", window)
-	if err := pack.AddConstraint(ConstraintLabor, mustRate(t, 1800, UnitPackage, time.Hour)); err != nil {
+	if err := pack.AddConstraint(ConstraintLabor, mustRate(t, 1800, UnitPackage, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding PACK's constraint: %v", err)
 	}
 
@@ -99,11 +99,11 @@ func TestComputeProcessPathCapacity_FirstStepIsTheBottleneckWhenSmallest(t *test
 	window := pickZoneAWindow(t)
 
 	pick := NewProcessCapacity("PICK", "PATH-ZONE-A", window)
-	if err := pick.AddConstraint(ConstraintLabor, mustRate(t, 900, UnitUnit, time.Hour)); err != nil {
+	if err := pick.AddConstraint(ConstraintLabor, mustRate(t, 900, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	pack := NewProcessCapacity("PACK", "PATH-ZONE-A", window)
-	if err := pack.AddConstraint(ConstraintLabor, mustRate(t, 1800, UnitPackage, time.Hour)); err != nil {
+	if err := pack.AddConstraint(ConstraintLabor, mustRate(t, 1800, UnitPackage, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -131,7 +131,7 @@ func TestComputeProcessPathCapacity_FirstStepIsTheBottleneckWhenSmallest(t *test
 func TestComputeProcessPathCapacity_PropagatesNormalizationError(t *testing.T) {
 	window := pickZoneAWindow(t)
 	pick := NewProcessCapacity("PICK", "PATH-ZONE-A", window)
-	if err := pick.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour)); err != nil {
+	if err := pick.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

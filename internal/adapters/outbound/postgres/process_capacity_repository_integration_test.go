@@ -17,6 +17,11 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
+var (
+	// pcEventTime stamps the events AddConstraint raises in these tests.
+	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+)
+
 // migrationsDir resolves this package's migrations/ directory relative to
 // this test file, so the test works regardless of the working directory
 // `go test` is invoked from.
@@ -105,7 +110,7 @@ func TestProcessCapacityRepo_SaveLoadRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error building rate: %v", err)
 		}
-		if err := pc.AddConstraint(reg.constraintType, rate); err != nil {
+		if err := pc.AddConstraint(reg.constraintType, rate, pcEventTime); err != nil {
 			t.Fatalf("unexpected error adding constraint %v: %v", reg.constraintType, err)
 		}
 	}

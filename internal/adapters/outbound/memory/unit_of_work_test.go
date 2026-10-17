@@ -11,6 +11,11 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
+var (
+	// pcEventTime stamps the events AddConstraint raises in these tests.
+	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+)
+
 var _ ports.UnitOfWork = (*memory.UnitOfWork)(nil)
 
 type uowFixture struct {
@@ -37,7 +42,7 @@ func (f uowFixture) touchEverything(t *testing.T, ctx context.Context) {
 	w, _ := processcapacity.NewCapacityWindow(time.Unix(0, 0), time.Unix(3600, 0))
 	pc := processcapacity.NewProcessCapacity("PICK", "WH1", w)
 	r, _ := processcapacity.NewCapacityRate(5, processcapacity.UnitUnit, time.Hour)
-	if err := pc.AddConstraint(processcapacity.ConstraintLabor, r); err != nil {
+	if err := pc.AddConstraint(processcapacity.ConstraintLabor, r, pcEventTime); err != nil {
 		t.Fatalf("AddConstraint: %v", err)
 	}
 	if err := f.pcs.Save(ctx, pc); err != nil {
@@ -144,7 +149,7 @@ func TestProcessCapacityRepo_StoresCopiesNotAliases(t *testing.T) {
 	f.touchEverything(t, context.Background())
 	pc, _ := f.pcs.FindByProcessLocationWindow(context.Background(), "PICK", "WH1", time.Unix(0, 0), time.Unix(3600, 0))
 	r, _ := processcapacity.NewCapacityRate(1, processcapacity.UnitUnit, time.Hour)
-	if err := pc.AddConstraint(processcapacity.ConstraintEquipment, r); err != nil {
+	if err := pc.AddConstraint(processcapacity.ConstraintEquipment, r, pcEventTime); err != nil {
 		t.Fatal(err)
 	}
 	again, _ := f.pcs.FindByProcessLocationWindow(context.Background(), "PICK", "WH1", time.Unix(0, 0), time.Unix(3600, 0))

@@ -140,7 +140,7 @@ func TestPublisher_RealKafka_CloudEventsEnvelopeAndPayload(t *testing.T) {
 	// builds the structured-mode messages; RelaySink is the exact writer
 	// the relay in cmd/api uses against a real broker.
 	encoder := &outboundkafka.Encoder{NewID: uuid.NewString, Topic: topic}
-	msgs, err := encoder.Encode(events...)
+	msgs, err := encoder.EncodeCapacityPlanEvents(events...)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestPublisher_RealKafka_AnalyticsStreamCarriesItsOwnSchema(t *testing.T) {
 
 	events := planEvents(t)
 	encoder := &outboundkafka.AnalyticsEncoder{NewID: uuid.NewString, Topic: topic}
-	msgs, err := encoder.Encode(events...)
+	msgs, err := encoder.EncodeCapacityPlanEvents(events...)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}

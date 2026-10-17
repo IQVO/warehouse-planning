@@ -73,14 +73,23 @@ func run() error {
 	defer closeAdapters()
 	pcRepo, pathRepo := ad.processCapacities, ad.processPaths
 
-	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo}
+	// ADR 0005: every domain event is enqueued twice in the same unit of
+	// work, on the integration topic and on the analytics topic
+	// (ProcessCapacity events integration-only: the analytics stream is
+	// plan facts only).
+	encoder := outboundkafka.NewFanoutEncoder()
+	register := &usecases.RegisterProcessCapacityConstraint{
+		Repo: pcRepo,
+		// The aggregate's ProcessCapacityRegistered/ProcessCapacityChanged
+		// events are outboxed in the SAME unit of work as the save (also
+		// when the labor consumer drives this use case: its Do joins the
+		// consumer's open unit of work).
+		Outbox: ad.outbox, Encoder: encoder, UnitOfWork: ad.uow,
+	}
 	pathCapacity := &usecases.GetProcessPathCapacity{
 		ProcessPaths: pathRepo, ProcessCapacities: pcRepo,
 		StationStandards: ad.stationStandards, Tally: ad.tallyReader,
 	}
-	// ADR 0005: every domain event is enqueued twice in the same unit of
-	// work, on the integration topic and on the analytics topic.
-	encoder := outboundkafka.NewFanoutEncoder()
 	expectedDemand := &usecases.GetExpectedDemand{Demand: ad.orderDemand}
 	readiness := &inboundhttp.Readiness{}
 	server := buildServer(ad, register, pathCapacity, encoder, expectedDemand, planMetrics, readiness)

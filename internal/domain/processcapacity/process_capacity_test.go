@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+var (
+	// pcEventTime stamps the events AddConstraint raises in these tests.
+	pcEventTime = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+)
+
 // pickZoneAWindow builds the exact window used by the design doc's worked
 // example: 2026-10-05T08:00:00Z..09:00:00Z.
 func pickZoneAWindow(t *testing.T) CapacityWindow {
@@ -38,16 +43,16 @@ func TestProcessCapacity_WorkedExample_PickZoneA(t *testing.T) {
 	window := pickZoneAWindow(t)
 	pc := NewProcessCapacity("PICK", "PICK-ZONE-A", window)
 
-	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding LABOR: %v", err)
 	}
-	if err := pc.AddConstraint(ConstraintLocation, mustRate(t, 3500, UnitUnit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintLocation, mustRate(t, 3500, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding LOCATION: %v", err)
 	}
-	if err := pc.AddConstraint(ConstraintEquipment, mustRate(t, 5000, UnitUnit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintEquipment, mustRate(t, 5000, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding EQUIPMENT: %v", err)
 	}
-	if err := pc.AddConstraint(ConstraintConveyor, mustRate(t, 3800, UnitUnit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintConveyor, mustRate(t, 3800, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding CONVEYOR: %v", err)
 	}
 
@@ -72,10 +77,10 @@ func TestProcessCapacity_EffectiveRate_ErrorsWithZeroConstraints(t *testing.T) {
 
 func TestProcessCapacity_AddConstraint_RejectsMismatchedUnit(t *testing.T) {
 	pc := NewProcessCapacity("PICK", "PICK-ZONE-A", pickZoneAWindow(t))
-	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 100, UnitUnit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 100, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error adding first constraint: %v", err)
 	}
-	err := pc.AddConstraint(ConstraintEquipment, mustRate(t, 50, UnitPackage, time.Hour))
+	err := pc.AddConstraint(ConstraintEquipment, mustRate(t, 50, UnitPackage, time.Hour), pcEventTime)
 	if !errors.Is(err, ErrUnitMismatch) {
 		t.Fatalf("expected ErrUnitMismatch, got %v", err)
 	}
@@ -87,10 +92,10 @@ func TestProcessCapacity_AddConstraint_RejectsMismatchedUnit(t *testing.T) {
 func TestProcessCapacity_AddConstraint_UpsertsExistingType(t *testing.T) {
 	pc := NewProcessCapacity("PICK", "PICK-ZONE-A", pickZoneAWindow(t))
 
-	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 3200, UnitUnit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, 3200, UnitUnit, time.Hour), pcEventTime); err != nil {
 		t.Fatalf("unexpected error re-registering LABOR: %v", err)
 	}
 
@@ -112,8 +117,8 @@ func TestProcessCapacity_AddConstraint_UpsertsExistingType(t *testing.T) {
 
 func TestProcessCapacity_Constraints_PreservesRegistrationOrder(t *testing.T) {
 	pc := NewProcessCapacity("PICK", "PICK-ZONE-A", pickZoneAWindow(t))
-	_ = pc.AddConstraint(ConstraintEquipment, mustRate(t, 5000, UnitUnit, time.Hour))
-	_ = pc.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour))
+	_ = pc.AddConstraint(ConstraintEquipment, mustRate(t, 5000, UnitUnit, time.Hour), pcEventTime)
+	_ = pc.AddConstraint(ConstraintLabor, mustRate(t, 4000, UnitUnit, time.Hour), pcEventTime)
 
 	entries := pc.Constraints()
 	if len(entries) != 2 {

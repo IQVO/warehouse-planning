@@ -41,8 +41,9 @@ are flagged in the last column.
 | **Promise cutoff** | The instant by which an order is promised; decides which window it counts in. | `demand.Order.PromiseAt()`; upstream `promise_date` | **yes**: `promise_date` upstream, `promise_at` here |
 | **Released lines** | Lines released by an order's latest allocation pass. NOT units. | `demand.Order.ReleasedLines()`; JSON `released_lines` | no |
 
-## Vocabulary only (not implemented)
+## ProcessCapacity events
 
-`ProcessCapacityRegistered` (a native constraint was registered) and
-`ProcessCapacityChanged` (the effective rate changed) exist as domain-model
-vocabulary. Nothing raises or publishes them.
+| Term | Meaning | Where | Upstream name |
+| --- | --- | --- | --- |
+| **ProcessCapacityRegistered** | The aggregate's first (native) constraint was registered: it came into being. | `processcapacity.ProcessCapacityRegistered`; `ProcessCapacity.AddConstraint` | no |
+| **ProcessCapacityChanged** | A registration moved the effective rate — its value, its binding constraint, or both. | `processcapacity.ProcessCapacityChanged`; `ProcessCapacity.AddConstraint` | no |

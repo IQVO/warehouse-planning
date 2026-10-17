@@ -108,12 +108,18 @@ func (w *world) start() {
 	}
 	w.orderSeq = 0
 	w.planClock = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
-	w.w2 = newWave2State(repo)
+	w.w2 = newWave2State(repo, outboxRepo, encoder, uow)
 	s := &inboundhttp.Server{
-		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
-		ProcessCapacities:                 repo,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
-		GetProcessPathCapacity:            pathCapacity,
+		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
+			Repo: repo,
+			// The aggregate's ProcessCapacityRegistered /
+			// ProcessCapacityChanged events are outboxed with the save,
+			// exactly as cmd/api wires it.
+			Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
+		},
+		ProcessCapacities:      repo,
+		RegisterProcessPath:    &usecases.RegisterProcessPath{Repo: pathRepo},
+		GetProcessPathCapacity: pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
 			Demand: expectedDemand,
@@ -308,7 +314,15 @@ func (w *world) theCapacityPlanIs(ctx context.Context, status string, rate float
 func (w *world) theOutboxEventTypesAre(raw string) error {
 	var want []string
 	for _, name := range strings.Split(raw, ",") {
-		want = append(want, "com.warehouse.wes.warehouse-planning.capacityplan."+strings.TrimSpace(name))
+		name = strings.TrimSpace(name)
+		// The entity segment of the CloudEvents type: capacityplan for
+		// plan events, processcapacity for the ProcessCapacity events a
+		// constraint registration raises.
+		entity := "capacityplan"
+		if strings.HasPrefix(name, "ProcessCapacity") {
+			entity = "processcapacity"
+		}
+		want = append(want, "com.warehouse.wes.warehouse-planning."+entity+"."+name)
 	}
 	var got []string
 	for _, m := range w.outbox.Messages() {

@@ -19,6 +19,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
+
 // Window coverage against a REAL Postgres (docs/adr/0003): FindCovering's
 // range predicate (window_start <= requested start AND window_end >= requested
 // end) and its ORDER BY (window_start DESC, window_end ASC).
@@ -37,7 +38,7 @@ func savePCAt(t *testing.T, repo *postgres.ProcessCapacityRepo, process processc
 		t.Fatal(err)
 	}
 	pc := processcapacity.NewProcessCapacity(process, location, window)
-	if err := pc.AddConstraint(ctype, rate); err != nil {
+	if err := pc.AddConstraint(ctype, rate, pcEventTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.Save(context.Background(), pc); err != nil {
