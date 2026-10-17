@@ -56,7 +56,7 @@ func pcAt(t *testing.T, startH, endH float64, constraints ...any) *ProcessCapaci
 	t.Helper()
 	pc := NewProcessCapacity("PICK", "SIM1", mustWindow(t, hoursFromBase(startH), hoursFromBase(endH)))
 	for i := 0; i < len(constraints); i += 2 {
-		if err := pc.AddConstraint(constraints[i].(ConstraintType), constraints[i+1].(CapacityRate)); err != nil {
+		if err := pc.AddConstraint(constraints[i].(ConstraintType), constraints[i+1].(CapacityRate), pcEventTime); err != nil {
 			t.Fatal(err)
 		}
 	}

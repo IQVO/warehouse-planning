@@ -50,12 +50,10 @@ func (r *ProcessCapacityRepo) Save(_ context.Context, pc *processcapacity.Proces
 // Postgres adapter rebuilds an aggregate from rows. Storing and returning
 // copies (never the caller's pointer) makes this double behave like a real
 // store: mutating an aggregate after Find has no effect until Save.
+// Rehydrate records no events, so a copy never carries the original's.
 func clonePC(pc *processcapacity.ProcessCapacity) *processcapacity.ProcessCapacity {
-	cp := processcapacity.NewProcessCapacity(pc.ProcessType(), pc.Location(), pc.Window())
-	for _, entry := range pc.Constraints() {
-		// Cannot fail: pc's constraints already share one native unit.
-		_ = cp.AddConstraint(entry.Type, entry.Rate)
-	}
+	// Cannot fail: pc's constraints already share one native unit.
+	cp, _ := processcapacity.Rehydrate(pc.ProcessType(), pc.Location(), pc.Window(), pc.Constraints())
 	return cp
 }
 

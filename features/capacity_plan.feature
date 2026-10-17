@@ -23,11 +23,11 @@ Feature: CapacityPlan
     When I publish the capacity plan
     Then the response status is 200
     And the capacity plan is PUBLISHED with path capacity 1000 ORDER per HOUR, capacity over window 8000, shortage 4000 and bottleneck REBIN
-    And the outbox event types are CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
+    And the outbox event types are ProcessCapacityRegistered, ProcessCapacityRegistered, ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
     When I publish the capacity plan
     Then the response status is 409
     And the problem detail type is "capacity-plan-already-published"
-    And the outbox event types are CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
+    And the outbox event types are ProcessCapacityRegistered, ProcessCapacityRegistered, ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
 
   Scenario: 6000 orders over 8h is within capacity, so there is no shortage and no shortage event
     When I register a LABOR constraint of 4000 UNIT per HOUR for PICK at PLAN-ZONE-B for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
@@ -39,7 +39,7 @@ Feature: CapacityPlan
     And the capacity plan is DRAFT with path capacity 1000 ORDER per HOUR, capacity over window 8000, shortage 0 and bottleneck REBIN
     When I publish the capacity plan
     Then the response status is 200
-    And the outbox event types are CapacityPlanCreated, CapacityPlanPublished
+    And the outbox event types are ProcessCapacityRegistered, ProcessCapacityRegistered, ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished
 
   Scenario: Creating a plan for a process path that was never registered
     When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "PLAN-ZONE-C" on path "nowhere-path" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 100, units_per_order 2.5 and packages_per_order 1

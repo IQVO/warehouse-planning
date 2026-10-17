@@ -113,9 +113,19 @@ func (w *world) iCreateAPlanWithoutDemand(ctx context.Context, warehouse, site, 
 	return nil
 }
 
-func (w *world) theOutboxIsEmpty() error {
-	if n := len(w.outbox.Messages()); n != 0 {
-		return fmt.Errorf("the outbox holds %d messages, want none: a rejected request queues nothing", n)
+// theOutboxHoldsNoCapacityPlanEvents asserts the rejected PLAN request
+// queued nothing. An accepted constraint registration in the same scenario
+// legitimately queues its ProcessCapacity events; those are not the plan
+// use case's output and are ignored here.
+func (w *world) theOutboxHoldsNoCapacityPlanEvents() error {
+	n := 0
+	for _, m := range w.outbox.Messages() {
+		if strings.HasPrefix(m.EventType, "com.warehouse.wes.warehouse-planning.capacityplan.") {
+			n++
+		}
+	}
+	if n != 0 {
+		return fmt.Errorf("the outbox holds %d capacity plan messages, want none: a rejected request queues nothing", n)
 	}
 	return nil
 }
@@ -197,5 +207,5 @@ func registerDemandSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^the expected demand as of is (null|`+ts+`)$`, func(raw string) error { return w.theExpectedDemandAsOfIs(strings.Trim(raw, `"`)) })
 	sc.Step(`^the capacity plan uses demand (\d+(?:\.\d+)?) from (orders|request) with shortage (\d+(?:\.\d+)?)$`, w.theCapacityPlanUsesDemand)
 	sc.Step(`^the stored capacity plan remembers its demand source is (orders|request)$`, w.theStoredPlanRemembersItsDemandSource)
-	sc.Step(`^the outbox is empty$`, w.theOutboxIsEmpty)
+	sc.Step(`^the outbox holds no capacity plan events$`, w.theOutboxHoldsNoCapacityPlanEvents)
 }

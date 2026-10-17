@@ -17,11 +17,11 @@ Feature: CapacityPlan rules, events and validation
     Then the response status is 201
     And the capacity plan is DRAFT with path capacity 1000 ORDER per HOUR, capacity over window 8000, shortage 0 and bottleneck PICK
     When I publish the capacity plan
-    Then the outbox event types are CapacityPlanCreated, CapacityPlanPublished
+    Then the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished
     When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "PLAN-RULES" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 8001, units_per_order 4 and packages_per_order 1
     Then the capacity plan is DRAFT with path capacity 1000 ORDER per HOUR, capacity over window 8000, shortage 1 and bottleneck PICK
     When I publish the capacity plan
-    Then the outbox event types are CapacityPlanCreated, CapacityPlanPublished, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
+    Then the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
     When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "PLAN-RULES" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 0, units_per_order 4 and packages_per_order 1
     Then the response status is 201
     And the capacity plan uses demand 0 from request with shortage 0
@@ -32,7 +32,7 @@ Feature: CapacityPlan rules, events and validation
     And the response field "site_id" is "SIM1"
     And the response field "location" is "PLAN-RULES"
     When I publish the capacity plan
-    Then the outbox event types are CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
+    Then the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
     And the CapacityPlanCreated event of the plan has status "DRAFT"
     And the CapacityPlanPublished event of the plan has site_id "SIM1"
     And the CapacityPlanPublished event of the plan has shortage 4000
@@ -79,7 +79,7 @@ Feature: CapacityPlan rules, events and validation
       """
     Then the response status is 422
     And the problem detail type is "missing-required-field"
-    And the outbox is empty
+    And the outbox holds no capacity plan events
     When I list the capacity plans of every location
     Then the capacity plan list is empty
 

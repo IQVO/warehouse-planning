@@ -157,10 +157,16 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		return inboundmcp.Deps{}, noop, err
 	}
 	return inboundmcp.Deps{
-		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
-		ProcessCapacities:                 pcRepo,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
-		GetProcessPathCapacity:            pathCapacity,
+		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
+			Repo: pcRepo,
+			// Same contract as cmd/api: the aggregate's events are
+			// outboxed atomically with the save (integration stream only;
+			// the analytics stream is plan facts only).
+			Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
+		},
+		ProcessCapacities:      pcRepo,
+		RegisterProcessPath:    &usecases.RegisterProcessPath{Repo: pathRepo},
+		GetProcessPathCapacity: pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
 			Demand: expectedDemand, Metrics: planMetrics,

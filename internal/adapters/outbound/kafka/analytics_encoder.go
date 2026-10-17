@@ -1,12 +1,15 @@
 package kafka
 
 import (
+	"fmt"
+
 	"github.com/google/uuid"
 
 	"github.com/claudioed/warehouse-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
 // AnalyticsTopic is this service's analytics topic: the data product's own
@@ -29,7 +32,9 @@ type analyticsPublishedData struct {
 // onto AnalyticsTopic, with dataschema
 // urn:warehouse:warehouse-planning:analytics:<EventName>:v1. Alone it mints
 // its own ids (golden tests); production uses FanoutEncoder so both
-// messages of one occurrence share one id.
+// messages of one occurrence share one id. The analytics stream is plan
+// facts only (ADR 0005): EncodeProcessCapacityEvents refuses, loudly,
+// rather than silently dropping or duplicating a ProcessCapacity event.
 type AnalyticsEncoder struct {
 	// NewID mints a CloudEvents id (uuid.NewString when nil).
 	NewID func() string
@@ -37,8 +42,9 @@ type AnalyticsEncoder struct {
 	Topic string
 }
 
-// Encode encodes events in order, each under a freshly minted id.
-func (e *AnalyticsEncoder) Encode(events ...capacityplan.Event) ([]outbox.Message, error) {
+// EncodeCapacityPlanEvents implements ports.EventEncoder for CapacityPlan
+// events: each becomes one analytics message under a freshly minted id.
+func (e *AnalyticsEncoder) EncodeCapacityPlanEvents(events ...capacityplan.Event) ([]outbox.Message, error) {
 	newID := e.NewID
 	if newID == nil {
 		newID = uuid.NewString
@@ -54,12 +60,23 @@ func (e *AnalyticsEncoder) Encode(events ...capacityplan.Event) ([]outbox.Messag
 	return out, nil
 }
 
+// EncodeProcessCapacityEvents implements ports.EventEncoder by refusing:
+// ProcessCapacity events are not plan facts and never reach the analytics
+// stream. FanoutEncoder never forwards them here; a direct caller gets a
+// loud error instead of a silently missing message.
+func (e *AnalyticsEncoder) EncodeProcessCapacityEvents(events ...processcapacity.Event) ([]outbox.Message, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("kafka analytics encoder: %s has no analytics payload (plan facts only, ADR 0005)", events[0].EventName())
+}
+
 func (e *AnalyticsEncoder) encodeOne(ev capacityplan.Event, id string) (outbox.Message, error) {
 	data, err := analyticsPayloadFor(ev)
 	if err != nil {
 		return outbox.Message{}, err
 	}
-	return buildMessage(ev, id, e.topic(), cloudevents.StreamAnalytics, data)
+	return buildMessage(Entity, ev, id, e.topic(), cloudevents.StreamAnalytics, data)
 }
 
 func (e *AnalyticsEncoder) topic() string {
@@ -85,12 +102,14 @@ func analyticsPayloadFor(ev capacityplan.Event) (any, error) {
 	return data, nil
 }
 
-// FanoutEncoder is the encoder the use cases get: every domain event becomes
-// TWO outbox messages, the integration one first and the analytics one
-// second, carrying the SAME CloudEvents id (minted once here, persisted with
-// both rows) and the same `type`. Both rows are inserted by the use case's
-// single UnitOfWork, so they commit or roll back together with the
-// aggregate; a relay retry republishes each row's persisted bytes.
+// FanoutEncoder is the encoder the use cases get: every CapacityPlan event
+// becomes TWO outbox messages, the integration one first and the analytics
+// one second, carrying the SAME CloudEvents id (minted once here,
+// persisted with both rows) and the same `type`. Both rows are inserted by
+// the use case's single UnitOfWork, so they commit or roll back together
+// with the aggregate; a relay retry republishes each row's persisted bytes.
+// A ProcessCapacity event becomes ONE message, the integration one: the
+// analytics stream stays plan facts only (ADR 0005).
 type FanoutEncoder struct {
 	Integration *Encoder
 	Analytics   *AnalyticsEncoder
@@ -105,9 +124,10 @@ func NewFanoutEncoder() *FanoutEncoder {
 
 var _ ports.EventEncoder = (*FanoutEncoder)(nil)
 
-// Encode encodes events in order: integration message then analytics
-// message per event. It fails on an event type neither stream publishes.
-func (f *FanoutEncoder) Encode(events ...capacityplan.Event) ([]outbox.Message, error) {
+// EncodeCapacityPlanEvents encodes plan events in order: integration
+// message then analytics message per event. It fails on an event type
+// neither stream publishes.
+func (f *FanoutEncoder) EncodeCapacityPlanEvents(events ...capacityplan.Event) ([]outbox.Message, error) {
 	newID := f.NewID
 	if newID == nil {
 		newID = uuid.NewString
@@ -115,7 +135,7 @@ func (f *FanoutEncoder) Encode(events ...capacityplan.Event) ([]outbox.Message, 
 	out := make([]outbox.Message, 0, 2*len(events))
 	for _, ev := range events {
 		id := newID()
-		integration, err := f.Integration.encodeOne(ev, id)
+		integration, err := f.Integration.encodePlanOne(ev, id)
 		if err != nil {
 			return nil, err
 		}
@@ -126,4 +146,10 @@ func (f *FanoutEncoder) Encode(events ...capacityplan.Event) ([]outbox.Message, 
 		out = append(out, integration, analytics)
 	}
 	return out, nil
+}
+
+// EncodeProcessCapacityEvents encodes ProcessCapacity events onto the
+// integration topic only (one message each, no analytics copy).
+func (f *FanoutEncoder) EncodeProcessCapacityEvents(events ...processcapacity.Event) ([]outbox.Message, error) {
+	return f.Integration.EncodeProcessCapacityEvents(events...)
 }

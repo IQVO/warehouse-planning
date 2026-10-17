@@ -38,7 +38,7 @@ var (
 // analytics topic (the real AnalyticsEncoder), under the given CloudEvents id.
 func analyticsWire(t *testing.T, id string, ev capacityplan.Event) []byte {
 	t.Helper()
-	msgs, err := (&outboundkafka.AnalyticsEncoder{NewID: func() string { return id }}).Encode(ev)
+	msgs, err := (&outboundkafka.AnalyticsEncoder{NewID: func() string { return id }}).EncodeCapacityPlanEvents(ev)
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("encode: %d msgs, %v", len(msgs), err)
 	}

@@ -115,11 +115,21 @@ func TestMCPAgainstPostgres_Section43PersistsPlanAndOutbox(t *testing.T) {
 		t.Fatalf("capacity_plans row: status=%q err=%v", status, err)
 	}
 	var outboxRows int
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM outbox_events`).Scan(&outboxRows); err != nil || outboxRows != 8 {
-		t.Fatalf("outbox_events rows = %d (err %v), want 8 (Created, Published, ShortageDetected, BottleneckDetected, each on the integration AND the analytics topic: ADR 0005)", outboxRows, err)
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM outbox_events`).Scan(&outboxRows); err != nil || outboxRows != 11 {
+		t.Fatalf("outbox_events rows = %d (err %v), want 11: the three constraint registrations' ProcessCapacityRegistered (integration topic only) plus Created, Published, ShortageDetected, BottleneckDetected, each plan event on the integration AND the analytics topic (ADR 0005)", outboxRows, err)
 	}
 	var analyticsRows int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE topic = 'warehouse.warehouse-planning.analytics'`).Scan(&analyticsRows); err != nil || analyticsRows != 4 {
 		t.Fatalf("analytics-topic rows = %d (err %v), want 4", analyticsRows, err)
+	}
+	// The registrations' own events: exactly three, on the integration
+	// topic, typed processcapacity.ProcessCapacityRegistered.
+	var registeredRows int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE topic = 'warehouse.warehouse-planning.events'
+		  AND event_type = 'com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered'
+	`).Scan(&registeredRows); err != nil || registeredRows != 3 {
+		t.Fatalf("ProcessCapacityRegistered rows = %d (err %v), want 3 (one per constraint registration, no analytics copy)", registeredRows, err)
 	}
 }

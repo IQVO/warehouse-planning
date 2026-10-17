@@ -254,5 +254,3 @@ demand**, **DemandSource**.
 - Observed-capacity feedback from `fulfillment-execution` / `wes-work-planning`
   and demand from `network-fulfillment` are anticipated by ADR 0001 but have no
   code yet.
-- `ProcessCapacityRegistered` / `ProcessCapacityChanged` are vocabulary only:
-  should a capacity change ever be published?

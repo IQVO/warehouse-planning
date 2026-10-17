@@ -148,7 +148,8 @@ func (r *ProcessCapacityRepo) FindCovering(
 }
 
 // loadPC rebuilds the aggregate identified by (processType, location, window)
-// from its constraint rows, in registration order.
+// from its constraint rows, in registration order. Rehydrate records no
+// events: a reloaded aggregate never re-raises its history.
 func loadPC(
 	ctx context.Context,
 	q querier,
@@ -161,8 +162,6 @@ func loadPC(
 	if err != nil {
 		return nil, err
 	}
-	pc := processcapacity.NewProcessCapacity(processType, location, window)
-
 	rows, err := q.Query(ctx, `
 		SELECT constraint_type, quantity, period_seconds
 		FROM process_capacity_constraint
@@ -174,6 +173,7 @@ func loadPC(
 	}
 	defer rows.Close()
 
+	entries := make([]processcapacity.ConstraintEntry, 0, 4)
 	for rows.Next() {
 		var (
 			constraintType string
@@ -187,12 +187,13 @@ func loadPC(
 		if err != nil {
 			return nil, err
 		}
-		if err := pc.AddConstraint(processcapacity.ConstraintType(constraintType), rate); err != nil {
-			return nil, err
-		}
+		entries = append(entries, processcapacity.ConstraintEntry{
+			Type: processcapacity.ConstraintType(constraintType),
+			Rate: rate,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return pc, nil
+	return processcapacity.Rehydrate(processType, location, window, entries)
 }

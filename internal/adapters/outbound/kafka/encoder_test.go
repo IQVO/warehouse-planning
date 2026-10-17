@@ -82,7 +82,7 @@ func TestGolden_PublishedTypes(t *testing.T) {
 
 func assertGolden(t *testing.T, name string, event capacityplan.Event, want string) {
 	t.Helper()
-	msgs, err := goldenEncoder().Encode(event)
+	msgs, err := goldenEncoder().EncodeCapacityPlanEvents(event)
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("Encode = %d msgs, %v", len(msgs), err)
 	}
@@ -120,7 +120,7 @@ func assertGoldenHeaderAndDecode(t *testing.T, m outbox.Message) {
 
 func TestEncode_FansOutOneMessagePerEventWithDistinctIDs(t *testing.T) {
 	h := capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}
-	msgs, err := NewEncoder().Encode(
+	msgs, err := NewEncoder().EncodeCapacityPlanEvents(
 		capacityplan.CapacityPlanPublished{Header: h},
 		capacityplan.CapacityShortageDetected{Header: h},
 		capacityplan.BottleneckDetected{Header: h},
@@ -141,7 +141,7 @@ func TestEncode_FansOutOneMessagePerEventWithDistinctIDs(t *testing.T) {
 }
 
 func TestEncode_NoEventsNoMessages(t *testing.T) {
-	msgs, err := NewEncoder().Encode()
+	msgs, err := NewEncoder().EncodeCapacityPlanEvents()
 	if err != nil || len(msgs) != 0 {
 		t.Fatalf("Encode() = %v, %v", msgs, err)
 	}
@@ -152,14 +152,14 @@ type unpublishedEvent struct{ capacityplan.Header }
 func (unpublishedEvent) EventName() string { return "SomethingElse" }
 
 func TestEncode_RejectsAnUnpublishedEventType(t *testing.T) {
-	if _, err := NewEncoder().Encode(unpublishedEvent{}); err == nil {
+	if _, err := NewEncoder().EncodeCapacityPlanEvents(unpublishedEvent{}); err == nil {
 		t.Fatal("want an error for an event type this adapter does not publish")
 	}
 }
 
 func TestEncode_PropagatesCloudEventsValidationFailure(t *testing.T) {
 	// An event with an empty aggregate id has no subject; the helper rejects it.
-	_, err := NewEncoder().Encode(capacityplan.CapacityPlanCreated{Header: capacityplan.Header{At: goldenAt}})
+	_, err := NewEncoder().EncodeCapacityPlanEvents(capacityplan.CapacityPlanCreated{Header: capacityplan.Header{At: goldenAt}})
 	if err == nil {
 		t.Fatal("want an error for an empty subject")
 	}
@@ -170,7 +170,7 @@ func TestEncode_PropagatesCloudEventsValidationFailure(t *testing.T) {
 
 func TestEncode_TopicOverride(t *testing.T) {
 	e := &Encoder{NewID: func() string { return goldenEvtID }, Topic: "some.other.topic"}
-	msgs, err := e.Encode(capacityplan.BottleneckDetected{Header: capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
+	msgs, err := e.EncodeCapacityPlanEvents(capacityplan.BottleneckDetected{Header: capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}})
 	if err != nil || msgs[0].Topic != "some.other.topic" {
 		t.Fatalf("Encode = %+v, %v; want the overridden topic", msgs, err)
 	}
@@ -182,7 +182,7 @@ func TestEncode_TopicOverride(t *testing.T) {
 // of the persisted outbox bytes see no change.
 func TestGolden_PublishedWithoutSiteIDIsTheLegacyShape(t *testing.T) {
 	h := capacityplan.Header{PlanID: goldenPlanID, At: goldenAt}
-	msgs, err := goldenEncoder().Encode(capacityplan.CapacityPlanPublished{
+	msgs, err := goldenEncoder().EncodeCapacityPlanEvents(capacityplan.CapacityPlanPublished{
 		Header: h, WarehouseID: "WH-1", Location: "PATH-ZONE-A", PathID: "pick-rebin-pack",
 		WindowStart: goldenStart, WindowEnd: goldenEnd,
 		AssignedDemand: 12000, PathCapacity: 1000, CapacityOverWindow: 8000, Shortage: 4000,

@@ -32,9 +32,28 @@ type RegisterProcessCapacityConstraintResult struct {
 
 // RegisterProcessCapacityConstraint upserts one constraint on a
 // ProcessCapacity aggregate, recomputes and persists the effective rate
-// (see domain-model.md).
+// (see domain-model.md), and -- when Outbox, Encoder and UnitOfWork are
+// wired -- persists the events the aggregate raised
+// (ProcessCapacityRegistered on the first constraint,
+// ProcessCapacityChanged when the effective rate moved) in the SAME unit
+// of work as the save, through the transactional outbox.
 type RegisterProcessCapacityConstraint struct {
 	Repo ports.ProcessCapacityRepository
+
+	// Outbox, Encoder and UnitOfWork publish the aggregate's events. All
+	// three are optional and consulted together: a constructor that wires
+	// none of them (unit tests of the HTTP surface, the in-memory MCP
+	// binary) registers constraints and publishes nothing, exactly as
+	// before the events existed. Production wires all three (cmd/api,
+	// cmd/mcp): the save and the outbox rows then commit or roll back as
+	// one.
+	Outbox     ports.OutboxRepository
+	Encoder    ports.EventEncoder
+	UnitOfWork ports.UnitOfWork
+
+	// Now supplies the domain time stamped on raised events (utcNow when
+	// nil), injectable for tests.
+	Now func() time.Time
 }
 
 // Handle loads the ProcessCapacity for cmd's identity (creating it if this
@@ -60,11 +79,21 @@ func (uc *RegisterProcessCapacityConstraint) Handle(ctx context.Context, cmd Reg
 		pc = processcapacity.NewProcessCapacity(cmd.ProcessType, cmd.Location, window)
 	}
 
-	if err := pc.AddConstraint(cmd.ConstraintType, rate); err != nil {
+	now := uc.Now
+	if now == nil {
+		now = utcNow
+	}
+
+	if err := pc.AddConstraint(cmd.ConstraintType, rate, now()); err != nil {
 		return RegisterProcessCapacityConstraintResult{}, err
 	}
 
-	if err := uc.Repo.Save(ctx, pc); err != nil {
+	if uc.Outbox == nil || uc.Encoder == nil {
+		// No event publishing wired; the state change stands on its own.
+		if err := uc.Repo.Save(ctx, pc); err != nil {
+			return RegisterProcessCapacityConstraintResult{}, err
+		}
+	} else if err := uc.saveWithEvents(ctx, pc); err != nil {
 		return RegisterProcessCapacityConstraintResult{}, err
 	}
 
@@ -74,6 +103,28 @@ func (uc *RegisterProcessCapacityConstraint) Handle(ctx context.Context, cmd Reg
 	}
 
 	return RegisterProcessCapacityConstraintResult{EffectiveRate: effective, BindingConstraint: binding}, nil
+}
+
+// saveWithEvents persists the aggregate and its already-encoded events as
+// one atomic unit: inside a UnitOfWork they commit or roll back together,
+// and a relay publishes the events only after the commit (ADR 0007). A nil
+// UnitOfWork (memory adapters are not transactional) runs the two writes
+// sequentially, which is the best it can do.
+func (uc *RegisterProcessCapacityConstraint) saveWithEvents(ctx context.Context, pc *processcapacity.ProcessCapacity) error {
+	persist := func(ctx context.Context) error {
+		if err := uc.Repo.Save(ctx, pc); err != nil {
+			return err
+		}
+		msgs, err := uc.Encoder.EncodeProcessCapacityEvents(pc.PullEvents()...)
+		if err != nil {
+			return err
+		}
+		return uc.Outbox.Insert(ctx, msgs...)
+	}
+	if uc.UnitOfWork == nil {
+		return persist(ctx)
+	}
+	return uc.UnitOfWork.Do(ctx, persist)
 }
 
 // commandValidationErrors are the typed domain errors Handle can return

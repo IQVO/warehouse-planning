@@ -23,7 +23,7 @@ func mustStandard(t *testing.T, location string, process ProcessType, qty float6
 func laborAt(t *testing.T, process ProcessType, location string, qty float64, unit CapacityUnit) *ProcessCapacity {
 	t.Helper()
 	pc := NewProcessCapacity(process, location, pickZoneAWindow(t))
-	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, qty, unit, time.Hour)); err != nil {
+	if err := pc.AddConstraint(ConstraintLabor, mustRate(t, qty, unit, time.Hour), pcEventTime); err != nil {
 		t.Fatal(err)
 	}
 	return pc
