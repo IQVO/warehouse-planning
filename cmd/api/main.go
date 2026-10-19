@@ -1,9 +1,32 @@
-// Command api is this service's composition root: it wires env config
-// into adapters, adapters into use cases, and use cases into the HTTP
-// router and Kafka consumers. This is the FIRST real composition root
-// for warehouse-planning -- Phases 1/2 shipped only the REST surface and
-// were wired directly from tests (features_test.go, httptest); nothing
-// here existed before Phase 3.
+// Command api is the warehouse-planning composition root: it wires env
+// config into adapters, adapters into use cases, and use cases into the HTTP
+// router, the three Kafka consumers (labor capacity, storage capacity, order
+// demand) and the outbox relay, all on real Postgres and real Kafka (ADR
+// 0016): there is no in-memory mode, no log sink and no consumer that is off.
+//
+// Environment:
+//
+//	HTTP_ADDR                        listen address (default :8080)
+//	DATABASE_URL                     Postgres DSN (REQUIRED: there is no in-memory mode, ADR 0016)
+//	MIGRATIONS_DATABASE_URL          direct DSN for the boot migrations (default DATABASE_URL)
+//	MIGRATIONS_PATH                  migrations directory (default internal/adapters/outbound/postgres/migrations)
+//	KAFKA_BROKERS                    comma-separated brokers (REQUIRED: relay, consumers, /readyz)
+//	EVENT_PUBLISHER                  kafka (default kafka); log is a boot error
+//	OUTBOX_RELAY_INTERVAL            relay poll interval (Go duration or seconds, default 1s)
+//	OUTBOX_MAX_ATTEMPTS              failures before the relay excludes a row (default 20, 0 = unlimited; ADR 0013)
+//	LABOR_CAPACITY_CONSUMER_GROUP    stable group id of the labor-capacity consumer (REQUIRED)
+//	STORAGE_CAPACITY_CONSUMER_GROUP  stable group id of the storage-capacity consumer (REQUIRED)
+//	DEMAND_CONSUMER_GROUP            stable group id of the order-demand consumer (REQUIRED)
+//	DEMAND_SITE_ID                   the one site every consumed order is attributed to (REQUIRED)
+//	OTEL_EXPORTER_OTLP_ENDPOINT      OTLP/gRPC collector (default localhost:4317)
+//	SHUTDOWN_DRAIN_DELAY             wait after flipping /readyz before closing (default 5s)
+//	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
+//
+// A missing or rejected variable is a boot error that names it, raised before
+// the listener binds. GET /readyz is 200 only while Postgres answers a ping
+// AND a Kafka broker answers a metadata request (verdict cached 3s, bounded
+// 2s); /healthz is liveness only. The process exits non-zero when the relay or
+// a consumer returns on its own, so the orchestrator restarts it.
 package main
 
 import (
@@ -14,15 +37,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
-	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
-	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	outboxrelay "github.com/claudioed/warehouse-planning/internal/adapters/outbound/outbox"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/telemetry"
@@ -46,15 +68,23 @@ const consumerDrainTimeout = 10 * time.Second
 const defaultMigrationsPath = "internal/adapters/outbound/postgres/migrations"
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		slog.Error("service exited with error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run boots the service and serves until SIGINT/SIGTERM or until ctx is
+// cancelled (the integration test stops the real entry point that way).
+func run(ctx context.Context) error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
+
+	// Misconfiguration is refused before anything is opened or bound (ADR 0016).
+	rt, err := loadRuntime(os.Getenv)
+	if err != nil {
+		return err
+	}
 
 	otelShutdown, planMetrics, err := setupTelemetry(logger)
 	if err != nil {
@@ -63,10 +93,11 @@ func run() error {
 	defer otelShutdown()
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
-	databaseURL := os.Getenv("DATABASE_URL")
 	migrationsPath := getenv("MIGRATIONS_PATH", defaultMigrationsPath)
 
-	ad, closeAdapters, err := buildAdapters(context.Background(), databaseURL, migrationsPath, logger)
+	// closeAdapters (pool.Close) is deferred FIRST so it runs LAST, after the
+	// HTTP drain, the consumers and the relay have all stopped.
+	ad, closeAdapters, err := buildAdapters(ctx, os.Getenv(envDatabaseURL), migrationsPath, logger)
 	if err != nil {
 		return err
 	}
@@ -91,7 +122,7 @@ func run() error {
 		StationStandards: ad.stationStandards, Tally: ad.tallyReader,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: ad.orderDemand}
-	readiness := &inboundhttp.Readiness{}
+	readiness := newReadiness(ad.pool.Ping, rt.brokers)
 	server := buildServer(ad, register, pathCapacity, encoder, expectedDemand, planMetrics, readiness)
 	httpServer := &http.Server{
 		Addr:              httpAddr,
@@ -99,17 +130,8 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	consumers, closeConsumers := startKafkaConsumers(register, ad.processedEvents, ad.storageTally, ad.uow, logger)
-
-	// The order-demand consumer (ADR 0004) is OFF unless DEMAND_CONSUMER_GROUP
-	// is set; it shares the unit of work and processed-event guard above.
-	demandConsumers, closeDemand, err := startDemandConsumer(ad, logger)
-	if err != nil {
-		closeConsumers()
-		return err
-	}
-	consumers = append(consumers, demandConsumers...)
-	closeConsumers = joinClosers(closeConsumers, closeDemand)
+	// The consumers are always on; their readers dial lazily inside Run.
+	consumers, closeConsumers := startConsumers(consumerSpecs(ad, rt, register, logger), rt, logger)
 
 	// The outbox relay runs next to the consumers. It never dials Kafka at
 	// boot (the writer connects lazily on its first send), so a broker
@@ -117,13 +139,13 @@ func run() error {
 	// from the consumers above, and LAST (see serveUntilSignal): an event
 	// committed by the HTTP drain or a consumer's last message must not be
 	// stranded until the next pod boots.
-	relayRunner, closeRelay, err := startOutboxRelay(ad.outboxStore, logger)
+	relayRunner, closeRelay, err := startOutboxRelay(ad.outboxStore, rt.brokers, logger)
 	if err != nil {
 		closeConsumers()
 		return err
 	}
 
-	return serveUntilSignal(logger, httpServer, readiness, consumers, closeConsumers, relayRunner, closeRelay)
+	return serveUntilSignal(ctx, logger, httpServer, readiness, consumers, closeConsumers, relayRunner, closeRelay)
 }
 
 // buildServer assembles the REST inbound adapter's Server from the wired
@@ -212,41 +234,19 @@ type adapters struct {
 	// GET /capacity-plans.
 	pathLister ports.ProcessPathLister
 	planLister ports.CapacityPlanLister
+
+	// pool is the Postgres pool (the readiness check pings it).
+	pool *pgxpool.Pool
 }
 
-// buildAdapters wires the Postgres adapters when DATABASE_URL is set, or
-// falls back to in-memory adapters for local development without a
-// database (mirroring the fleet's DATABASE_URL-empty-means-in-memory
-// convention, e.g. inventory-storage's cmd/inventory).
-//
-// ProcessPaths persist in Postgres (migration 0004) when DATABASE_URL is
-// set, so declared paths survive a pod restart; without a database the
-// in-memory repo is used exactly as before.
+// buildAdapters wires the Postgres adapters, running the migrations first.
+// An empty databaseURL is a boot error: there is no in-memory runtime (ADR
+// 0016).
 func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logger *slog.Logger) (adapters, func(), error) {
 	noop := func() {}
 
 	if databaseURL == "" {
-		logger.Info("DATABASE_URL not configured; using in-memory adapters")
-		pathRepo := memory.NewProcessPathRepo()
-		pcRepo, processed, tallyRepo := memory.NewProcessCapacityRepo(), memory.NewProcessedEventRepo(), memory.NewStorageTallyRepo()
-		planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
-		demandRepo := memory.NewOrderDemandRepo()
-		return adapters{
-			processCapacities: pcRepo,
-			processPaths:      pathRepo,
-			processedEvents:   processed,
-			storageTally:      tallyRepo,
-			tallyReader:       tallyRepo,
-			stationStandards:  memory.NewStationStandardRepo(),
-			// Participants make the in-memory UoW roll back on error too.
-			uow:           memory.NewUnitOfWork(pcRepo, processed, tallyRepo, planRepo, outboxRepo, demandRepo),
-			capacityPlans: planRepo,
-			outbox:        outboxRepo,
-			outboxStore:   outboxRepo,
-			orderDemand:   demandRepo,
-			pathLister:    pathRepo,
-			planLister:    planRepo,
-		}, noop, nil
+		return adapters{}, noop, errMissingDatabaseURL
 	}
 
 	// The first outbound dial of an injected pod is reset ~10s after start
@@ -287,6 +287,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		orderDemand:       postgres.NewOrderDemandRepo(pool),
 		pathLister:        pathRepo,
 		planLister:        planRepo,
+		pool:              pool,
 	}, pool.Close, nil
 }
 
@@ -299,184 +300,6 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 // the split is not provisioned (local dev, CI) behaviour is unchanged.
 func migrationsDatabaseURL(databaseURL string) string {
 	return getenv("MIGRATIONS_DATABASE_URL", databaseURL)
-}
-
-// runningConsumer pairs a started Kafka consumer with the channel that
-// closes once its Run goroutine has actually returned, so shutdown can
-// wait on it bounded rather than firing cancel and moving on blind.
-type runningConsumer struct {
-	name string
-	done chan struct{}
-}
-
-// startKafkaConsumers starts LaborCapacityConsumer (registers LABOR
-// constraints) and StorageCapacityConsumer (a pure facility-layout tally
-// maintainer) as background goroutines, each only if
-// KAFKA_BROKERS is set -- matching the fleet's lazy-dial pattern: a
-// kafka-go Reader never dials synchronously at construction time (see
-// internal/adapters/inbound/kafka/kafka.go's readerConfig doc comment),
-// the real TCP connection only happens inside FetchMessage, which these
-// goroutines call, so nothing here blocks process startup on Kafka being
-// reachable. If KAFKA_BROKERS is unset, Kafka ingestion is simply
-// disabled (logged, not fatal) -- the REST surface still works standalone.
-func startKafkaConsumers(
-	register *usecases.RegisterProcessCapacityConstraint,
-	processedEvents ports.ProcessedEventRepository,
-	storageTally ports.StorageTallyRepository,
-	uow ports.UnitOfWork,
-	logger *slog.Logger,
-) ([]runningConsumer, func()) {
-	raw := os.Getenv("KAFKA_BROKERS")
-	if raw == "" {
-		logger.Warn("KAFKA_BROKERS not configured; labor/storage capacity Kafka ingestion is disabled")
-		return nil, func() {}
-	}
-	brokers := strings.Split(raw, ",")
-
-	laborGroup := getenv("LABOR_CAPACITY_CONSUMER_GROUP", "warehouse-planning-labor-capacity")
-	storageGroup := getenv("STORAGE_CAPACITY_CONSUMER_GROUP", "warehouse-planning-storage-capacity")
-
-	laborConsumer := inboundkafka.NewLaborCapacityConsumer(brokers, laborGroup, register, processedEvents, uow, logger)
-	storageConsumer := inboundkafka.NewStorageCapacityConsumer(brokers, storageGroup, storageTally, processedEvents, uow, logger)
-
-	laborCtx, stopLabor := context.WithCancel(context.Background())
-	storageCtx, stopStorage := context.WithCancel(context.Background())
-
-	laborDone := make(chan struct{})
-	go func() {
-		defer close(laborDone)
-		logger.Info("labor capacity consumer running", "topic", inboundkafka.LaborTopic, "group_id", laborGroup, "brokers", brokers)
-		// Run only ever returns on error (including the plain
-		// context.Canceled of an orderly shutdown), never nil. A message
-		// that fails transiently does NOT end Run: it is retried with
-		// backoff and its offset is committed only after it succeeds.
-		if err := laborConsumer.Run(laborCtx); !errors.Is(err, context.Canceled) {
-			logger.Error("labor capacity consumer stopped", "error", err)
-		}
-	}()
-
-	storageDone := make(chan struct{})
-	go func() {
-		defer close(storageDone)
-		logger.Info("storage capacity consumer running", "topic", inboundkafka.FacilityTopic, "group_id", storageGroup, "brokers", brokers)
-		if err := storageConsumer.Run(storageCtx); !errors.Is(err, context.Canceled) {
-			logger.Error("storage capacity consumer stopped", "error", err)
-		}
-	}()
-
-	consumers := []runningConsumer{
-		{name: "labor-capacity", done: laborDone},
-		{name: "storage-capacity", done: storageDone},
-	}
-	closeFn := func() {
-		stopLabor()
-		stopStorage()
-		_ = laborConsumer.Close()
-		_ = storageConsumer.Close()
-	}
-	return consumers, closeFn
-}
-
-// Event publisher modes (EVENT_PUBLISHER).
-const (
-	publisherLog   = "log"
-	publisherKafka = "kafka"
-)
-
-// parsePublisherMode validates EVENT_PUBLISHER: "" and "log" select the
-// broker-free log sink (the default, so tests and local dev need no
-// Kafka), "kafka" the real relay sink; anything else is a config error.
-func parsePublisherMode(raw string) (string, error) {
-	switch raw {
-	case "", publisherLog:
-		return publisherLog, nil
-	case publisherKafka:
-		return publisherKafka, nil
-	default:
-		return "", fmt.Errorf("unknown EVENT_PUBLISHER %q (want kafka or log)", raw)
-	}
-}
-
-// parseRelayInterval reads OUTBOX_RELAY_INTERVAL (a Go duration such as
-// "500ms" or "2s", or plain seconds), defaulting to 1s when unset,
-// malformed or non-positive -- the interval is a tuning knob, never a
-// reason to refuse to boot.
-func parseRelayInterval(raw string, logger *slog.Logger) time.Duration {
-	if raw == "" {
-		return outboxrelay.DefaultInterval
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		if secs, serr := strconv.ParseFloat(raw, 64); serr == nil {
-			d, err = time.Duration(secs*float64(time.Second)), nil
-		}
-	}
-	if err != nil || d <= 0 {
-		logger.Warn("invalid OUTBOX_RELAY_INTERVAL; using the default", "value", raw, "default", outboxrelay.DefaultInterval)
-		return outboxrelay.DefaultInterval
-	}
-	return d
-}
-
-// outboxMaxAttempts reads OUTBOX_MAX_ATTEMPTS (gap fix D12, ADR 0013): how
-// many times an outbox row may fail before the relay excludes it from
-// claims. Unset = the fleet default (20); 0 = unlimited; negative or
-// unparsable values log a warning and use the default, so a typo never
-// silently removes the cap.
-func outboxMaxAttempts(raw string, logger *slog.Logger) int {
-	if raw == "" {
-		return outboxrelay.DefaultMaxAttempts
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 0 {
-		logger.Warn("invalid OUTBOX_MAX_ATTEMPTS; using the default", "value", raw, "default", outboxrelay.DefaultMaxAttempts)
-		return outboxrelay.DefaultMaxAttempts
-	}
-	return n
-}
-
-// startOutboxRelay starts the outbox relay goroutine. EVENT_PUBLISHER
-// picks the sink: kafka (needs KAFKA_BROKERS) or log (default). Kafka is
-// dialled lazily inside the relay loop on the first send, never here.
-func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (runningConsumer, func(), error) {
-	mode, err := parsePublisherMode(os.Getenv("EVENT_PUBLISHER"))
-	if err != nil {
-		return runningConsumer{}, nil, err
-	}
-
-	var (
-		sink      outboxrelay.Sink = outboxrelay.LogSink{Logger: logger}
-		closeSink                  = func() {}
-	)
-	if mode == publisherKafka {
-		raw := os.Getenv("KAFKA_BROKERS")
-		if raw == "" {
-			return runningConsumer{}, nil, errors.New("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS")
-		}
-		kafkaSink := outboundkafka.NewRelaySink(strings.Split(raw, ","))
-		sink = kafkaSink
-		closeSink = func() {
-			if err := kafkaSink.Close(); err != nil {
-				logger.Error("kafka relay sink close failed", "error", err)
-			}
-		}
-	}
-
-	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
-	maxAttempts := outboxMaxAttempts(os.Getenv("OUTBOX_MAX_ATTEMPTS"), logger)
-	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval), outboxrelay.WithMaxAttempts(maxAttempts))
-
-	ctx, stop := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer closeSink()
-		logger.Info("outbox relay running", "publisher", mode, "interval", interval, "max_attempts", maxAttempts, "topic", outboundkafka.Topic)
-		if err := relay.Run(ctx); !errors.Is(err, context.Canceled) {
-			logger.Error("outbox relay stopped", "error", err)
-		}
-	}()
-	return runningConsumer{name: "outbox-relay", done: done}, stop, nil
 }
 
 // serveUntilSignal runs httpServer until SIGINT/SIGTERM (or a listen
@@ -501,31 +324,43 @@ func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (runningCons
 //
 // Steps 3-5 share shutdownTimeout/consumerDrainTimeout; the drain delay is
 // additional (terminationGracePeriodSeconds must cover both).
+//
+// The process also exits non-zero when the relay or a consumer returns on its
+// own (a lost broker, a failed reader): the service cannot run without them
+// and must not sit "alive" with a dead worker, so the orchestrator restarts
+// it.
 func serveUntilSignal(
+	parent context.Context,
 	logger *slog.Logger,
 	httpServer *http.Server,
 	readiness *inboundhttp.Readiness,
-	consumers []runningConsumer,
+	consumers []*worker,
 	closeConsumers func(),
-	relay runningConsumer,
+	relay *worker,
 	closeRelay func(),
 ) error {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("http server listening", "addr", httpServer.Addr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	died := watchWorkers(append([]*worker{relay}, consumers...)...)
 
 	select {
 	case err := <-errCh:
 		closeConsumers()
 		closeRelay()
 		return err
+	case name := <-died:
+		closeConsumers()
+		closeRelay()
+		_ = httpServer.Close()
+		return fmt.Errorf("%s stopped unexpectedly: exiting so the orchestrator restarts the service", name)
 	case <-ctx.Done():
 	}
 
@@ -541,24 +376,45 @@ func serveUntilSignal(
 
 	closeConsumers()
 	for _, c := range consumers {
-		select {
-		case <-c.done:
-		case <-time.After(consumerDrainTimeout):
-			logger.Warn("kafka consumer did not stop before the shutdown drain deadline", "consumer", c.name)
-		}
+		await(logger, c)
 	}
 
 	// Every outbox writer has now stopped: let the relay finish its
 	// in-flight pass so an event committed by the last HTTP request or a
 	// consumer's last message is not stranded until the next pod boots.
 	closeRelay()
-	select {
-	case <-relay.done:
-	case <-time.After(consumerDrainTimeout):
-		logger.Warn("outbox relay did not stop before the shutdown drain deadline", "consumer", relay.name)
-	}
+	await(logger, relay)
 
 	return err
+}
+
+// watchWorkers returns a channel that receives the name of every worker that
+// returns. Workers only return when stopped or on an unrecoverable failure, so
+// a value read while the service is serving means a worker died.
+func watchWorkers(workers ...*worker) <-chan string {
+	died := make(chan string, len(workers))
+	for _, w := range workers {
+		if w == nil {
+			continue
+		}
+		go func() {
+			<-w.done
+			died <- w.name
+		}()
+	}
+	return died
+}
+
+// await waits (bounded) for w to return; a nil w is a no-op.
+func await(logger *slog.Logger, w *worker) {
+	if w == nil {
+		return
+	}
+	select {
+	case <-w.done:
+	case <-time.After(consumerDrainTimeout):
+		logger.Warn("worker did not stop before the shutdown drain deadline", "worker", w.name)
+	}
 }
 
 // DefaultShutdownDrainDelay is how long shutdown waits, after flipping

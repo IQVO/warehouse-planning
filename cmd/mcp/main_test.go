@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,22 +13,37 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	inboundmcp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/mcp"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 )
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// newTestServer wires the binary exactly as run() does, over the in-memory
-// adapters selected by an empty DATABASE_URL, behind the real router.
+// newTestServer wires the same use cases buildDeps does, over the in-memory
+// TEST DOUBLES (the shipped binary has no in-memory mode: ADR 0016), behind
+// the real router. The Postgres wiring is covered by the integration test.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	deps, closeFn, err := buildDeps(context.Background(), quietLogger(), "", "", defaultMigrationsPath)
+	pc, plans, outboxRepo := memory.NewProcessCapacityRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	tally := memory.NewStorageTallyRepo()
+	deps, err := newDeps(repositories{
+		processCapacities: pc, processPaths: memory.NewProcessPathRepo(), standards: memory.NewStationStandardRepo(),
+		tally: tally, plans: plans, outbox: outboxRepo, demand: memory.NewOrderDemandRepo(),
+		uow: memory.NewUnitOfWork(pc, plans, outboxRepo),
+	})
 	if err != nil {
-		t.Fatalf("buildDeps: %v", err)
+		t.Fatalf("newDeps: %v", err)
 	}
-	t.Cleanup(closeFn)
 	srv := httptest.NewServer(newRouter(inboundmcp.Handler(inboundmcp.NewServer(deps))))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// There is no in-memory mode: an empty DATABASE_URL is a boot error naming it.
+func TestBuildDeps_RefusesAnEmptyDatabaseURL(t *testing.T) {
+	_, _, err := buildDeps(context.Background(), quietLogger(), "", "", defaultMigrationsPath)
+	if !errors.Is(err, errMissingDatabaseURL) || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("buildDeps(\"\") = %v, want errMissingDatabaseURL naming DATABASE_URL", err)
+	}
 }
 
 func TestRouter_HealthzIsOpenAndServesOK(t *testing.T) {

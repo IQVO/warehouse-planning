@@ -2,6 +2,8 @@
 
 ## Status
 
+> Amended by [ADR 0016](./0016-postgres-and-kafka-are-the-only-runtime.md): `cmd/mcp` requires `DATABASE_URL`; the in-memory fallback below no longer exists.
+
 Accepted (2026-10-05). Records a decision already in effect: `cmd/mcp` has
 shipped since Phase 2/3 with no ADR, found by the 2026-10-04
 ADR-conformance audit.

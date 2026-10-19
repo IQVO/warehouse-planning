@@ -1,0 +1,28 @@
+# Verbatim copy of warehouse-infra origin/develop:helm-values/kind-resources/warehouse-planning.yaml.
+# Refresh it from there when infra changes; tests/render_test.sh renders it.
+# kind CPU-request overlay for warehouse-planning (generated from warehouse-planning/charts/warehouse-planning/values.yaml on develop).
+# The local kind cluster is ONE worker with the Docker VM's 10 CPUs; chart defaults request
+# 50-100m per container (~10 cores for 76 app containers) while real use is ~10% of that, so
+# rolling updates (maxSurge 1 per Deployment) could not schedule. Only requests.cpu is lowered;
+# limits and memory keep the chart defaults. The Application's last value file (after
+# _platform.yaml and <app>.yaml, ADR 0002 D2); Helm deep-merges it, so only requests.cpu changes.
+analytics:
+  projector:
+    resources:
+      requests:
+        cpu: 25m
+  reports:
+    resources:
+      requests:
+        cpu: 25m
+frontend:
+  resources:
+    requests:
+      cpu: 25m
+mcp:
+  resources:
+    requests:
+      cpu: 25m
+resources:
+  requests:
+    cpu: 25m

@@ -7,6 +7,9 @@
 // There is NO auth of any kind (fleet-wide revert 2026-09-11): no keys, no
 // bearer checks. Access control is the in-cluster ClusterIP boundary.
 //
+// It runs on real Postgres only (ADR 0016): DATABASE_URL is mandatory and a
+// missing one is a boot error that names it; there is no in-memory mode.
+//
 // What this binary deliberately does NOT do: it never starts the outbox
 // relay and never dials Kafka. create_capacity_plan/publish_capacity_plan
 // insert their CloudEvents into the transactional outbox inside the
@@ -17,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,7 +31,6 @@ import (
 
 	inboundmcp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/mcp"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
-	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
@@ -53,6 +56,12 @@ func run() error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
 
+	// Misconfiguration is refused before anything is opened or bound.
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return errMissingDatabaseURL
+	}
+
 	// Standard metrics (docs/adr/0011), same adapter cmd/api uses.
 	otelCtx, otelCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	otelShutdown, err := telemetry.Setup(otelCtx, mcpServiceName, serviceVersion(), getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint))
@@ -69,7 +78,6 @@ func run() error {
 	}()
 
 	httpAddr := getenv("MCP_ADDR", ":8090")
-	databaseURL := os.Getenv("DATABASE_URL")
 
 	deps, closeAdapters, err := buildDeps(context.Background(), logger, databaseURL,
 		getenv("MIGRATIONS_DATABASE_URL", databaseURL),
@@ -87,9 +95,13 @@ func run() error {
 	return serveMCP(logger, srv)
 }
 
-// buildDeps selects in-memory vs Postgres adapters the way cmd/api does: no
-// DATABASE_URL means in-memory repos (runnable locally); a URL means migrate
-// then connect a pgx pool. The returned close func releases the pool.
+// errMissingDatabaseURL is the boot error of an unset DATABASE_URL: there is
+// no in-memory mode (ADR 0016).
+var errMissingDatabaseURL = errors.New("DATABASE_URL is required: this context runs on real Postgres, there is no in-memory mode")
+
+// buildDeps migrates then connects a pgx pool and wires the Postgres
+// repositories into the MCP dependencies. The returned close func releases
+// the pool. An empty databaseURL is a boot error.
 //
 // Like every sibling's cmd/mcp (and unlike a pure read replica) this binary
 // runs the idempotent golang-migrate step on start, so it can boot against
@@ -100,87 +112,95 @@ func run() error {
 // always uses databaseURL.
 func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrationsDatabaseURL, migrationsPath string) (inboundmcp.Deps, func(), error) {
 	noop := func() {}
-
-	var (
-		pcRepo     ports.ProcessCapacityRepository
-		standards  ports.StationStandardRepository
-		tallyRead  ports.StorageTallyReader
-		pathRepo   ports.ProcessPathRepository
-		planRepo   ports.CapacityPlanRepository
-		demandRepo ports.OrderDemandRepository
-		outboxRep  ports.OutboxRepository
-		uow        ports.UnitOfWork
-		closeFn    = noop
-	)
-
 	if databaseURL == "" {
-		logger.Info("DATABASE_URL not configured; using in-memory adapters")
-		pc, plans, outboxRepo := memory.NewProcessCapacityRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
-		pcRepo, pathRepo, planRepo, outboxRep = pc, memory.NewProcessPathRepo(), plans, outboxRepo
-		standards, tallyRead = memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
-		demandRepo = memory.NewOrderDemandRepo()
-		// Participants make the in-memory UoW roll back on error too.
-		uow = memory.NewUnitOfWork(pc, plans, outboxRepo)
-	} else {
-		// The first outbound dial of an injected pod is reset ~10s after
-		// start (Istio native sidecars), so migrations and the first ping
-		// retry with backoff; on exhaustion the process still refuses to boot.
-		if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
-			return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
-		}); err != nil {
-			return inboundmcp.Deps{}, noop, err
-		}
-		pool, err := postgres.NewPool(ctx, databaseURL)
-		if err != nil {
-			return inboundmcp.Deps{}, noop, err
-		}
-		if err := bootretry.Retry(ctx, logger, "ping postgres", func() error { return pool.Ping(ctx) }); err != nil {
-			pool.Close()
-			return inboundmcp.Deps{}, noop, err
-		}
-		logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
-		pcRepo, pathRepo = postgres.NewProcessCapacityRepo(pool), postgres.NewProcessPathRepo(pool)
-		standards, tallyRead = postgres.NewStationStandardRepo(pool), postgres.NewStorageTallyRepo(pool)
-		planRepo, outboxRep = postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool)
-		demandRepo = postgres.NewOrderDemandRepo(pool)
-		uow = postgres.NewUnitOfWork(pool)
-		closeFn = pool.Close
+		return inboundmcp.Deps{}, noop, errMissingDatabaseURL
 	}
 
-	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: pathRepo, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tallyRead,
+	// The first outbound dial of an injected pod is reset ~10s after
+	// start (Istio native sidecars), so migrations and the first ping
+	// retry with backoff; on exhaustion the process still refuses to boot.
+	if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
+		return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
+	}); err != nil {
+		return inboundmcp.Deps{}, noop, err
 	}
-	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
-	encoder := outboundkafka.NewFanoutEncoder()
-	planMetrics, err := telemetry.NewPlanMetrics()
+	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
 		return inboundmcp.Deps{}, noop, err
 	}
+	if err := bootretry.Retry(ctx, logger, "ping postgres", func() error { return pool.Ping(ctx) }); err != nil {
+		pool.Close()
+		return inboundmcp.Deps{}, noop, err
+	}
+	logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
+	deps, err := newDeps(repositories{
+		processCapacities: postgres.NewProcessCapacityRepo(pool),
+		processPaths:      postgres.NewProcessPathRepo(pool),
+		standards:         postgres.NewStationStandardRepo(pool),
+		tally:             postgres.NewStorageTallyRepo(pool),
+		plans:             postgres.NewCapacityPlanRepo(pool),
+		outbox:            postgres.NewOutboxRepo(pool),
+		demand:            postgres.NewOrderDemandRepo(pool),
+		uow:               postgres.NewUnitOfWork(pool),
+	})
+	if err != nil {
+		pool.Close()
+		return inboundmcp.Deps{}, noop, err
+	}
+	return deps, pool.Close, nil
+}
+
+// repositories is the set of outbound ports the MCP use cases need. buildDeps
+// fills it with the Postgres adapters; tests fill it with the in-memory test
+// doubles.
+type repositories struct {
+	processCapacities ports.ProcessCapacityRepository
+	processPaths      ports.ProcessPathRepository
+	standards         ports.StationStandardRepository
+	tally             ports.StorageTallyReader
+	plans             ports.CapacityPlanRepository
+	outbox            ports.OutboxRepository
+	demand            ports.OrderDemandRepository
+	uow               ports.UnitOfWork
+}
+
+// newDeps assembles the MCP dependencies (the SAME use cases the REST adapter
+// uses) over r.
+func newDeps(r repositories) (inboundmcp.Deps, error) {
+	pathCapacity := &usecases.GetProcessPathCapacity{
+		ProcessPaths: r.processPaths, ProcessCapacities: r.processCapacities, StationStandards: r.standards, Tally: r.tally,
+	}
+	expectedDemand := &usecases.GetExpectedDemand{Demand: r.demand}
+	encoder := outboundkafka.NewFanoutEncoder()
+	planMetrics, err := telemetry.NewPlanMetrics()
+	if err != nil {
+		return inboundmcp.Deps{}, err
+	}
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
-			Repo: pcRepo,
+			Repo: r.processCapacities,
 			// Same contract as cmd/api: the aggregate's events are
 			// outboxed atomically with the save (integration stream only;
 			// the analytics stream is plan facts only).
-			Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
+			Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 		},
-		ProcessCapacities:      pcRepo,
-		RegisterProcessPath:    &usecases.RegisterProcessPath{Repo: pathRepo},
+		ProcessCapacities:      r.processCapacities,
+		RegisterProcessPath:    &usecases.RegisterProcessPath{Repo: r.processPaths},
 		GetProcessPathCapacity: pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
-			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
+			PathCapacity: pathCapacity, Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 			Demand: expectedDemand, Metrics: planMetrics,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
-			Plans: planRepo, Outbox: outboxRep, Encoder: encoder, UnitOfWork: uow,
+			Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 		},
-		CapacityPlans: planRepo,
+		CapacityPlans: r.plans,
 
-		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
-		StationStandards:       standards,
-		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: tallyRead},
+		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: r.standards},
+		StationStandards:       r.standards,
+		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: r.tally},
 		GetExpectedDemand:      expectedDemand,
-	}, closeFn, nil
+	}, nil
 }
 
 // serveMCP runs srv until it fails or SIGINT/SIGTERM arrives, then drains it
