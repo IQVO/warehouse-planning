@@ -5,9 +5,14 @@ set -euo pipefail
 
 chart_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 release=warehouse-planning
-# Dummy DSNs, no password: the chart refuses to render without a database source.
-base=(--set database.url=postgres://u@example.invalid:5432/db)
-analytics=(--set kafka.enabled=true --set analytics.enabled=true
+# Dummy DSNs, no password. The chart refuses to render without the real
+# runtime's mandatory values (ADR 0016): a database source, the Kafka brokers,
+# every consumer group and the demand site.
+base=(--set database.url=postgres://u@example.invalid:5432/db
+  --set kafka.brokers=kafka.example.invalid:9092
+  --set config.laborCapacityConsumerGroup=g-labor --set config.storageCapacityConsumerGroup=g-storage
+  --set demand.consumerGroup=g-demand --set demand.siteId=SIM1)
+analytics=(--set analytics.enabled=true --set analytics.projector.consumerGroup=g-analytics
   --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a
   --set analytics.database.reportsUrl=postgres://reports@example.invalid:5432/a)
 
@@ -75,5 +80,76 @@ done
 grep -q 'name: SHUTDOWN_DRAIN_DELAY' <<<"$api_deployment" && fail "SHUTDOWN_DRAIN_DELAY must not be rendered while empty"
 drain="$(helm template "$release" "$chart_dir" "${base[@]}" --set config.shutdownDrainDelay=9s --show-only templates/deployment.yaml)"
 grep -A1 'name: SHUTDOWN_DRAIN_DELAY' <<<"$drain" | grep -q 'value: "9s"' || fail "api Deployment does not set SHUTDOWN_DRAIN_DELAY"
+
+# ADR 0016: Postgres and Kafka are the only runtime. Each mandatory value is
+# refused at render time with a message naming it; nothing silently degrades.
+refuses() { # <needle> <helm args...>
+  local needle="$1"; shift
+  local out
+  if out="$(helm template "$release" "$chart_dir" "$@" 2>&1)"; then
+    fail "the chart rendered although it must refuse ($needle)"
+  fi
+  grep -q -- "$needle" <<<"$out" || fail "the render was refused for another reason than '$needle': $out"
+}
+without() { # drop one mandatory --set from base
+  local drop="$1" out=() i=0
+  while ((i < ${#base[@]})); do
+    if [[ "${base[i]}" == "--set" && "${base[i+1]}" == "$drop="* ]]; then i=$((i + 2)); continue; fi
+    out+=("${base[i]}"); i=$((i + 1))
+  done
+  printf '%s\n' "${out[@]}"
+}
+refuse_without() { # <value path> <needle>
+  local args=()
+  while IFS= read -r line; do args+=("$line"); done < <(without "$1")
+  refuses "$2" "${args[@]}"
+}
+refuse_without database.url "requires database.url or database.existingSecret"
+refuse_without kafka.brokers "requires kafka.brokers to be set (KAFKA_BROKERS"
+refuse_without config.laborCapacityConsumerGroup "LABOR_CAPACITY_CONSUMER_GROUP"
+refuse_without config.storageCapacityConsumerGroup "STORAGE_CAPACITY_CONSUMER_GROUP"
+refuse_without demand.consumerGroup "DEMAND_CONSUMER_GROUP"
+refuse_without demand.siteId "DEMAND_SITE_ID"
+refuses "kafka.enabled is false" "${base[@]}" --set kafka.enabled=false
+refuses "the only publisher is" "${base[@]}" --set config.eventPublisher=log
+refuses "sets EVENT_PUBLISHER=log" "${base[@]}" --set 'extraEnv[0].name=EVENT_PUBLISHER' --set 'extraEnv[0].value=log'
+refuses "terminationGracePeriodSeconds is 5" "${base[@]}" --set terminationGracePeriodSeconds=5
+refuses "analytics.projector.consumerGroup is required" "${base[@]}" --set analytics.enabled=true \
+  --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a
+# A legacy `kafka.enabled: true` (warehouse-infra still sets it) renders.
+helm template "$release" "$chart_dir" "${base[@]}" --set kafka.enabled=true >/dev/null || fail "kafka.enabled=true must still render"
+
+# The api always gets the mandatory env, whatever the values (no conditional env).
+for env in KAFKA_BROKERS DEMAND_CONSUMER_GROUP DEMAND_SITE_ID LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP EVENT_PUBLISHER DATABASE_URL; do
+  grep -q "name: $env\$" <<<"$api_deployment" || fail "the api Deployment does not set $env"
+done
+grep -A1 'name: EVENT_PUBLISHER' <<<"$api_deployment" | grep -q 'value: "kafka"' || fail "EVENT_PUBLISHER must default to kafka"
+
+# warehouse-infra's CURRENT values (verbatim copies, refreshed from its
+# origin/develop) still render and provide every env the binaries require.
+infra=(-f "$chart_dir/tests/warehouse-infra-platform-values.yaml" -f "$chart_dir/tests/warehouse-infra-values.yaml"
+  -f "$chart_dir/tests/warehouse-infra-kind-resources-values.yaml" --set image.tag=local-test)
+infra_api="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/deployment.yaml)" \
+  || fail "the chart does not render with warehouse-infra's current values"
+for env in DATABASE_URL KAFKA_BROKERS EVENT_PUBLISHER LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP DEMAND_CONSUMER_GROUP DEMAND_SITE_ID; do
+  grep -q "name: $env\$" <<<"$infra_api" || fail "warehouse-infra's values do not provide $env to the api"
+done
+grep -A1 'name: KAFKA_BROKERS' <<<"$infra_api" | grep -q 'value: "kafka.warehouse-systems.svc.cluster.local:9092"' \
+  || fail "KAFKA_BROKERS does not come from the platform brokers"
+infra_projector="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/projector-deployment.yaml)" \
+  || fail "the projector does not render with warehouse-infra's current values"
+for env in ANALYTICS_DATABASE_URL KAFKA_BROKERS ANALYTICS_CONSUMER_GROUP; do
+  grep -q "name: $env\$" <<<"$infra_projector" || fail "warehouse-infra's values do not provide $env to the projector"
+done
+infra_mcp="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/mcp-deployment.yaml)" \
+  || fail "the MCP server does not render with warehouse-infra's current values"
+grep -q 'name: DATABASE_URL$' <<<"$infra_mcp" || fail "warehouse-infra's values do not provide DATABASE_URL to the MCP server"
+helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/reports-deployment.yaml >/dev/null \
+  || fail "the reports reader does not render with warehouse-infra's current values"
+
+# /readyz is real on the api, the projector and the reports reader (probes).
+grep -A2 'readinessProbe:' <<<"$infra_api" | grep -q 'path: /readyz' || fail "the api readinessProbe must be /readyz"
+helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/reports-deployment.yaml \
+  | grep -A3 'readinessProbe:' | grep -q 'path: /readyz' || fail "the reports readinessProbe must be /readyz"
 
 echo "PASS: warehouse-planning chart render assertions"
