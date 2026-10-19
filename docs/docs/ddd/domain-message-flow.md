@@ -49,7 +49,7 @@ every event, and the order-management consumer being opt-in.
 
 ## 2. Demand is defaulted from order-management's orders
 
-The demand consumer is enabled (`DEMAND_CONSUMER_GROUP`, `DEMAND_SITE_ID=SIM1`).
+The demand consumer is always on (`DEMAND_CONSUMER_GROUP`, `DEMAND_SITE_ID=SIM1`, both required).
 A planner checks the expected demand and creates a plan without stating it.
 
 ```mermaid

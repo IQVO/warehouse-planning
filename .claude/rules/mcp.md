@@ -24,7 +24,8 @@ use cases the REST adapter calls:
   it is reintroduced. Access control is the in-cluster ClusterIP boundary.
 - Architecture: the adapter depends ONLY on `internal/application` and
   `internal/domain`; nothing depends on it (`TestMCPAdapterDependencyRule`).
-- Env (`cmd/mcp`): `MCP_ADDR`, `DATABASE_URL` (unset -> in-memory repos),
+- Env (`cmd/mcp`): `MCP_ADDR`, `DATABASE_URL` (REQUIRED: unset is a boot
+  error naming it, there is no in-memory mode, ADR 0016),
   `MIGRATIONS_DATABASE_URL` (direct DSN for the migration step only; falls
   back to `DATABASE_URL`), `MIGRATIONS_PATH`, `LOG_LEVEL`. Like every
   sibling's `cmd/mcp`, it runs the idempotent migrations on start (advisory
@@ -89,7 +90,7 @@ snake_case documented arguments.
 ## Tests
 
 - `internal/adapters/inbound/mcp/tools_test.go` drives every tool through
-  the SDK in-memory transport over in-memory repos and reproduces the
+  the SDK in-memory transport over the in-memory test doubles and reproduces the
   section-43 scenario through MCP tools only; the expected numbers are read
   from `features/capacity_plan.feature` so MCP and REST cannot drift.
 - `cmd/mcp/main_test.go`: `/healthz`, both mount paths over real Streamable
