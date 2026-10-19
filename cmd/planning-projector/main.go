@@ -178,7 +178,10 @@ func run() error {
 	shutdownErr := admin.Shutdown(ctx)
 	cancelConsumer()
 	select {
-	case <-consumerDone:
+	case err := <-consumerDone:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Warn("analytics consumer stopped with an error during shutdown", "error", err)
+		}
 	case <-ctx.Done():
 		logger.Warn("analytics consumer did not stop before the shutdown deadline")
 	}
