@@ -119,11 +119,21 @@ var dependencyUnavailable = problemInfo{"dependency-unavailable", "A runtime dep
 // Postgres or Kafka is not reachable. A nil Readiness on Server (unit-test
 // fixtures) always reports ready.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	if !s.Readiness.Ready() {
+	serveReadyz(s.Readiness, w, r)
+}
+
+// ReadyzHandler is GET /readyz over g, for the binaries that serve their own
+// admin or reports router (cmd/planning-projector, cmd/planning-reports).
+func ReadyzHandler(g *Readiness) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) { serveReadyz(g, w, r) }
+}
+
+func serveReadyz(g *Readiness, w http.ResponseWriter, r *http.Request) {
+	if !g.Ready() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
 		return
 	}
-	if failing := s.Readiness.Failing(r.Context()); len(failing) > 0 {
+	if failing := g.Failing(r.Context()); len(failing) > 0 {
 		writeProblem(w, http.StatusServiceUnavailable, dependencyUnavailable, "not ready: "+strings.Join(failing, ", "), r.URL.Path)
 		return
 	}
