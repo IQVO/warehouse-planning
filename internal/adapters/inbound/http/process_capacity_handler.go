@@ -100,6 +100,9 @@ func NewRouter(s *Server) http.Handler {
 		AllowedHeaders:   []string{"Accept", "Content-Type"},
 		AllowCredentials: false,
 	}))
+	// A NUL (U+0000) in the path, the query or a body is a uniform client
+	// error here, never a Postgres 22021 -> 500 (ADR 0016).
+	r.Use(rejectNUL)
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)

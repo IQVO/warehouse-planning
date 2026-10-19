@@ -74,7 +74,7 @@ inside the same unit of work as the effect.
 | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | `workforce-management` | `building_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (`shift_id` is mirrored but unused), CloudEvents `time` | upserts a LABOR constraint `planned_heads x planned_rate` UNIT/HOUR on `ProcessCapacity(upper(path_id), building_id, [time, time + planned_hours))` | `LaborCapacityConsumer`, `LABOR_CAPACITY_CONSUMER_GROUP`, `warehouse.workforce.events.dlq` |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | `facility-layout` | `locationCode`, `zoneId`, `locationType`, `role` (default `Storage`), `activities` | increments the storage-position or station tally | `StorageCapacityConsumer`, `STORAGE_CAPACITY_CONSUMER_GROUP`, `warehouse.facility.events.dlq` |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | `facility-layout` | `locationCode` | decrements the same tally buckets | `StorageCapacityConsumer` (same) |
-| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | `order-management` | `order_id` (= `subject`), `promise_date`, `len(lines)`, CloudEvents `time` | upserts one `order_demand` row at site `DEMAND_SITE_ID`, last writer wins | `OrderDemandConsumer`, `DEMAND_CONSUMER_GROUP` (unset = off), `warehouse.order-management.events.dlq` |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | `order-management` | `order_id` (= `subject`), `promise_date`, `len(lines)`, CloudEvents `time` | upserts one `order_demand` row at site `DEMAND_SITE_ID`, last writer wins | `OrderDemandConsumer`, `DEMAND_CONSUMER_GROUP` (required, always on), `warehouse.order-management.events.dlq` |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | `order-management` | same as `OrderAllocated` | same | `OrderDemandConsumer` (same) |
 | the four `com.warehouse.wes.warehouse-planning.capacityplan.*` types | `warehouse.warehouse-planning.analytics` | this context | the analytics payloads above | upserts `plan_facts` in the analytical database | `AnalyticsConsumer` in `cmd/planning-projector`, `ANALYTICS_CONSUMER_GROUP`, `warehouse.warehouse-planning.analytics.dlq` |
 
@@ -87,5 +87,5 @@ Source: `internal/domain/capacityplan/events.go`,
 `internal/adapters/outbound/kafka/encoder.go`, `analytics_encoder.go`,
 `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
 `storage_capacity_consumer.go`, `order_demand_consumer.go`,
-`analytics_consumer.go`, `deadletter.go`, `cmd/api/main.go`, `cmd/api/demand.go`,
+`analytics_consumer.go`, `deadletter.go`, `cmd/api/main.go`, `cmd/api/runtime.go`,
 `cmd/planning-projector/main.go`, `apis/asyncapi.yaml`.

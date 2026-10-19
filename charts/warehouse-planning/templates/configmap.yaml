@@ -20,6 +20,4 @@ data:
   {{- with .Values.config.shutdownDrainDelay }}
   SHUTDOWN_DRAIN_DELAY: {{ . | quote }}
   {{- end }}
-  {{- if .Values.kafka.enabled }}
   KAFKA_BROKERS: {{ .Values.kafka.brokers | quote }}
-  {{- end }}

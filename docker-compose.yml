@@ -1,0 +1,53 @@
+# Local dependencies for cmd/api, cmd/mcp, cmd/planning-projector and
+# cmd/planning-reports: Postgres AND Kafka are the only runtime (ADR 0016), there
+# is no in-memory mode. `docker compose up -d --wait` then, for example:
+#
+#   export DATABASE_URL='postgres://planning:planning@localhost:55432/planning?sslmode=disable'
+#   export KAFKA_BROKERS='localhost:9092'
+#   export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-$USER-labor
+#   export STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-$USER-storage
+#   export DEMAND_CONSUMER_GROUP=wp-local-$USER-demand
+#   export DEMAND_SITE_ID=SIM1
+#   go run ./cmd/api
+#
+# The broker (confluent-local, KRaft, single node) advertises localhost:9092 to
+# the host and auto-creates topics on first write, like the cluster does. Port
+# 9092 is also what the kind cluster's Kafka publishes on the host: when it is
+# taken, pick another host port, e.g.
+#   KAFKA_HOST_PORT=19092 docker compose up -d --wait   (and KAFKA_BROKERS=localhost:19092)
+# The advertised address follows the host port, as the first produce needs it.
+# Use consumer group ids no deployed instance uses: a shared group on a shared
+# broker splits the partitions between your laptop and the cluster.
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: planning
+      POSTGRES_PASSWORD: planning
+      POSTGRES_DB: planning
+    ports:
+      - "55432:5432"
+    volumes:
+      - warehouse_planning_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U planning"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: confluentinc/confluent-local:7.6.1
+    ports:
+      - "${KAFKA_HOST_PORT:-9092}:9092"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:29092,PLAINTEXT_HOST://localhost:${KAFKA_HOST_PORT:-9092}"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  warehouse_planning_pg_data:

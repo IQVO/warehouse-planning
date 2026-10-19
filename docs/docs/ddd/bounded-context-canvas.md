@@ -89,7 +89,7 @@ flowchart LR
     BC["<b>warehouse-planning - Core subdomain - WES tier</b>"]:::bc
     subgraph OUT["Outbound - whom it calls or notifies"]
         direction TB
-        out0["order-management (opt-in<br/>consumer)"]:::ctx
+        out0["order-management<br/>(consumer)"]:::ctx
         out1["network-inventory-planning"]:::ctx
         out2["none today"]:::none
         out3["own cmd/planning-projector"]:::self
@@ -155,8 +155,8 @@ eligibility authoring (ADR 0001, Consequences).
 | `workforce-management` | `ShiftPlanCommitted` (one message per PathPlan line) | Event | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | Upstream OHS + PL; this side is an ACL (`labor_capacity_consumer.go`) |
 | `facility-layout` | `LocationSlotRegistered` | Event | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | Upstream OHS + PL; ACL (`storage_capacity_consumer.go`) |
 | `facility-layout` | `LocationSlotDecommissioned` | Event | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | Upstream OHS + PL; ACL |
-| `order-management` | `OrderAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` | Upstream OHS + PL; ACL (`order_demand_consumer.go`, opt-in) |
-| `order-management` | `OrderPartiallyAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | Upstream OHS + PL; ACL (opt-in) |
+| `order-management` | `OrderAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` | Upstream OHS + PL; ACL (`order_demand_consumer.go`, always on) |
+| `order-management` | `OrderPartiallyAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | Upstream OHS + PL; ACL (always on) |
 | Operator / `warehouse-console` remote | Register process capacity constraint | Command | REST `POST /process-capacities`; MCP `register_process_capacity_constraint` | This context is the OHS |
 | Operator / remote | Get effective process capacity | Query | REST `GET /process-capacities`; MCP `get_effective_process_capacity` | OHS |
 | Operator / remote | Register process path | Command | REST `POST /process-paths`; MCP `register_process_path` | OHS |

@@ -77,8 +77,9 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
+            # /readyz = drain gate + a ping of the analytical Postgres.
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5

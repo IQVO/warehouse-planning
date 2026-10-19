@@ -75,7 +75,7 @@ details never reach the model. A real call to an unknown plan:
 ## Calling it by hand
 
 ```bash
-go run ./cmd/mcp     # in-memory without DATABASE_URL
+go run ./cmd/mcp     # needs DATABASE_URL (a boot error without it); share the database with cmd/api
 curl -s -X POST localhost:8090/mcp -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' -i

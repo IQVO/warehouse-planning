@@ -6,15 +6,17 @@ sidebar_label: Quickstart
 
 # Quickstart
 
-Run the service on your machine, call it, and run its tests. Every response
-shown below was captured from a real `cmd/api` run on in-memory adapters.
+Run the service on your machine, call it, and run its tests. Postgres and Kafka
+are the only runtime ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)):
+there is no in-memory mode. The request and response shapes below are the REST
+contract, unchanged by that decision; the plan id is a fresh UUID on every run.
 
 ## Prerequisites
 
 | Tool | Why |
 | --- | --- |
 | Go (the version in `go.mod`, currently 1.27.2) | build and test every binary |
-| Docker | only for `make integration`: each integration test starts its own Postgres (`postgres:16-alpine`) and Kafka (`confluentinc/confluent-local:7.6.1`) with testcontainers |
+| Docker | `docker compose up -d --wait` for the Postgres and Kafka the binaries need, and `make integration` (each integration test starts its own Postgres (`postgres:16-alpine`) and Kafka (`confluentinc/confluent-local:7.6.1`) with testcontainers) |
 | `golangci-lint` v2.14.0, `gremlins` v0.6.0, `govulncheck` | `make lint`, `make mutation-fast` and `make vuln`; each target prints the exact `go install` line when the tool is missing |
 | Node 20+ | only for this docs site (`docs/`) and the `web/` remote (Node 22 in CI) |
 
@@ -33,25 +35,42 @@ make integration  # testcontainers Postgres/Kafka; needs Docker, not part of che
 
 See [Testing](/docs/development/testing) for every layer and CI job.
 
-## Run the API with no dependencies
+## Run the API
 
-Without `DATABASE_URL` the API uses in-memory adapters, without `KAFKA_BROKERS`
-the consumers stay off, and the outbox relay logs events instead of sending
-them (`EVENT_PUBLISHER=log`, the default):
+`cmd/api` needs a real Postgres and a real Kafka. The repo's `docker-compose.yml`
+brings up both (Postgres on `:55432`, Kafka on `:9092`); use consumer group ids no
+deployed instance uses, because a shared group on a shared broker splits the
+partitions between your laptop and the cluster:
 
 ```bash
+docker compose up -d --wait
+export DATABASE_URL='postgres://planning:planning@localhost:55432/planning?sslmode=disable'
+export KAFKA_BROKERS=localhost:9092
+export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-$USER-labor
+export STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-$USER-storage
+export DEMAND_CONSUMER_GROUP=wp-local-$USER-demand
+export DEMAND_SITE_ID=SIM1
 SHUTDOWN_DRAIN_DELAY=0 go run ./cmd/api
 ```
 
-The first log lines confirm the mode:
+The binary applies `internal/adapters/outbound/postgres/migrations` on start
+(`MIGRATIONS_PATH` defaults to that path relative to the repo root), so run it
+from the repo root. A missing variable is a boot error that names it, before the
+listener binds (see [Troubleshooting](/docs/operations/troubleshooting)). The
+first log lines confirm the wiring:
 
 ```json
-{"level":"INFO","msg":"DATABASE_URL not configured; using in-memory adapters"}
-{"level":"WARN","msg":"KAFKA_BROKERS not configured; labor/storage capacity Kafka ingestion is disabled"}
-{"level":"INFO","msg":"order demand consumption is disabled","enable_with":"DEMAND_CONSUMER_GROUP"}
+{"level":"INFO","msg":"postgres adapters configured","migrations_path":"internal/adapters/outbound/postgres/migrations"}
+{"level":"INFO","msg":"consumer running","consumer":"labor-capacity","topic":"warehouse.workforce.events","group_id":"wp-local-...-labor","brokers":["localhost:9092"]}
+{"level":"INFO","msg":"consumer running","consumer":"storage-capacity","topic":"warehouse.facility.events", ...}
+{"level":"INFO","msg":"consumer running","consumer":"order-demand","topic":"warehouse.order-management.events", ...}
+{"level":"INFO","msg":"outbox relay running","publisher":"kafka","interval":1000000000,"max_attempts":20,"topic":"warehouse.warehouse-planning.events"}
 {"level":"INFO","msg":"http server listening","addr":":8080"}
-{"level":"INFO","msg":"outbox relay running","publisher":"log","interval":1000000000,"topic":"warehouse.warehouse-planning.events"}
 ```
+
+`GET /readyz` answers 200 only while Postgres answers a ping **and** a Kafka
+broker answers a metadata request (no topic is ever required); `GET /healthz` is
+liveness only.
 
 Telemetry is exported to `localhost:4317`. Without a Collector there, the OTel
 SDK logs an export timeout now and then; it is harmless.
@@ -100,10 +119,13 @@ curl -s -X POST localhost:8080/capacity-plans/<id>/publish   # 409
 #  "title":"This CapacityPlan has already been published","status":409,...}
 ```
 
-The relay then logs eight `event published (log sink)` lines: four types
+The relay then publishes eight messages: four types
 (`CapacityPlanCreated`, `CapacityPlanPublished`, `CapacityShortageDetected`,
 `BottleneckDetected`), each once on `warehouse.warehouse-planning.events` and
 once on `warehouse.warehouse-planning.analytics` with the same CloudEvents id.
+The first write to an output topic that does not exist yet can fail once with
+`Unknown Topic Or Partition` (logged as `outbox relay pass failed`); the broker
+creates the topic and the next pass succeeds.
 
 Without demand data, omitting `assigned_demand` is refused rather than treated
 as zero:
@@ -113,46 +135,6 @@ curl -s 'localhost:8080/demand?location=SIM1&window_start=2026-10-05T08%3A00%3A0
 # {"location":"SIM1",...,"orders":0,"released_lines":0,"source":"order-management","as_of":null}
 # POST /capacity-plans without assigned_demand -> 422 missing-assigned-demand
 ```
-
-## Run against Postgres
-
-There is no `docker-compose.yml` in this repo. Any Postgres 16 works, for
-example a throwaway container:
-
-```bash
-docker run --rm -d --name wp-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=warehouse_planning -p 5432:5432 postgres:16-alpine
-DATABASE_URL='postgres://postgres:postgres@localhost:5432/warehouse_planning?sslmode=disable' go run ./cmd/api
-```
-
-The API applies `internal/adapters/outbound/postgres/migrations` on start
-(`MIGRATIONS_PATH` defaults to that path relative to the repo root), so run it
-from the repo root.
-
-## Run against the fleet's Kafka
-
-The fleet has one broker, the in-cluster Kafka of the kind cluster, reachable
-from the host at `localhost:9092` through its external access. The old
-docker-compose Kafka is retired.
-
-:::warning Use your own consumer group ids
-The labor and storage consumers default to the **same** group ids the
-in-cluster pod uses (`warehouse-planning-labor-capacity`,
-`warehouse-planning-storage-capacity`). A local process with the defaults joins
-those groups and takes partitions away from the cluster. Set unique ids:
-:::
-
-```bash
-KAFKA_BROKERS=localhost:9092 \
-LABOR_CAPACITY_CONSUMER_GROUP=wp-local-$USER-labor \
-STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-$USER-storage \
-DATABASE_URL='postgres://...' \
-go run ./cmd/api
-```
-
-Add `EVENT_PUBLISHER=kafka` only if you really want your local plans on the
-shared `warehouse.warehouse-planning.events` topic, where order-management
-consumes them. `DEMAND_CONSUMER_GROUP` has no default on purpose; set it (with
-`DEMAND_SITE_ID=SIM1`) to a private id if you want demand locally.
 
 ## Seed station capacity
 
@@ -168,13 +150,13 @@ curl -s 'localhost:8080/storage-capacity?location=SIM1'
 ## The other binaries
 
 ```bash
-go run ./cmd/mcp                       # MCP over Streamable HTTP on :8090 (/ and /mcp); see MCP tools
+go run ./cmd/mcp                       # MCP over Streamable HTTP on :8090 (/ and /mcp); DATABASE_URL required; see MCP tools
 ANALYTICS_DATABASE_URL=... KAFKA_BROKERS=localhost:9092 ANALYTICS_CONSUMER_GROUP=wp-local-$USER-analytics \
-  go run ./cmd/planning-projector      # admin :8091
+  go run ./cmd/planning-projector      # admin :8091; all three required
 ANALYTICS_DATABASE_URL=... go run ./cmd/planning-reports   # :8092, GET /reports/...
 ```
 
-`cmd/mcp` without `DATABASE_URL` has its own in-memory store, separate from a
-running `cmd/api`; point both at the same Postgres to share data. Tools are
+`cmd/mcp` reads the same Postgres as `cmd/api` (`DATABASE_URL`, a boot error
+without it); the analytics binaries use their own analytical database. Tools are
 listed on [MCP tools](/docs/mcp/tools); all variables on
 [Configuration](/docs/operations/configuration).
