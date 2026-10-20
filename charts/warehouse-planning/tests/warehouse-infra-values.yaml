@@ -1,0 +1,127 @@
+# Verbatim copy of warehouse-infra origin/develop:helm-values/warehouse-planning.yaml.
+# Refresh it from there when infra changes; tests/render_test.sh renders it.
+# warehouse-planning -- capacity planning bounded context (ProcessPathCapacity,
+# CapacityPlan + shortage detection). OLTP REST on :8080 plus, in the SAME
+# process, a transactional-outbox relay and two Kafka consumers:
+#   - labor capacity   <- warehouse.workforce.events (workforce-management)
+#   - storage capacity <- warehouse.facility.events  (facility-layout)
+#   - order demand     <- warehouse.order-management.events (order-management;
+#                         OrderAllocated / OrderPartiallyAllocated into a local
+#                         expected-demand read model, warehouse-planning ADR 0004)
+# and it PUBLISHES warehouse.warehouse-planning.events (CloudEvents) via the
+# outbox relay. Topics are auto-created by the brokers' writers (kafka.tf has no
+# topic resources), so nothing to declare for the new topic.
+#
+# Every key below is a DEDICATED chart value (charts/warehouse-planning/values.yaml
+# renders each one to its env var), so none of this belongs in extraEnv
+# (a duplicate env entry breaks ArgoCD's diff).
+#
+# Startup: runs golang-migrate before serving, over MIGRATIONS_DATABASE_URL (the
+# direct, non-pooled DSN Terraform puts in the <svc>-db Secret); DATABASE_URL
+# itself goes through PgBouncer.
+#
+# Analytics read side (warehouse-planning ADR 0005): planning-projector (the only
+# writer of the SEPARATE warehouse_planning_analytics database) and
+# planning-reports (read-only, Service warehouse-planning-reports, routed by
+# Kong at /api/warehouse-planning/reports, analytics.reports.route below).
+# Both ship in the SAME image as the api (one image build). The DSNs never
+# appear here: modules/application writes them into the
+# warehouse-planning-analytics-db Secret, which
+# analytics.database.existingSecret names. Needs warehouse-planning's chart `analytics:`
+# block on its develop branch (ArgoCD installs the chart from there); before
+# that merge these values are ignored. The role/database are NOT created by a
+# plain apply on an already-populated Postgres: see the infra PR runbook.
+#
+# The console remote (capacity_mfe, web/): frontend below; its
+# content-addressed image tag comes from Terraform (local.frontend_remotes).
+
+replicaCount: 1
+
+config:
+  httpAddr: ":8080"
+  migrationsPath: "migrations"
+  logLevel: "info"
+  # Relay CapacityPlan events onto warehouse.warehouse-planning.events instead
+  # of the log sink. Requires kafka.enabled (below); the chart refuses to render
+  # otherwise.
+  eventPublisher: "kafka"
+  outboxRelayInterval: "1s"
+  # Fixed, stable consumer-group ids: a restarted pod resumes from its committed
+  # offsets rather than re-reading the topic from the start. Equal to the
+  # binary's own defaults, pinned here so a rename in code cannot silently
+  # orphan the committed offsets.
+  laborCapacityConsumerGroup: "warehouse-planning-labor-capacity"
+  storageCapacityConsumerGroup: "warehouse-planning-storage-capacity"
+
+kafka:
+  enabled: true
+demand:
+  consumerGroup: "warehouse-planning-demand"
+  siteId: "SIM1"
+
+# Analytics read side (ADR 0005). The projector's consumer group is a FIXED, stable id (fleet charter naming
+# `<ctx>-analytics`): a restarted pod resumes from its committed offsets, and a
+# brand-new group rebuilds the model from the topic's history. Pinned here equal
+# to the binary's/chart's default so a rename in code cannot silently orphan the
+# committed offsets. The DSNs come from the warehouse-planning-analytics-db
+# Secret (analytics.database.existingSecret).
+analytics:
+  enabled: true
+  projector:
+    consumerGroup: "warehouse-planning-analytics"
+  database:
+    existingSecret: warehouse-planning-analytics-db
+  reports:
+    route:
+      enabled: true
+      path: /api/warehouse-planning/reports
+
+# Formerly computed by terraform/services.tf (ADR 0002 phase 3, docs/adr/0002-application-delivery-boundary.md).
+# Platform facts (Gateway parentRefs, Kafka brokers, OTLP endpoint, CORS origin) come from
+# _platform.yaml; image tags from Terraform (the Application's valuesObject).
+database:
+  existingSecret: warehouse-planning-db
+extraEnv: []
+frontend:
+  enabled: true
+  image:
+    pullPolicy: IfNotPresent
+    repository: warehouse/warehouse-planning-frontend
+gatewayApi:
+  enabled: true
+  hosts:
+    - path: /api/warehouse-planning
+      pathType: PathPrefix
+  stripPath: true
+image:
+  pullPolicy: IfNotPresent
+  repository: warehouse/warehouse-planning
+ingress:
+  annotations:
+    konghq.com/strip-path: 'true'
+  className: kong
+  enabled: false
+  hosts:
+    - host: ''
+      paths:
+        - path: /api/warehouse-planning
+          pathType: Prefix
+kongPlugins:
+  cors:
+    enabled: true
+  opentelemetry:
+    enabled: true
+  prometheus:
+    enabled: true
+mcp:
+  enabled: true
+  route:
+    enabled: true
+    path: /api/mcp/warehouse-planning
+pathCatalogue:
+  content: ''
+  enabled: false
+service:
+  port: 80
+  targetPort: 8080
+  type: ClusterIP

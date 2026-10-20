@@ -18,11 +18,11 @@ decision amends or supersedes an earlier one by its own ADR.
 | [0001](0001-warehouse-planning-bounded-context.md) | warehouse-planning as a new Core bounded context | Accepted (2026-10-03). Amended (2026-10-03), see its Addendum; the Addendum's handling of `facility-layout` storage and station tallies as capacity constraints is superseded by ADR 0002 |
 | [0002](0002-station-capacity-composition.md) | Station capacity is composed at read time; storage positions are a read model | Accepted (2026-10-04). Supersedes the storage and station part of the ADR 0001 Addendum; its decision 2 is refined by ADR 0003 |
 | [0003](0003-window-coverage-semantics.md) | A registered capacity window applies when it COVERS the planning window | Accepted (2026-10-04). Refines ADR 0002 decision 2 and the exact-window statements of the ADR 0001 Addendum |
-| [0004](0004-demand-ingestion-from-order-management.md) | Demand is ingested from order-management's published events into a local read model; `assigned_demand` becomes optional | Accepted (2026-10-04). Additive |
+| [0004](0004-demand-ingestion-from-order-management.md) | Demand is ingested from order-management's published events into a local read model; `assigned_demand` becomes optional | Accepted (2026-10-04). Additive. Amended by ADR 0016 (the consumer is always on) |
 | [0005](0005-analytics-read-side.md) | Analytics read side: an analytics stream, a projector and read-only reports over a separate analytical database | Accepted (2026-10-04). Additive |
 | [0006](0006-cloudevents-envelope-and-type-catalogue.md) | CloudEvents 1.0 is the only envelope, and this is the type catalogue | Accepted (2026-10-05). Records a decision already in effect |
-| [0007](0007-outbox-and-resilient-consumers.md) | Transactional outbox and resilient, idempotent Kafka consumers (adoption) | Accepted (2026-10-05). Records decisions already in effect, plus the dead-letter fix for the three domain consumers. Amended by ADR 0013 |
-| [0008](0008-mcp-server-adoption.md) | MCP server adoption (unauthenticated, additive) | Accepted (2026-10-05). Records a decision already in effect |
+| [0007](0007-outbox-and-resilient-consumers.md) | Transactional outbox and resilient, idempotent Kafka consumers (adoption) | Accepted (2026-10-05). Records decisions already in effect, plus the dead-letter fix for the three domain consumers. Amended by ADR 0013 and ADR 0016 (no `LogSink` at runtime) |
+| [0008](0008-mcp-server-adoption.md) | MCP server adoption (unauthenticated, additive) | Accepted (2026-10-05). Records a decision already in effect. Amended by ADR 0016 (`DATABASE_URL` required) |
 | [0009](0009-hpa-and-pgxpool-tuning.md) | Horizontal Pod Autoscaling and pgxpool connection-count tuning (adoption) | Accepted (2026-10-05). Records decisions already in effect |
 | [0010](0010-migrations-over-direct-connection.md) | Database migrations run over a direct Postgres connection | Accepted (2026-10-05). Records a decision already in effect |
 | [0011](0011-standard-metrics-adoption.md) | Standard metrics adoption (otelchi + a Tier-2 business counter) | Accepted (2026-10-05) |
@@ -30,6 +30,7 @@ decision amends or supersedes an earlier one by its own ADR.
 | [0013](0013-outbox-relay-attempt-cap.md) | Outbox relay attempt cap | Accepted (2026-10-13). Amends ADR 0007 §1's ordering guarantee |
 | [0014](0014-trace-context-crosses-the-outbox.md) | The W3C trace context crosses the outbox to Kafka | Accepted (2026-10-13). Additive |
 | [0015](0015-projector-telemetry-and-chart-otel-env.md) | Projector telemetry and the chart's OTel environment | Accepted (2026-10-13). Extends ADR 0011 |
+| [0016](0016-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime | Accepted (2026-10-19). Amends ADR 0004 (demand consumer off switch), ADR 0007 (`LogSink` default) and ADR 0008 (in-memory `cmd/mcp`) |
 
-All fifteen are Accepted; none is Superseded as a whole. Where a page in the
+All sixteen are Accepted; none is Superseded as a whole. Where a page in the
 main documentation states a rule, it links the ADR that decided it.

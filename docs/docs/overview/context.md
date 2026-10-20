@@ -71,11 +71,13 @@ capacity.
 - `cmd/planning-projector` (admin `:8091`, `/healthz` `/readyz`) is the analytics
   read side's only writer: it consumes `warehouse.warehouse-planning.analytics`
   and projects into the separate analytical database (ADR 0005).
-  `cmd/planning-reports` (`:8092`, `/healthz`) serves the four read-only
+  `cmd/planning-reports` (`:8092`, `/healthz`, `/readyz`) serves the four read-only
   `/reports/...` endpoints from it (`bottleneck-frequency`, `shortage-trend`,
   `plan-throughput` and `freshness`).
-- Without `DATABASE_URL`, `cmd/api` and `cmd/mcp` fall back to in-memory
-  repositories (the analytics binaries require `ANALYTICS_DATABASE_URL`).
+- Postgres and Kafka are the only runtime ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)):
+  `cmd/api` and `cmd/mcp` exit at boot without `DATABASE_URL` (and `cmd/api`
+  without `KAFKA_BROKERS` and its consumer groups); the analytics binaries
+  require `ANALYTICS_DATABASE_URL`. There is no in-memory mode.
 - A Helm chart (`charts/warehouse-planning`) deploys the `api` component, and
   optionally the `mcp`, `frontend` and analytics components (off by default).
 

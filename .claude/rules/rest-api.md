@@ -52,6 +52,14 @@ unchanged):
 
 - Error shape: RFC 7807 `application/problem+json`, matching the rest of
   the fleet.
+- A NUL (U+0000) in the path, the query or a body is a client error, never a
+  Postgres 500 (`rejectNUL`, ADR 0016): path -> `404 resource-not-found`, body
+  -> `400 malformed-request-body`, query -> `400 malformed-request-query`.
+- `GET /healthz` is liveness. `GET /readyz` is `200 {"status":"ready"}` only
+  while Postgres answers a ping and a Kafka broker answers a metadata request
+  (no topic is required); otherwise `503` `application/problem+json`
+  `dependency-unavailable` (`detail`: `not ready: postgres` / `kafka`), or
+  `503 {"status":"not_ready"}` while draining for shutdown.
 - Auth: none. This fleet's REST+MCP auth was deliberately reverted
   2026-09-11 and stays unauthenticated pending a fresh fleet-wide
   decision. `internal/architecture/fitness_test.go`'s
@@ -75,10 +83,10 @@ ProcessPath becomes known to this service.
 
 422 (`application/problem+json`) if `steps` is empty.
 
-Persistence: with `DATABASE_URL` set the path is stored in Postgres
-(`process_paths`, migration `0004`; `steps` is a `text[]` column, which keeps
-step ORDER) and survives a restart; without it the in-memory repo is used.
-Re-registering an existing `id` replaces name and steps wholesale in both.
+Persistence: the path is stored in Postgres (`process_paths`, migration
+`0004`; `steps` is a `text[]` column, which keeps step ORDER) and survives a
+restart (`DATABASE_URL` is required; the in-memory repo is a test double only).
+Re-registering an existing `id` replaces name and steps wholesale.
 
 ### `GET /process-paths`
 
@@ -279,7 +287,7 @@ with `<location>-` (zone id first segment = SiteCode = building id).
 `422 application/problem+json` for `non-positive-station-standard` (zero
 quantity), `negative-quantity`, `non-positive-period`,
 `unsupported-normalization-unit` (LINE or unknown); `400 malformed-json`.
-Persisted in `station_standards` (migration `0005`) when `DATABASE_URL` is set.
+Persisted in `station_standards` (migration `0005`).
 
 ### `GET /station-standards?location=`
 

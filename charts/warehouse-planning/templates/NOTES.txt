@@ -18,19 +18,13 @@ To reach it locally:
   curl http://localhost:8080/healthz
 {{- end }}
 
-{{- if eq .Values.config.eventPublisher "kafka" }}
 
-config.eventPublisher is "kafka" — CapacityPlan events are relayed from the
-transactional outbox onto warehouse.warehouse-planning.events, and the labor /
-storage capacity consumers read warehouse.workforce.events and
-warehouse.facility.events from {{ .Values.kafka.brokers }}.
-{{- else }}
+Postgres and Kafka are the only runtime (ADR 0016): CapacityPlan and
+ProcessCapacity events are relayed from the transactional outbox onto
+warehouse.warehouse-planning.events (CapacityPlan events also onto
+warehouse.warehouse-planning.analytics) via {{ .Values.kafka.brokers }}.
 
-NOTE: config.eventPublisher is "log" (the default) — outbox rows are drained
-to the log sink, nothing reaches warehouse.warehouse-planning.events.
-{{- end }}
-{{- if not .Values.kafka.enabled }}
-
-NOTE: kafka.enabled is false — KAFKA_BROKERS is not set, so the labor /
-storage capacity Kafka consumers are DISABLED (the REST surface still works).
-{{- end }}
+The three consumers are ON (always):
+  labor capacity   group {{ .Values.config.laborCapacityConsumerGroup }}, topic warehouse.workforce.events
+  storage capacity group {{ .Values.config.storageCapacityConsumerGroup }}, topic warehouse.facility.events
+  order demand     group {{ .Values.demand.consumerGroup }}, topic warehouse.order-management.events (site {{ .Values.demand.siteId }})

@@ -19,6 +19,10 @@ type ReportsServer struct {
 	Reader report.Reader
 	// Now is the clock the default range ends at (time.Now when nil).
 	Now func() time.Time
+	// Readiness backs GET /readyz: the drain gate plus the analytical
+	// Postgres ping (NewReadiness). cmd/planning-reports always sets it; nil
+	// (handler unit tests) means always ready.
+	Readiness *Readiness
 }
 
 const dayLayout = "2006-01-02"
@@ -87,8 +91,8 @@ type throughputReportDTO struct {
 // distinct from the main api service's DefaultServiceName.
 const reportsServiceName = "warehouse-planning-reports"
 
-// NewReportsRouter builds the router of cmd/planning-reports: /healthz and
-// GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput,freshness}. No
+// NewReportsRouter builds the router of cmd/planning-reports: /healthz,
+// /readyz and GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput,freshness}. No
 // auth middleware (fleet rule), no CORS: the service is cluster-internal.
 func NewReportsRouter(s *ReportsServer) http.Handler {
 	r := chi.NewRouter()
@@ -97,6 +101,7 @@ func NewReportsRouter(s *ReportsServer) http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	r.Get("/readyz", ReadyzHandler(s.Readiness))
 	r.Get("/reports/bottleneck-frequency", s.handleBottleneckFrequency)
 	r.Get("/reports/shortage-trend", s.handleShortageTrend)
 	r.Get("/reports/plan-throughput", s.handlePlanThroughput)

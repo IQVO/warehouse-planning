@@ -160,11 +160,15 @@ joining the ctx transaction exactly like the other repos). The shape mirrors
   overtakes an earlier one) and records `last_error`. Delivery is
   at-least-once: a crash between the broker ack and the UPDATE republishes
   the row, same id -- consumers dedupe on `id`.
-- **`EVENT_PUBLISHER=kafka|log`** (default `log`): `kafka` writes to
-  `KAFKA_BROKERS` (required in that mode); `log` logs each message and marks
-  it published, so tests and local dev need no broker (and, in `log` mode,
-  nothing reaches Kafka). Unknown values refuse to boot. With no
-  `DATABASE_URL` the outbox is the in-memory one (same relay, same modes).
+- **Postgres and Kafka are the only runtime** (ADR 0016). The relay is always
+  on and always writes to `KAFKA_BROKERS` (REQUIRED; a boot error naming it
+  when unset). `EVENT_PUBLISHER` may only be `kafka` (also the default): `log`
+  and unknown values refuse to boot. `DATABASE_URL` is required too: the
+  in-memory outbox is a TEST double (`TestRuntimeBinaryHasNoInMemoryAdapters`
+  forbids `cmd/**` from importing it). The process exits non-zero when the
+  relay or a consumer returns on its own. `/readyz` = drain gate + Postgres
+  ping + a Kafka broker answering a topic-less metadata request (3 s cache,
+  2 s bound; topics are never required); `/healthz` is liveness only.
 - **Kafka writer** (`RelaySink`): topic-less writer routing by
   `Message.Topic`, `RequiredAcks: RequireAll`, `BatchTimeout: 10ms`,
   `kafkago.Hash{}` balancer on the plan id key, `AllowAutoTopicCreation`
@@ -185,7 +189,7 @@ Confirmed 2026-10-03 against each producer's own `apis/asyncapi.yaml` on
 | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (fan-out: one message per PathPlan line) -> LABOR `CapacityConstraint` = `planned_heads * planned_rate`; window = `[event.time, event.time + planned_hours]` (documented assumption, no real shift-start field exists yet) |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `zoneId`, `locationType`, `role` (default `Storage`), `activities` (present only when `role=WorkCenter`) -> tallied per `(zoneId, locationType)` as storage positions (role=Storage), or per zone+activity as stations (role=WorkCenter). Tally only: no ProcessCapacity constraint is registered |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `locationCode` -> decrements the same tally |
-| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `order_id` (= `subject`), `promise_date`, `len(lines)` -> upserts ONE row per order id in the expected-demand read model (`order_demand`), site = the configured `DEMAND_SITE_ID` (the event carries none), last writer wins on the CloudEvents `time`. Consumer group env `DEMAND_CONSUMER_GROUP`: **unset = consumer OFF** (docs/adr/0004) |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `order_id` (= `subject`), `promise_date`, `len(lines)` -> upserts ONE row per order id in the expected-demand read model (`order_demand`), site = the configured `DEMAND_SITE_ID` (the event carries none), last writer wins on the CloudEvents `time`. Consumer group env `DEMAND_CONSUMER_GROUP` (REQUIRED, no default; the consumer is always on, docs/adr/0004 + ADR 0016) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | same payload shape and effect as `OrderAllocated` |
 
 `OrderRepromised` (same topic: cpt ids only, no new cutoff instant), the
@@ -334,4 +338,13 @@ Postgres + Kafka: rollback, retry, redelivery) and
 
 Every Kafka consumer group id MUST come from an env var, never a hardcoded
 string literal — `internal/architecture/fitness_test.go`'s
-`TestKafkaConsumerGroupNeverHardcodedInline` enforces this.
+`TestKafkaConsumerGroupNeverHardcodedInline` enforces this. None has a default
+and every one is required (ADR 0016); a missing one is a boot error that names
+the variable:
+
+| Consumer | Group variable |
+| --- | --- |
+| Labor capacity (`warehouse.workforce.events`) | `LABOR_CAPACITY_CONSUMER_GROUP` |
+| Storage capacity (`warehouse.facility.events`) | `STORAGE_CAPACITY_CONSUMER_GROUP` |
+| Order demand (`warehouse.order-management.events`) | `DEMAND_CONSUMER_GROUP` (+ `DEMAND_SITE_ID`) |
+| Analytics projector (`cmd/planning-projector`) | `ANALYTICS_CONSUMER_GROUP` |

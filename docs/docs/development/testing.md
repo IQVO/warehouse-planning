@@ -16,13 +16,13 @@ sub-tests.
 | Layer | Where | Count | How it runs | Needs |
 | --- | --- | --- | --- | --- |
 | Domain unit tests | `internal/domain/{processcapacity,capacityplan,processpath,demand}` | 91 tests in 12 files | `make test` | nothing |
-| Application (use case) tests | `internal/application/usecases`, `internal/application/outbox` | 69 tests in 11 files | `make test`, with the in-memory adapters | nothing |
+| Application (use case) tests | `internal/application/usecases`, `internal/application/outbox` | 69 tests in 11 files | `make test`, with the in-memory test doubles | nothing |
 | Analytics report tests | `internal/analytics/report` | 17 tests in 2 files | `make test` | nothing |
 | Adapter tests (httptest, fake Kafka reader/writer, in-memory stores) | `internal/adapters/...` (http 57, kafka inbound 65, mcp 19, outbound kafka 22, memory 16, outbox 12, cloudevents 6, analyticsstore 3) | 200 tests | `make test` | nothing |
-| Composition-root tests | `cmd/*/main_test.go`, `cmd/api/{demand,logger_level,outbox_relay_config}_test.go`, `cmd/planning-projector/telemetry_test.go` | 31 tests | `make test` | nothing |
+| Composition-root tests | `cmd/*/main_test.go`, `cmd/api/{readiness,logger_level,outbox_relay_config}_test.go`, `cmd/planning-projector/telemetry_test.go` (boot errors that name the variable, `/readyz`, the relay) | 35 tests | `make test` | nothing |
 | BDD acceptance (godog) | `features/*.feature`, driven by `features_test.go`, `features_demand_test.go`, `features_list_test.go` at the repo root | 6 features, 34 scenarios | `make bdd` (`go test ./... -run TestFeatures -v`), also part of `make test` | nothing |
-| Integration (`-tags=integration`) | 24 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the three Kafka consumers, the analytics store, `cmd/mcp`, and `analytics_e2e_integration_test.go` | 75 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
-| Architecture fitness | `internal/architecture` | 16 tests | `make arch-test` | nothing |
+| Integration (`-tags=integration`) | 27 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the three Kafka consumers, the analytics store, `cmd/mcp`, `cmd/api/e2e_integration_test.go` (boots the real `run()`) and `analytics_e2e_integration_test.go` | 84 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
+| Architecture fitness | `internal/architecture` | 18 tests | `make arch-test` | nothing |
 | Mutation | `.gremlins.yaml` | see below | `make mutation-fast`, `make mutation-full` | `gremlins` v0.6.0 |
 | Frontend remote | `web/src/**/*.test.ts(x)` (8 files, vitest + Testing Library) | | `cd web && npm test` | Node, a built `../../warehouse-ui-kit` |
 | Chart wiring | `charts/warehouse-planning/tests/test_service_selectors.py`, `charts/warehouse-planning/tests/render_test.sh` | | `python3 charts/warehouse-planning/tests/test_service_selectors.py`, `bash charts/warehouse-planning/tests/render_test.sh` | Python with `pyyaml`, Helm |
@@ -34,8 +34,8 @@ linted with Spectral (`api-lint`), not exercised.
 
 ### BDD features
 
-The godog suite drives the **real chi router** over `httptest` with in-memory
-repositories and outbox. The Kafka-fed read models are filled by handing real
+The godog suite drives the **real chi router** over `httptest` with the in-memory
+test doubles (the shipped binaries have no in-memory mode, ADR 0016). The Kafka-fed read models are filled by handing real
 CloudEvents bytes to the real consumers' `HandleMessage`. `Strict: true` fails
 a scenario with an undefined step.
 
@@ -53,9 +53,13 @@ a scenario with an undefined step.
 Every integration test starts its own containers with testcontainers
 (`postgres:16-alpine`, `confluentinc/confluent-local:7.6.1`); none reads
 `DATABASE_URL` or `KAFKA_BROKERS`, and two fitness tests enforce that. The
-widest one, `analytics_e2e_integration_test.go`, covers the whole read side:
-plan created and published, outbox, relay, Kafka, projector, analytical
-database, report.
+`cmd/api/e2e_integration_test.go` test boots the real `run()` of `cmd/api` against
+Postgres and Kafka containers and drives it only through REST and Kafka (three
+consumers, plan create/publish, NUL guard, both output topics, restart,
+`/readyz` with missing topics and with Postgres gone, exit when Kafka goes
+away). `analytics_e2e_integration_test.go` covers the whole read side: plan
+created and published, outbox, relay, Kafka, projector, analytical database,
+report.
 
 Gap-fix tests (2026-10-12 wave), all in `internal/adapters/outbound/outbox`:
 
@@ -70,8 +74,10 @@ template` and asserts: the `api` Deployment mounts the ConfigMap with
 defaults to `20` and `0` renders as is (D12); every backend Deployment sets
 `ENVIRONMENT`, `SERVICE_VERSION` and, while `otel.enabled`,
 `OTEL_EXPORTER_OTLP_ENDPOINT`, and the `api` sets `SHUTDOWN_DRAIN_DELAY` when
-configured (D21). The `chart-tests` CI job runs it with the Service-selector
-test on every push and PR.
+configured (D21). It also asserts that the chart refuses every missing
+mandatory value (database, brokers, consumer groups, demand site) and renders
+warehouse-infra's current values with every mandatory variable provided. The
+`chart-tests` CI job runs it with the Service-selector test on every push and PR.
 
 ### Architecture fitness tests
 
@@ -80,6 +86,7 @@ test on every push and PR.
 | `TestHexagonalArchitecture` | dependencies point inward; inbound and outbound adapters never import each other (arch-go) |
 | `TestMCPAdapterDependencyRule` | the MCP adapter depends only on application and domain, and nothing depends on it (ADR 0008) |
 | `TestNoAuthMiddlewareReintroduced` | no bearer/JWT middleware under `internal/adapters/inbound` |
+| `TestRuntimeBinaryHasNoInMemoryAdapters`, `TestRuntimeBinarySensorBites` | no non-test file under `cmd/**` imports `internal/adapters/outbound/memory` (ADR 0016); the detector is proven to flag plain, aliased, blank, dot and nested imports |
 | `TestKafkaConsumerGroupNeverHardcodedInline` | consumer group ids come from the composition root, never a literal |
 | `TestKafkaIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationSensorFailsOnBadFixtures` | integration tests boot their own Kafka/Postgres; the sensor itself is proven to fail on bad fixtures |
 | `TestNoEventEnvelopeToggleOrFlatEnvelope`, `TestCloudEventsOnly` | CloudEvents 1.0 is the only envelope; no envelope toggle; kafka-go users must build envelopes with the CloudEvents SDK |

@@ -28,10 +28,10 @@ ports with their adapters.
 
 | Binary | Role | Port (default) | Probes | Data store |
 | --- | --- | --- | --- | --- |
-| `cmd/api` | REST API, the three domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`; in-memory when unset) |
-| `cmd/mcp` | MCP server (Streamable HTTP, 11 tools); writes outbox rows but never relays them | `MCP_ADDR` `:8090` (`/` and `/mcp`) | `/healthz` | the same OLTP Postgres |
-| `cmd/planning-projector` | the only writer of the analytical database, fed by `warehouse.warehouse-planning.analytics` | `ADMIN_ADDR` `:8091` (admin only) | `/healthz`, `/readyz` | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-write) |
-| `cmd/planning-reports` | read-only `GET /reports/...` over the analytical database | `HTTP_ADDR` `:8092` | `/healthz` | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-only transactions) |
+| `cmd/api` | REST API, the three domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`, required) and Kafka (`KAFKA_BROKERS`, required) |
+| `cmd/mcp` | MCP server (Streamable HTTP, 11 tools); writes outbox rows but never relays them | `MCP_ADDR` `:8090` (`/` and `/mcp`) | `/healthz` | the same OLTP Postgres (`DATABASE_URL`, required) |
+| `cmd/planning-projector` | the only writer of the analytical database, fed by `warehouse.warehouse-planning.analytics` | `ADMIN_ADDR` `:8091` (admin only) | `/healthz`, `/readyz` (analytical Postgres ping and Kafka metadata) | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-write) |
+| `cmd/planning-reports` | read-only `GET /reports/...` over the analytical database | `HTTP_ADDR` `:8092` | `/healthz`, `/readyz` (analytical Postgres ping) | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-only transactions) |
 
 `cmd/api` and `cmd/mcp` both run the OLTP migrations at boot
 (`MIGRATIONS_DATABASE_URL`, falling back to `DATABASE_URL`); the projector runs
@@ -88,9 +88,11 @@ plan's, overtake it ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)).
 Each row carries the writing request's W3C `traceparent`, which the relay
 sends as a Kafka header ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)).
 Delivery is at-least-once; consumers dedupe on `id`.
-`EVENT_PUBLISHER=kafka|log` (default `log`) selects the Kafka sink or a log
-sink; `kafka` requires `KAFKA_BROKERS`. Kafka is dialled lazily by the first
-send, never at boot.
+The relay always runs and always publishes to Kafka: `KAFKA_BROKERS` is
+required and `EVENT_PUBLISHER` may only be `kafka` (`log` is a boot error; the
+log sink was removed, [ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)).
+Kafka is dialled lazily by the first send, never at boot. The process exits
+non-zero when the relay or a consumer stops on its own, so the pod restarts.
 
 ## Consuming: at-least-once with an atomic effect
 
