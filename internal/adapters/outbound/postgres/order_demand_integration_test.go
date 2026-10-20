@@ -183,8 +183,17 @@ func TestMigration0006_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 	defer func() { _, _ = m.Close() }()
 
 	version, dirty, err := m.Version()
-	if err != nil || dirty || version != 8 {
-		t.Fatalf("version = %d dirty=%v err=%v, want 8 (the latest migration is 0008_capacity_plan_site_id)", version, dirty, err)
+	if err != nil || dirty || version != 10 {
+		t.Fatalf("version = %d dirty=%v err=%v, want 10 (the latest migration is 0010_observed_capacity)", version, dirty, err)
+	}
+	// 0010 (observed capacity) and 0009 (inbound labour demand) sit on top of 0008: undo them first.
+	for _, want := range []uint{9, 8} {
+		if err := m.Steps(-1); err != nil {
+			t.Fatalf("down to %d: %v", want, err)
+		}
+		if version, dirty, err = m.Version(); err != nil || dirty || version != want {
+			t.Fatalf("version after down = %d dirty=%v err=%v, want %d", version, dirty, err, want)
+		}
 	}
 	// 0008 (site id) and 0007 (outbox identity per topic) sit on top of 0006: undo them first.
 	if err := m.Steps(-1); err != nil {
