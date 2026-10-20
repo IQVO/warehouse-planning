@@ -80,6 +80,10 @@ type world struct {
 	// w2 holds the wave-2 state (labor consumer, slot bookkeeping); see
 	// features_wave2_test.go.
 	w2 wave2State
+
+	// io holds the ADR 0017 state (dock-appointment and task-completion
+	// consumers); see features_inbound_observed_test.go.
+	io inboundObservedState
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -109,6 +113,7 @@ func (w *world) start() {
 	w.orderSeq = 0
 	w.planClock = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	w.w2 = newWave2State(repo, outboxRepo, encoder, uow)
+	w.io = newInboundObservedState()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
 			Repo: repo,
@@ -123,6 +128,9 @@ func (w *world) start() {
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
 			Demand: expectedDemand,
+			// The dock-appointment read model prices appointments with the
+			// declared inbound standard (ADR 0017), as cmd/api wires it.
+			Inbound: w.io.getInboundDemand,
 			// Each plan is created one minute after the previous one, so
 			// "newest first" in the list scenarios never hangs on a clock tie.
 			Now: w.nextPlanTime,
@@ -136,6 +144,11 @@ func (w *world) start() {
 		StationStandards:       standards,
 		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: tallyRepo},
 		GetExpectedDemand:      expectedDemand,
+
+		DeclareInboundLabourStandard: w.io.declare,
+		InboundStandards:             w.io.standards,
+		GetInboundDemand:             w.io.getInboundDemand,
+		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: planRepo, Observed: w.io.observedRepo},
 	}
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
@@ -658,4 +671,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerDemandSteps(sc, w)
 	registerListSteps(sc, w)
 	registerWave2Steps(sc, w)
+	registerInboundObservedSteps(sc, w)
 }
