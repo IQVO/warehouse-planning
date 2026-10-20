@@ -29,6 +29,9 @@ func newTestServer(t *testing.T) *httptest.Server {
 		processCapacities: pc, processPaths: memory.NewProcessPathRepo(), standards: memory.NewStationStandardRepo(),
 		tally: tally, plans: plans, outbox: outboxRepo, demand: memory.NewOrderDemandRepo(),
 		uow: memory.NewUnitOfWork(pc, plans, outboxRepo),
+
+		inboundAppointments: memory.NewInboundAppointmentRepo(), inboundStandards: memory.NewInboundStandardRepo(),
+		observedCapacity: memory.NewObservedCapacityRepo(),
 	})
 	if err != nil {
 		t.Fatalf("newDeps: %v", err)
@@ -64,7 +67,7 @@ func TestRouter_HealthzIsOpenAndServesOK(t *testing.T) {
 }
 
 // Both mount points speak Streamable HTTP, with no credentials, and a real
-// client can list the 11 tools and call one end to end.
+// client can list the 14 tools and call one end to end.
 func TestStreamableHTTP_RootAndMCPPathsServeTools(t *testing.T) {
 	srv := newTestServer(t)
 	for _, path := range []string{"/", "/mcp"} {
@@ -80,8 +83,8 @@ func TestStreamableHTTP_RootAndMCPPathsServeTools(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list tools: %v", err)
 			}
-			if len(tools.Tools) != 11 {
-				t.Fatalf("tools = %d, want 11", len(tools.Tools))
+			if len(tools.Tools) != 14 {
+				t.Fatalf("tools = %d, want 14", len(tools.Tools))
 			}
 
 			res, err := session.CallTool(context.Background(), &sdk.CallToolParams{

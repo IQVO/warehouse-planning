@@ -237,6 +237,8 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("LABOR_CAPACITY_CONSUMER_GROUP", "warehouse-planning-labor-capacity-e2e")
 	t.Setenv("STORAGE_CAPACITY_CONSUMER_GROUP", "warehouse-planning-storage-capacity-e2e")
 	t.Setenv("DEMAND_CONSUMER_GROUP", "warehouse-planning-demand-e2e")
+	t.Setenv("INBOUND_DEMAND_CONSUMER_GROUP", "warehouse-planning-inbound-demand-e2e")
+	t.Setenv("OBSERVED_CAPACITY_CONSUMER_GROUP", "warehouse-planning-observed-capacity-e2e")
 	t.Setenv("DEMAND_SITE_ID", siteID)
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")

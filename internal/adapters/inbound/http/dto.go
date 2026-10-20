@@ -132,6 +132,17 @@ type capacityPlanResponse struct {
 	// recorded) and Warnings (never null) are additive, see ADR 0002.
 	BottleneckConstraint string   `json:"bottleneck_constraint"`
 	Warnings             []string `json:"warnings"`
+
+	// Inbound labour demand (docs/adr/0017), additive and informational: the
+	// BOOKED dock appointments that start in the plan window, the labour
+	// minutes the declared inbound standard attributes to them (0 without a
+	// standard), the average heads that is over the window, and whether
+	// appointments exist but no standard is declared for the plan's path. It
+	// sits NEXT TO assigned_demand (orders) and is never summed into it.
+	InboundAppointments    int     `json:"inbound_appointments"`
+	InboundLabourMinutes   float64 `json:"inbound_labour_minutes"`
+	InboundAverageHeads    float64 `json:"inbound_average_heads"`
+	InboundStandardMissing bool    `json:"inbound_standard_missing"`
 }
 
 // capacityPlansResponse is GET /capacity-plans' body: the most recent plans,
