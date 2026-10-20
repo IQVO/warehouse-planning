@@ -19,7 +19,6 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
-
 // Window coverage against a REAL Postgres (docs/adr/0003): FindCovering's
 // range predicate (window_start <= requested start AND window_end >= requested
 // end) and its ORDER BY (window_start DESC, window_end ASC).
