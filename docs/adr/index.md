@@ -31,6 +31,7 @@ decision amends or supersedes an earlier one by its own ADR.
 | [0014](0014-trace-context-crosses-the-outbox.md) | The W3C trace context crosses the outbox to Kafka | Accepted (2026-10-13). Additive |
 | [0015](0015-projector-telemetry-and-chart-otel-env.md) | Projector telemetry and the chart's OTel environment | Accepted (2026-10-13). Extends ADR 0011 |
 | [0016](0016-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime | Accepted (2026-10-19). Amends ADR 0004 (demand consumer off switch), ADR 0007 (`LogSink` default) and ADR 0008 (in-memory `cmd/mcp`) |
+| [0017](0017-inbound-labour-demand-and-observed-capacity-feedback.md) | Inbound labour demand and observed capacity feedback | Accepted (2026-10-20). Additive. Supersedes the "later phase" observed-capacity note of the ADR 0001 context map; reuses the window semantics of ADR 0003 and the read-model pattern of ADR 0004 |
 
-All sixteen are Accepted; none is Superseded as a whole. Where a page in the
+All seventeen are Accepted; none is Superseded as a whole. Where a page in the
 main documentation states a rule, it links the ADR that decided it.

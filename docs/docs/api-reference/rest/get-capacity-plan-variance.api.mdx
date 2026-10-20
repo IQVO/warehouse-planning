@@ -1,0 +1,71 @@
+---
+id: get-capacity-plan-variance
+title: "Planned versus observed throughput of a capacity plan (advisory)"
+description: "Compares the stored plan with the TASKS fulfillment-execution reports completed (TaskCompleted, minute resolution) for the plan's bottleneck step at its location over its window, from the LOCAL observed_capacity read model (docs/adr/0017). ADVISORY: it never changes the planned capacity or the plan, and nothing is republished. Tasks are not orders, so the comparison needs `tasks_per_order`; without it `comparison.comparable` is false with the reason. `observed.has_data` false means nothing was observed, not zero throughput."
+sidebar_label: "Planned versus observed throughput of a capacity plan (advisory)"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Planned versus observed throughput of a capacity plan (advisory)"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/capacity-plans/{id}/variance"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Compares the stored plan with the TASKS fulfillment-execution reports completed (TaskCompleted, minute resolution) for the plan's bottleneck step at its location over its window, from the LOCAL observed_capacity read model (docs/adr/0017). ADVISORY: it never changes the planned capacity or the plan, and nothing is republished. Tasks are not orders, so the comparison needs `tasks_per_order`; without it `comparison.comparable` is false with the reason. `observed.has_data` false means nothing was observed, not zero throughput.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-capacity-plan-variance.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-capacity-plan-variance.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-capacity-plan-variance.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

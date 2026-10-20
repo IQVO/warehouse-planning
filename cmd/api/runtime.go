@@ -26,6 +26,8 @@ const (
 	envLaborGroup          = "LABOR_CAPACITY_CONSUMER_GROUP"
 	envStorageGroup        = "STORAGE_CAPACITY_CONSUMER_GROUP"
 	envDemandConsumerGrp   = "DEMAND_CONSUMER_GROUP"
+	envInboundGroup        = "INBOUND_DEMAND_CONSUMER_GROUP"
+	envObservedGroup       = "OBSERVED_CAPACITY_CONSUMER_GROUP"
 	envDemandSiteID        = "DEMAND_SITE_ID"
 	envOutboxRelayInterval = "OUTBOX_RELAY_INTERVAL"
 	envOutboxMaxAttempts   = "OUTBOX_MAX_ATTEMPTS"
@@ -49,10 +51,10 @@ type runtimeEnv struct {
 	demandSiteID string
 }
 
-// consumerGroupEnvs are the three Kafka consumers of cmd/api, each with the
+// consumerGroupEnvs are the five Kafka consumers of cmd/api, each with the
 // env var that carries its STABLE group id (never a literal, never a default:
 // a default would let a locally run process join the live group).
-var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp}
+var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp, envInboundGroup, envObservedGroup}
 
 // loadRuntime validates the environment before anything is opened or bound:
 // DATABASE_URL, KAFKA_BROKERS, every consumer group and DEMAND_SITE_ID are
@@ -139,7 +141,7 @@ type consumerSpec struct {
 	build                 func(brokers []string, group string) runner
 }
 
-// consumerSpecs lists the three consumers; they are always on.
+// consumerSpecs lists the five consumers; they are always on.
 func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProcessCapacityConstraint, logger *slog.Logger) []consumerSpec {
 	return []consumerSpec{
 		{"labor-capacity", inboundkafka.LaborTopic, envLaborGroup, func(brokers []string, group string) runner {
@@ -151,6 +153,16 @@ func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProces
 		{"order-demand", inboundkafka.OrderTopic, envDemandConsumerGrp, func(brokers []string, group string) runner {
 			record := &usecases.RecordOrderDemand{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Demand: ad.orderDemand}
 			return inboundkafka.NewOrderDemandConsumer(brokers, group, rt.demandSiteID, record, logger)
+		}},
+		// ADR 0017: dock appointments (inbound-receiving) and task completions
+		// (fulfillment-execution), each into its own read model.
+		{"inbound-demand", inboundkafka.InboundTopic, envInboundGroup, func(brokers []string, group string) runner {
+			record := &usecases.RecordInboundAppointment{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Appointments: ad.inboundAppointments}
+			return inboundkafka.NewInboundDemandConsumer(brokers, group, rt.demandSiteID, record, logger)
+		}},
+		{"observed-capacity", inboundkafka.FulfillmentTopic, envObservedGroup, func(brokers []string, group string) runner {
+			record := &usecases.RecordObservedCompletion{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Observed: ad.observedCapacity}
+			return inboundkafka.NewObservedCapacityConsumer(brokers, group, rt.demandSiteID, record, logger)
 		}},
 	}
 }

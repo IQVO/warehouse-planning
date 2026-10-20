@@ -7,6 +7,8 @@ import (
 
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/inbound"
+	"github.com/claudioed/warehouse-planning/internal/domain/observed"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
@@ -37,6 +39,11 @@ func slugFor(err error) (slug string, ok bool) {
 		{capacityplan.ErrRequiredField, "missing-required-field"},
 		{capacityplan.ErrAlreadyPublished, "capacity-plan-already-published"},
 		{usecases.ErrCapacityPlanNotFound, "capacity-plan-not-found"},
+		{inbound.ErrStandardRequiredField, "missing-inbound-standard-field"},
+		{inbound.ErrNonPositiveAppointmentMinutes, "non-positive-appointment-minutes"},
+		{inbound.ErrNegativeASNMinutes, "negative-asn-minutes"},
+		{inbound.ErrNonFiniteMinutes, "non-finite-minutes"},
+		{observed.ErrNonPositiveTasksPerOrder, "non-positive-tasks-per-order"},
 	}
 	for _, entry := range catalog {
 		if errors.Is(err, entry.target) {

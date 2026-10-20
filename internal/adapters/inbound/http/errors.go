@@ -6,6 +6,8 @@ import (
 
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/inbound"
+	"github.com/claudioed/warehouse-planning/internal/domain/observed"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
@@ -40,7 +42,12 @@ func statusFor(err error) int {
 		errors.Is(err, processpath.ErrEmptySteps),
 		errors.Is(err, capacityplan.ErrNegativeDemand),
 		errors.Is(err, usecases.ErrMissingAssignedDemand),
-		errors.Is(err, capacityplan.ErrRequiredField):
+		errors.Is(err, capacityplan.ErrRequiredField),
+		errors.Is(err, inbound.ErrStandardRequiredField),
+		errors.Is(err, inbound.ErrNonPositiveAppointmentMinutes),
+		errors.Is(err, inbound.ErrNegativeASNMinutes),
+		errors.Is(err, inbound.ErrNonFiniteMinutes),
+		errors.Is(err, observed.ErrNonPositiveTasksPerOrder):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, processcapacity.ErrUnitMismatch),
 		errors.Is(err, capacityplan.ErrAlreadyPublished):
@@ -81,6 +88,11 @@ func problemCatalog() []struct {
 		{capacityplan.ErrRequiredField, problemInfo{"missing-required-field", "warehouse_id, location and path_id are required"}},
 		{capacityplan.ErrAlreadyPublished, problemInfo{"capacity-plan-already-published", "This CapacityPlan has already been published"}},
 		{usecases.ErrCapacityPlanNotFound, problemInfo{"capacity-plan-not-found", "No CapacityPlan exists under this id"}},
+		{inbound.ErrStandardRequiredField, problemInfo{"missing-inbound-standard-field", "An inbound labour standard needs a location and a process path id"}},
+		{inbound.ErrNonPositiveAppointmentMinutes, problemInfo{"non-positive-appointment-minutes", "Minutes per appointment must be positive"}},
+		{inbound.ErrNegativeASNMinutes, problemInfo{"negative-asn-minutes", "Minutes per ASN must not be negative"}},
+		{inbound.ErrNonFiniteMinutes, problemInfo{"non-finite-minutes", "Labour minutes must be finite numbers"}},
+		{observed.ErrNonPositiveTasksPerOrder, problemInfo{"non-positive-tasks-per-order", "tasks_per_order must be a positive number"}},
 	}
 }
 

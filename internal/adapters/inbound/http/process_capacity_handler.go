@@ -53,6 +53,19 @@ type Server struct {
 	// it behaves exactly as before the model existed.
 	GetExpectedDemand *usecases.GetExpectedDemand
 
+	// Inbound labour demand and observed capacity (docs/adr/0017).
+	// DeclareInboundLabourStandard backs PUT /inbound-labour-standards/
+	// {location}/{path_id}; InboundStandards is the read port behind GET
+	// /inbound-labour-standards (a direct, no-invariant repository read);
+	// GetInboundDemand backs GET /inbound-demand; GetCapacityPlanVariance
+	// backs GET /capacity-plans/{id}/variance. Each left nil leaves its
+	// route(s) unregistered (the router's 404), so a Server built without
+	// them behaves exactly as before.
+	DeclareInboundLabourStandard *usecases.DeclareInboundLabourStandard
+	InboundStandards             ports.InboundStandardRepository
+	GetInboundDemand             *usecases.GetInboundDemand
+	GetCapacityPlanVariance      *usecases.GetCapacityPlanVariance
+
 	// ListProcessPaths backs GET /process-paths and ListCapacityPlans backs
 	// GET /capacity-plans (the console remote's list reads). Either left nil
 	// leaves its route unregistered, so a Server built without them behaves
@@ -119,6 +132,7 @@ func NewRouter(s *Server) http.Handler {
 	if s.GetExpectedDemand != nil {
 		r.Get("/demand", s.handleGetExpectedDemand)
 	}
+	s.registerInboundAndObservedRoutes(r)
 	if s.ListProcessPaths != nil {
 		r.Get("/process-paths", s.handleListProcessPaths)
 	}

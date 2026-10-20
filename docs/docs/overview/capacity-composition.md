@@ -81,6 +81,13 @@ Using the figures from the OpenAPI examples and the REST rules: a path
 `shortage` of 4000. Publishing that plan raises `CapacityPlanPublished`,
 `CapacityShortageDetected` and `BottleneckDetected` (bottleneck step `REBIN`).
 
+## Inbound labour demand and observed capacity
+
+Two inputs sit **next to** the ORDER capacity, never inside it ([ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback)):
+
+- **Inbound labour demand.** `inbound-receiving`'s dock appointments (a local read model; an appointment counts in a window when its door window *starts* in `[start, end)`) are priced with an operator-declared *inbound labour standard* per site and process path: `minutes_per_appointment` plus an optional `minutes_per_asn`. A plan stores `inbound_appointments`, `inbound_labour_minutes` and `inbound_standard_missing` and exposes `inbound_average_heads` (minutes over the window length). They are not added to `assigned_demand`: orders and labour minutes are different units. No standard declared means no demand and a visible `inbound standard missing` warning, never a guessed number.
+- **Observed capacity.** `fulfillment-execution`'s `TaskCompleted` events are aggregated per site, process step and minute. `GET /capacity-plans/{id}/variance?tasks_per_order=` compares the tasks completed for the plan's bottleneck step in its window with the plan's ORDER capacity over that window. It is **advisory**: nothing here changes a planned capacity or republishes a plan (automatic adjustment is a later ADR). No completions means `has_data: false`, not zero throughput; without `tasks_per_order` the comparison is `comparable: false`.
+
 ## Storage positions are a read model
 
 Storage positions per `(zone, location type)` and stations per

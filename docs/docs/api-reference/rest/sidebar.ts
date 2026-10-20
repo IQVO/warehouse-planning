@@ -136,6 +136,50 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "inbound-demand",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/inbound-demand",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/declare-inbound-labour-standard",
+          label: "Declare the labour minutes a dock appointment costs at a site for a process path",
+          className: "api-method put",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/list-inbound-labour-standards",
+          label: "List the declared inbound labour standards",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-inbound-demand",
+          label: "Inbound demand of a site over a window (inbound-receiving read model)",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "observed-capacity",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/observed-capacity",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/get-capacity-plan-variance",
+          label: "Planned versus observed throughput of a capacity plan (advisory)",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "reports",
       link: {
         type: "doc",

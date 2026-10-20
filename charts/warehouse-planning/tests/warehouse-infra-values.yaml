@@ -58,6 +58,13 @@ kafka:
 demand:
   consumerGroup: "warehouse-planning-demand"
   siteId: "SIM1"
+# ADR 0017 handoff: NOT yet in warehouse-infra origin/develop. The infra values PR
+# must add exactly these two keys (the api exits at boot, and the chart refuses to
+# render, without them). This copy carries them so the render test proves the shape.
+inbound:
+  consumerGroup: "warehouse-planning-inbound-demand"
+observed:
+  consumerGroup: "warehouse-planning-observed-capacity"
 
 # Analytics read side (ADR 0005). The projector's consumer group is a FIXED, stable id (fleet charter naming
 # `<ctx>-analytics`): a restarted pod resumes from its committed offsets, and a

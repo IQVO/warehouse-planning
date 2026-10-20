@@ -147,6 +147,11 @@ const sidebars: SidebarsConfig = {
           label: '0012 Canonical site_id on capacity plans',
           href: '/docs/adr/0012-canonical-site-id-on-capacity-plans',
         },
+        {
+          type: 'link',
+          label: '0017 Inbound labour demand and observed capacity',
+          href: '/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback',
+        },
       ],
     },
   ],

@@ -132,6 +132,8 @@ OLTP migrations (`internal/adapters/outbound/postgres/migrations`):
 | `0006_order_demand` | `order_demand`; adds `capacity_plans.demand_source` |
 | `0007_outbox_event_id_per_topic` | replaces the `outbox_events.event_id` unique key with `UNIQUE (event_id, topic)`, so one CloudEvents id can go to both topics |
 | `0008_capacity_plan_site_id` | adds `capacity_plans.site_id`, which defaults to `''` for older rows |
+| `0009_inbound_labour_demand` | `inbound_appointments` (one row per appointment id, ordering-guarded), `inbound_labour_standards`; adds the `inbound_*` columns to `capacity_plans` (defaulted, so older plans read as no inbound demand) |
+| `0010_observed_capacity` | `observed_capacity` (one row per location, process type and minute; additive counters) |
 
 Analytical migration (`analytics/migrations`): `0001_plan_facts` creates
 `analytics_processed_events` and `plan_facts`.
@@ -152,15 +154,17 @@ structured mode (`content-type: application/cloudevents+json; charset=UTF-8`).
 | --- | --- | --- | --- | --- |
 | consume | `warehouse.workforce.events` | `cmd/api` | `LABOR_CAPACITY_CONSUMER_GROUP`, `warehouse-planning-labor-capacity` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` |
 | consume | `warehouse.facility.events` | `cmd/api` | `STORAGE_CAPACITY_CONSUMER_GROUP`, `warehouse-planning-storage-capacity` | `...facility-layout.locationslot.LocationSlotRegistered`, `...LocationSlotDecommissioned` |
-| consume | `warehouse.order-management.events` | `cmd/api` | `DEMAND_CONSUMER_GROUP`, no default (off when unset; `warehouse-planning-demand` in the cluster) | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` |
+| consume | `warehouse.order-management.events` | `cmd/api` | `DEMAND_CONSUMER_GROUP`, no default (required; `warehouse-planning-demand` in the cluster) | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` |
+| consume | `warehouse.inbound-receiving.events` | `cmd/api` | `INBOUND_DEMAND_CONSUMER_GROUP`, no default (required; `warehouse-planning-inbound-demand` in the cluster) | `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked`, `...DockAppointmentCancelled` |
+| consume | `warehouse.fulfillment.events` | `cmd/api` | `OBSERVED_CAPACITY_CONSUMER_GROUP`, no default (required; `warehouse-planning-observed-capacity` in the cluster) | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` |
 | produce | `warehouse.warehouse-planning.events` | `cmd/api` relay | n/a | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated`, `CapacityPlanPublished`, `CapacityShortageDetected`, `BottleneckDetected` |
 | produce | `warehouse.warehouse-planning.analytics` | `cmd/api` relay | n/a | the same four types (ADR 0005) |
 | consume | `warehouse.warehouse-planning.analytics` | `cmd/planning-projector` | `ANALYTICS_CONSUMER_GROUP`, `warehouse-planning-analytics` | the same four types |
-| produce (DLQ) | `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq` | `cmd/api` | n/a | the original message plus `x-dlq-*` headers |
+| produce (DLQ) | `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`, `warehouse.inbound-receiving.events.dlq`, `warehouse.fulfillment.events.dlq` | `cmd/api` | n/a | the original message plus `x-dlq-*` headers |
 | produce (DLQ) | `warehouse.warehouse-planning.analytics.dlq` | `cmd/planning-projector` | n/a | the original message plus `x-dlq-*` headers |
 
 The `processed_events` claim uses these consumer names: `labor-capacity-consumer`,
-`storage-capacity-consumer` and `order-demand-consumer`.
+`storage-capacity-consumer`, `order-demand-consumer`, `inbound-demand-consumer` and `observed-capacity-consumer`.
 
 ### Outbox relay
 
@@ -211,7 +215,8 @@ A re-armed row is a late delivery under its original CloudEvents `id`.
 
 ### Dead-letter behaviour
 
-- **Domain consumers (`cmd/api`)**: deterministic problems are logged and skipped, never dead-lettered: not a CloudEvent, an unknown type, a malformed payload, missing fields, or a domain-validation rejection. A transient failure (database begin, claim, upsert or commit) is retried on the same message up to 5 times with backoff, then published to `<topic>.dlq` with the headers `x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`, `x-dlq-error` and `x-dlq-failed-at`, and committed past. The DLQ publish itself is retried until it succeeds.
+- **Dock-appointment and task-completion consumers (`cmd/api`, [ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback))**: a deterministic failure (not CloudEvents 1.0, malformed `data`, a blank id, a `subject` that is not the appointment or task id, a window whose end is not after its start, no ASN, no event time, no `task_type`) is published at once to `warehouse.inbound-receiving.events.dlq` / `warehouse.fulfillment.events.dlq` and committed past; a transient failure is retried 5 times first. Other types on those shared topics are ignored.
+- **The other domain consumers (`cmd/api`)**: deterministic problems are logged and skipped, never dead-lettered: not a CloudEvent, an unknown type, a malformed payload, missing fields, or a domain-validation rejection. A transient failure (database begin, claim, upsert or commit) is retried on the same message up to 5 times with backoff, then published to `<topic>.dlq` with the headers `x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`, `x-dlq-error` and `x-dlq-failed-at`, and committed past. The DLQ publish itself is retried until it succeeds.
 - **Projector**: a known type with an unusable payload, or a deterministic store rejection, is dead-lettered at once to `warehouse.warehouse-planning.analytics.dlq` with `x-dlq-source-topic`, `x-dlq-error` and `x-dlq-failed-at`. A transient failure is retried **forever** and never dead-lettered ([ADR 0005](/docs/adr/0005-analytics-read-side)). A non-CloudEvents message is skipped, with a WARN at most once a minute.
 
 Nothing in this repo consumes or replays a DLQ topic. See
@@ -224,7 +229,9 @@ only grow:
 
 - `outbox_events`: published rows keep `published_at` set and are never deleted;
 - `processed_events` and `analytics_processed_events`: one row per consumed event, forever;
-- `order_demand`: one row per order id, with no expiry.
+- `order_demand`: one row per order id, with no expiry;
+- `inbound_appointments`: one row per dock appointment id, with no expiry;
+- `observed_capacity`: one row per location, process type and minute, with no expiry.
 
 None of these sizes is a correctness problem: every read is indexed, and the
 relay only scans `published_at IS NULL` through a partial index. Pruning

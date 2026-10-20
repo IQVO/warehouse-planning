@@ -21,6 +21,8 @@ flowchart LR
   WFM[workforce-management] -- "Kafka: ShiftPlanCommitted" --> API
   FL[facility-layout] -- "Kafka: LocationSlotRegistered / Decommissioned" --> API
   OM1[order-management] -- "Kafka: OrderAllocated / OrderPartiallyAllocated" --> API
+  IR[inbound-receiving] -- "Kafka: DockAppointmentBooked / Cancelled" --> API
+  FE[fulfillment-execution] -- "Kafka: TaskCompleted" --> API
   CON[warehouse-console remote capacity_mfe] -- "REST via Kong /api/warehouse-planning" --> API
   AGT[warehouse-ops-agent] -- "MCP: 4 read-only tools" --> MCP
   subgraph WP[warehouse-planning]
@@ -43,6 +45,8 @@ Omits: the DLQ topics, Postgres and the OTel Collector.
 | upstream | `workforce-management` | Kafka, `warehouse.workforce.events` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | transient errors retried 5 times, then `warehouse.workforce.events.dlq` |
 | upstream | `facility-layout` | Kafka, `warehouse.facility.events` | `...facility-layout.locationslot.LocationSlotRegistered`, `...LocationSlotDecommissioned` | same, `warehouse.facility.events.dlq` |
 | upstream | `order-management` | Kafka, `warehouse.order-management.events` | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` | same, `warehouse.order-management.events.dlq`; consumer always on |
+| upstream | `inbound-receiving` | Kafka, `warehouse.inbound-receiving.events` | `...inbound-receiving.dockappointment.DockAppointmentBooked`, `...DockAppointmentCancelled` | transient: retried 5 times; deterministic: dead-lettered at once; `warehouse.inbound-receiving.events.dlq`; consumer always on |
+| upstream | `fulfillment-execution` | Kafka, `warehouse.fulfillment.events` | `...fulfillment-execution.task.TaskCompleted` | same, `warehouse.fulfillment.events.dlq`; consumer always on |
 | inbound caller | `warehouse-console` (remote `capacity_mfe` from `web/`) | REST through Kong at `/api/warehouse-planning` | `apis/openapi.yaml` ([API reference](/docs/api-reference)) | RFC 7807 problem responses (`application/problem+json`); the call fails, nothing is retried by this service |
 | inbound caller | `warehouse-ops-agent` | MCP (Streamable HTTP, `cmd/mcp` on `:8090`) | `get_process_path_capacity`, `get_capacity_plan`, `get_storage_capacity`, `list_station_standards` ([MCP tools](/docs/mcp/tools)) | the tool returns an error result; how the agent degrades is that repo's concern |
 | downstream | `order-management` | Kafka, `warehouse.warehouse-planning.events` | the four `com.warehouse.wes.warehouse-planning.capacityplan.*` types ([event catalogue](/docs/api-reference/events)) | outbox: the row stays unpublished and is retried every relay pass |
@@ -114,6 +118,36 @@ Demand is therefore counted in orders (no units) and not netted for
 cancellations. It is read by `GET /demand`, the `get_expected_demand` MCP tool
 and `POST /capacity-plans` when `assigned_demand` is omitted.
 
+## Upstream: inbound-receiving
+
+[ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback). Always on; `INBOUND_DEMAND_CONSUMER_GROUP` is required and the binary exits at boot, naming it, without it.
+
+| | |
+| --- | --- |
+| Types | `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` |
+| Topic | `warehouse.inbound-receiving.events` |
+| Consumer group | `INBOUND_DEMAND_CONSUMER_GROUP` (required, no default) |
+| Fields used | `appointment_id` (must equal the CloudEvents `subject`), `window_start`, `window_end` (Booked), `len(asn_numbers)` (Booked) and the CloudEvents `time` (the ordering guard) |
+| Effect | stores one `inbound_appointments` row per appointment id at the configured site `DEMAND_SITE_ID`; last writer wins on `time`, a Cancelled wins a tie and a Cancelled that arrives before its Booked is kept as a tombstone, so the arrival order never matters |
+| Ignored | every other type on the topic (ASN, check-in, completion, receipt events) |
+
+The event carries no labour: the minutes per appointment (and per ASN) are an operator-declared standard owned by this context (`PUT /inbound-labour-standards/{location}/{path_id}`). Without one an appointment is recorded but contributes no demand and the plan warns `inbound standard missing`. Read by `GET /inbound-demand`, the `get_inbound_demand` MCP tool and `POST /capacity-plans`.
+
+## Upstream: fulfillment-execution
+
+[ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback). Always on; `OBSERVED_CAPACITY_CONSUMER_GROUP` is required.
+
+| | |
+| --- | --- |
+| Type | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` |
+| Topic | `warehouse.fulfillment.events` |
+| Consumer group | `OBSERVED_CAPACITY_CONSUMER_GROUP` (required, no default) |
+| Fields used | `task_id` (must equal the CloudEvents `subject`), `task_type`, `duration_seconds` (optional) and the CloudEvents `time` |
+| Effect | adds the completion to the `observed_capacity` minute bucket of (`DEMAND_SITE_ID`, upper-cased `task_type`); a redelivered `id` adds nothing |
+| Ignored | every other type on the topic |
+
+Observed throughput is in tasks, not orders. It is read only by the advisory `GET /capacity-plans/{id}/variance` (and MCP `get_capacity_plan_variance`), which needs a caller-supplied `tasks_per_order` and never changes a plan or a planned capacity.
+
 ## Consumer failure behaviour and dead-letter topics
 
 Each consumed message's idempotency claim (`processed_events`, keyed on the
@@ -121,10 +155,12 @@ CloudEvents `id`) and its effect commit in one transaction, so a redelivered
 message is a no-op. A message whose handling keeps failing transiently
 (database begin, claim, upsert or commit) is retried up to 5 times with
 backoff and then published to `<topic>.dlq` (`warehouse.workforce.events.dlq`,
-`warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`) with
+`warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`,
+`warehouse.inbound-receiving.events.dlq`, `warehouse.fulfillment.events.dlq`) with
 `x-dlq-*` headers ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers)).
-Deterministic problems (not a CloudEvent, unknown type, malformed payload,
-missing fields) are logged and skipped, never dead-lettered. If
+For the labor, storage and order consumers, deterministic problems (not a CloudEvent, unknown type, malformed payload,
+missing fields) are logged and skipped, never dead-lettered; the dock-appointment and
+task-completion consumers dead-letter them at once ([ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback) decision 13). If
 `KAFKA_BROKERS` is unset, the labor and storage consumers do not start (a WARN
 line at boot) and REST keeps working on whatever is already stored. See the
 [runbook](/docs/operations/runbook) for replays and the
@@ -176,8 +212,9 @@ consumed only by this repo's own `cmd/planning-projector` (consumer group
   ordered physical step sequence, so there is nothing structural to sync. This
   context owns its own `ProcessPath`, declared via `POST /process-paths`; the
   two share the `path_id` string only as a loose cross-reference.
-- **inventory-storage, wes-work-planning, fulfillment-execution,
-  labor-performance and the other contexts:** no edge in either direction.
+- **inventory-storage, wes-work-planning, labor-performance and the other
+  contexts:** no edge in either direction. Of `inbound-receiving` only the two dock
+  appointment types are consumed, and of `fulfillment-execution` only `TaskCompleted`.
 - **No synchronous calls out.** Nothing here calls another context over REST
   or MCP, so no circuit breaker or HTTP retry policy exists in this repo.
 

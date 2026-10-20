@@ -41,6 +41,7 @@ func stateOf(p *capacityplan.CapacityPlan) capacityplan.RehydrateParams {
 
 		BottleneckConstraint: p.BottleneckConstraint(),
 		Warnings:             p.Warnings(),
+		Inbound:              p.Inbound(),
 	}
 }
 
