@@ -1,0 +1,1 @@
+{"parameters":[{"name":"location","in":"path","required":true,"schema":{"type":"string"},"example":"SIM1"},{"name":"path_id","in":"path","required":true,"schema":{"type":"string"},"example":"receive"}]}
