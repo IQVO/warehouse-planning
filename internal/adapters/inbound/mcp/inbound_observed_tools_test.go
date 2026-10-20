@@ -43,6 +43,7 @@ func TestInboundObservedTools_ListedOnlyWhenWired(t *testing.T) {
 		}
 	}
 	bare, _, _ := newStack()
+	bare.DeclareInboundLabourStandard, bare.GetInboundDemand, bare.GetCapacityPlanVariance = nil, nil, nil
 	unwired := toolNames(t, connectSession(t, bare))
 	for _, name := range []string{"declare_inbound_labour_standard", "get_inbound_demand", "get_capacity_plan_variance"} {
 		if unwired[name] {
