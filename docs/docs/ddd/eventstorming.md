@@ -149,7 +149,7 @@ Source: `internal/adapters/inbound/kafka/order_demand_consumer.go`,
 `internal/application/usecases/expected_demand.go`,
 `internal/domain/demand/order.go`, ADR 0004.
 Omits: `OrderRepromised` (deliberately ignored: no new cutoff instant) and the
-opt-in switch `DEMAND_CONSUMER_GROUP`.
+required `DEMAND_CONSUMER_GROUP` / `DEMAND_SITE_ID` configuration.
 
 ## Sticky inventory
 
@@ -177,4 +177,4 @@ opt-in switch `DEMAND_CONSUMER_GROUP`.
 | Stations without a standard only warn | Hotspot | `ComposeStepCapacity` warning, ADR 0002 |
 | WorkloadProfile not stored | Hotspot | `GetProcessPathCapacityCommand` doc comment ("PHASE 2 SIMPLIFICATION") |
 | BottleneckDetected without a consumer | Hotspot | order-management's `planned_capacity_consumer.go` ignores it |
-| One site, no cancellation netting | Hotspot | ADR 0004, `cmd/api/demand.go` |
+| One site, no cancellation netting | Hotspot | ADR 0004, `cmd/api/runtime.go` |

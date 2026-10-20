@@ -5,8 +5,9 @@ config:
   eventPublisher: "kafka"
   outboxRelayInterval: "500ms"
   corsAllowedOrigins: "http://localhost:5173"
+  laborCapacityConsumerGroup: "warehouse-planning-labor-capacity"
+  storageCapacityConsumerGroup: "warehouse-planning-storage-capacity"
 kafka:
-  enabled: true
   brokers: "kafka.warehouse-systems.svc.cluster.local:9092"
 demand:
   consumerGroup: "warehouse-planning-demand"
@@ -31,6 +32,8 @@ frontend:
   enabled: true
 analytics:
   enabled: true
+  projector:
+    consumerGroup: "warehouse-planning-analytics"
   database:
     # Dummy DSN, no password (a real one comes from a Secret in the cluster).
     projectorUrl: "postgres://projector@example.invalid:5432/warehouse_planning_analytics"

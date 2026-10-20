@@ -51,18 +51,25 @@ boundary.
 
 ### Render guards
 
-The chart fails `helm template` instead of rendering a pod that would crash or
-run in a degraded mode:
+The chart fails `helm template` instead of rendering a pod that would crash at
+boot or run in a degraded mode (`requireRealRuntime` in `_helpers.tpl`; Postgres
+and Kafka are the only runtime, [ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)):
 
-- no `database.url` and no `database.existingSecret` (`requireDatabase`; the binary would fall back to in-memory adapters);
-- `config.eventPublisher=kafka` with `kafka.enabled=false` (`requireKafkaForPublisher`);
-- `demand.consumerGroup` set without `demand.siteId`, or without `kafka.enabled` (`requireDemandConfig`);
-- `analytics.enabled` without an analytical DSN source or without `kafka.enabled` (`requireAnalyticsConfig`).
+- no `database.url` and no `database.existingSecret` (`requireDatabase`);
+- no `kafka.brokers`, `kafka.enabled=false`, or a `config.eventPublisher` other than `kafka` (`requireKafka`; a legacy `kafka.enabled: true` still renders);
+- an empty `config.laborCapacityConsumerGroup`, `config.storageCapacityConsumerGroup`, `demand.consumerGroup` or `demand.siteId` (`requireConsumerGroups`);
+- `EVENT_PUBLISHER` other than `kafka` in `extraEnv` / `mcp.extraEnv` (`requireNoInMemoryEnv`);
+- `terminationGracePeriodSeconds` under 20 (`requireGracePeriod`);
+- `analytics.enabled` without an analytical DSN source or without `analytics.projector.consumerGroup` (`requireAnalyticsConfig`).
 
 Check a values change locally with
-`helm lint charts/warehouse-planning --set database.url=postgres://u@example.invalid:5432/db`
-and `python3 charts/warehouse-planning/tests/test_service_selectors.py`. The
-second check proves that each Service selects exactly one Deployment.
+`helm lint charts/warehouse-planning -f charts/warehouse-planning/ci/default-values.yaml`,
+`bash charts/warehouse-planning/tests/render_test.sh` and
+`python3 charts/warehouse-planning/tests/test_service_selectors.py`. The first
+renders warehouse-infra's current values (verbatim copies under
+`charts/warehouse-planning/tests/warehouse-infra-*-values.yaml`, refreshed from
+its `origin/develop`) and asserts that every mandatory variable is provided; the
+last proves that each Service selects exactly one Deployment.
 
 ### Probes and what readiness waits for
 
@@ -71,14 +78,14 @@ second check proves that each Service selects exactly one Deployment.
 | `api` | `GET /healthz`, every 2 s, 30 failures allowed (60 s) | `GET /healthz`, every 10 s after 5 s | `GET /readyz`, every 5 s after 3 s | 40 |
 | `mcp` | `GET /healthz` (same timing) | `GET /healthz` | `GET /healthz` | Kubernetes default (30) |
 | `analytics-projector` | `GET /healthz` on `admin` | `GET /healthz` | `GET /readyz` | 40 |
-| `analytics-reports` | `GET /healthz` | `GET /healthz` | `GET /healthz` | 40 |
+| `analytics-reports` | `GET /healthz` | `GET /healthz` | `GET /readyz` | 40 |
 
 What readiness actually covers:
 
-- **`api`**: the listener opens only after the boot sequence: migrations (5 attempts, backoff 1 to 8 s), pool creation and a ping (also retried), then the consumers and the outbox relay start. `/healthz` and `/readyz` therefore cannot answer until Postgres is reachable and migrated. Kafka is **not** waited for: readers and the relay writer dial lazily, so a broker outage never blocks readiness. `/readyz` returns 200 `{"status":"ready"}` from the start and flips to 503 `{"status":"not_ready"}` only as the first step of shutdown.
-- **`mcp`**: same boot order, without Kafka. There is no `/readyz`. Readiness uses `/healthz`, which never flips.
-- **`analytics-projector`**: the admin server starts after the analytical migrations and a ping. `/readyz` flips to 503 only at shutdown. Consumer lag does not affect it.
-- **`analytics-reports`**: the listener starts after a ping of the analytical database. It runs no migrations, so if it starts before the projector has created the tables, its queries fail with 500 `report-store-error` until they exist.
+- **`api`**: the listener opens only after the boot sequence: the environment is validated (a missing variable is a boot error that names it), then migrations (5 attempts, backoff 1 to 8 s), pool creation and a ping (also retried), then the consumers and the outbox relay start. Kafka is **not** dialled at boot: readers and the relay writer dial lazily. `/readyz` is real: 200 `{"status":"ready"}` only while Postgres answers a ping **and** a Kafka broker answers a topic-less metadata request (a broker that answers with no topics at all is ready: the service never requires topics, the broker auto-creates them on first write). Otherwise it is 503 `application/problem+json` of type `dependency-unavailable` whose `detail` names the failing dependency (`not ready: postgres`, `not ready: kafka`). The verdict is cached 3 s and bounded at 2 s, so probes cannot hammer either dependency. It flips to 503 `{"status":"not_ready"}` as the first step of shutdown. `/healthz` stays liveness and never depends on a dependency.
+- **`mcp`**: same boot order, without Kafka; `DATABASE_URL` is required. There is no `/readyz`. Readiness uses `/healthz`, which never flips.
+- **`analytics-projector`**: the admin server starts after the analytical migrations and a ping. `/readyz` is 200 only while the analytical Postgres answers a ping and a Kafka broker answers metadata (`not ready: analytics-postgres, kafka` otherwise), and flips to 503 at shutdown. Consumer lag does not affect it.
+- **`analytics-reports`**: the listener starts after a ping of the analytical database; `/readyz` is 200 only while that ping succeeds. It runs no migrations, so if it starts before the projector has created the tables, its queries fail with 500 `report-store-error` until they exist.
 
 ### Graceful shutdown (`cmd/api`)
 
@@ -90,6 +97,8 @@ On SIGTERM, `serveUntilSignal` in `cmd/api/main.go` does this, in order:
 4. It stops the Kafka consumers and waits up to 10 s each.
 5. It stops the outbox relay **last** and waits up to 10 s, so that an event committed by the final HTTP request or consumer message is still sent.
 6. It closes the pool.
+
+The process also exits non-zero, naming the worker, when the relay or a consumer returns on its own (a lost broker, a failed reader): the pod restarts instead of staying alive with a dead consumer.
 
 The worst case is about 35 s, which `terminationGracePeriodSeconds: 40` covers.
 If you raise `SHUTDOWN_DRAIN_DELAY`, raise the grace period too.
@@ -159,8 +168,8 @@ The `processed_events` claim uses these consumer names: `labor-capacity-consumer
 already-encoded events into `outbox_events` in one transaction. That is two rows
 per event, one for each produced topic, with the same CloudEvents id. `cmd/mcp`
 writes the same rows but never relays them. **Only `cmd/api` runs the relay**,
-so MCP-created plans reach Kafka only while an `api` pod is up with
-`EVENT_PUBLISHER=kafka`.
+so MCP-created plans reach Kafka only while an `api` pod is up (its relay
+always publishes to Kafka; `EVENT_PUBLISHER=log` is refused).
 
 Each pass claims up to 100 unpublished rows in `id` order with
 `FOR UPDATE SKIP LOCKED` and sends them one by one. It marks a row

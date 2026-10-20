@@ -11,7 +11,7 @@ This context's slice of the fleet map, following ddd-crew
 [Context Mapping](https://github.com/ddd-crew/context-mapping). Every edge is
 labelled `U` (upstream) / `D` (downstream) with the pattern on each side and
 the technology. Solid edges are live in code, dotted edges are wired but opt-in
-or partly unused, and the grey nodes are deliberately absent relationships.
+on the sibling's side or partly unused, and the grey nodes are deliberately absent relationships.
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,7 @@ flowchart LR
 
   WFM -- "U: OHS+PL / D: ACL<br/>Kafka ShiftPlanCommitted" --> WP
   FL -- "U: OHS+PL / D: ACL<br/>Kafka LocationSlotRegistered, LocationSlotDecommissioned" --> WP
-  OMU -. "U: OHS+PL / D: ACL, opt-in<br/>Kafka OrderAllocated, OrderPartiallyAllocated" .-> WP
+  OMU -. "U: OHS+PL / D: ACL<br/>Kafka OrderAllocated, OrderPartiallyAllocated" .-> WP
   WP -. "U: OHS+PL / D: ACL, opt-in<br/>Kafka CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected" .-> OMD
   WP -- "U: OHS+PL / D: ACL<br/>Kafka CapacityPlanPublished (with site_id, ADR 0012)" --> NIP
   WP -- "U: OHS / D: Customer, ACL<br/>MCP get_process_path_capacity, 3 more read tools wired" --> OPS
@@ -48,7 +48,7 @@ flowchart LR
 Source: `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
 `storage_capacity_consumer.go`, `order_demand_consumer.go`,
 `internal/adapters/outbound/kafka/encoder.go`, `cmd/api/main.go`,
-`cmd/api/demand.go`, `internal/adapters/inbound/mcp/tools.go`, `web/src/api.ts`,
+`cmd/api/runtime.go`, `internal/adapters/inbound/mcp/tools.go`, `web/src/api.ts`,
 ADR 0001 and its Addendum, ADR 0004; on the sibling side
 `order-management` `internal/adapters/inbound/kafka/planned_capacity_consumer.go`,
 `network-inventory-planning` `internal/adapters/inbound/kafka/consumers.go`,
@@ -65,7 +65,7 @@ upstream and downstream edges readable; it is one context.
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `workforce-management` | `warehouse-planning` | OHS + Published Language / Anti-Corruption Layer: the payload is hand-mirrored (`shiftPlanCommittedData`) and translated into a LABOR `CapacityConstraint` with an assumed UNIT/HOUR unit and a derived window | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | **Live** (group `LABOR_CAPACITY_CONSUMER_GROUP`) | `internal/adapters/inbound/kafka/labor_capacity_consumer.go` |
 | 2 | `facility-layout` | `warehouse-planning` | OHS + PL / ACL: slots are folded into a tally, never into a capacity (ADR 0002) | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` and `...LocationSlotDecommissioned` | **Live** (group `STORAGE_CAPACITY_CONSUMER_GROUP`) | `internal/adapters/inbound/kafka/storage_capacity_consumer.go` |
-| 3 | `order-management` | `warehouse-planning` | OHS + PL / ACL: an order becomes a `demand.Order` attributed to one configured site | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` and `...OrderPartiallyAllocated` | **Wired, opt-in**: off unless `DEMAND_CONSUMER_GROUP` is set (ADR 0004) | `internal/adapters/inbound/kafka/order_demand_consumer.go`, `cmd/api/demand.go` |
+| 3 | `order-management` | `warehouse-planning` | OHS + PL / ACL: an order becomes a `demand.Order` attributed to one configured site | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` and `...OrderPartiallyAllocated` | **Wired, always on** (ADR 0004; ADR 0016 removed the off switch): `DEMAND_CONSUMER_GROUP` and `DEMAND_SITE_ID` are required at boot | `internal/adapters/inbound/kafka/order_demand_consumer.go`, `cmd/api/runtime.go` |
 | 4 | `warehouse-planning` | `order-management` | OHS + PL / ACL (local read model, per order-management's own context map) | Kafka `warehouse.warehouse-planning.events`, `com.warehouse.wes.warehouse-planning.capacityplan.*` | **Wired, opt-in** on the consumer side (`PLANNED_CAPACITY_CONSUMER_GROUP` in order-management); it acts on Created, Published and ShortageDetected and ignores `BottleneckDetected` | this repo: `internal/adapters/outbound/kafka/encoder.go`; order-management: `planned_capacity_consumer.go` (its ADR 0031) |
 | 5 | `warehouse-planning` | `warehouse-ops-agent` | OHS / Customer with an ACL (its MCP client adapter) | MCP Streamable HTTP, read tools only | **Live** for `get_process_path_capacity` (the agent's daily-brief capacity outlook); `get_capacity_plan`, `get_storage_capacity`, `list_station_standards` **wired but unused** (its ADR 0013) | `internal/adapters/inbound/mcp/tools.go`; ops-agent `internal/adapters/outbound/mcpclient/warehouse_planning.go` |
 | 6 | `warehouse-planning` | `warehouse-console` | OHS; the console only hosts this context's own Module Federation remote `capacity_mfe`, which calls this service's REST API through Kong | REST (`/api/warehouse-planning`) | **Live** | `web/src/api.ts`, `web/vite.config.ts`; console `src/App.tsx` |

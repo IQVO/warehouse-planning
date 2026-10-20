@@ -29,8 +29,17 @@ from pathlib import Path
 CHART_DIR = Path(__file__).resolve().parents[1]
 RELEASE = "warehouse-planning"
 
-# Dummy DSN, no password: the chart refuses to render without a database source.
-BASE = ["--set", "database.url=postgres://u@example.invalid:5432/db"]
+# The chart refuses to render without the real runtime's mandatory values
+# (ADR 0016): a database source, the Kafka brokers, every consumer group and the
+# demand site. Dummy DSN, no password; nothing here is ever dialled.
+BASE = [
+    "--set", "database.url=postgres://u@example.invalid:5432/db",
+    "--set", "kafka.brokers=kafka.example.invalid:9092",
+    "--set", "config.laborCapacityConsumerGroup=g-labor",
+    "--set", "config.storageCapacityConsumerGroup=g-storage",
+    "--set", "demand.consumerGroup=g-demand",
+    "--set", "demand.siteId=SIM1",
+]
 ENABLE_EVERYTHING = BASE + [
     "--set", "mcp.enabled=true",
     "--set", "frontend.enabled=true",
@@ -44,6 +53,7 @@ ENABLE_EVERYTHING = BASE + [
     "--set", "ingress.enabled=true",
     "--set", "analytics.enabled=true",
     "--set", "analytics.database.projectorUrl=postgres://p@example.invalid:5432/analytics",
+    "--set", "analytics.projector.consumerGroup=g-analytics",
 ]
 
 
@@ -170,10 +180,10 @@ def main() -> int:
     if stray:
         failures.append(f"optional components rendered with default values: {stray}")
 
-    # analytics.enabled needs a DSN source and kafka: refuse to render otherwise.
+    # analytics.enabled needs a DSN source and a projector group: refuse to render otherwise.
     for label, args, needle in (
-        ("without an analytical DSN", BASE + ["--set", "analytics.enabled=true", "--set", "kafka.enabled=true"], "analytics.database.projectorUrl"),
-        ("without kafka", BASE + ["--set", "analytics.enabled=true", "--set", "analytics.database.existingSecret=x"], "kafka.enabled is false"),
+        ("without an analytical DSN", BASE + ["--set", "analytics.enabled=true", "--set", "analytics.projector.consumerGroup=g"], "analytics.database.projectorUrl"),
+        ("without a projector consumer group", BASE + ["--set", "analytics.enabled=true", "--set", "analytics.database.existingSecret=x"], "analytics.projector.consumerGroup is required"),
     ):
         refused_analytics = subprocess.run(
             ["helm", "template", RELEASE, str(CHART_DIR), *args], capture_output=True, text=True
@@ -195,7 +205,7 @@ def main() -> int:
 
     print(f"PASS: {len(services)} Services each select exactly one Deployment; "
           "mcp, frontend and analytics are off by default; chart refuses to render without a database source "
-          "and refuses analytics without a DSN or kafka")
+          "and refuses analytics without a DSN or a consumer group")
     return 0
 
 
