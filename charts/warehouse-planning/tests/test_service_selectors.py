@@ -38,6 +38,8 @@ BASE = [
     "--set", "config.laborCapacityConsumerGroup=g-labor",
     "--set", "config.storageCapacityConsumerGroup=g-storage",
     "--set", "demand.consumerGroup=g-demand",
+    "--set", "inbound.consumerGroup=g-inbound",
+    "--set", "observed.consumerGroup=g-observed",
     "--set", "demand.siteId=SIM1",
 ]
 ENABLE_EVERYTHING = BASE + [

@@ -12,6 +12,10 @@ kafka:
 demand:
   consumerGroup: "warehouse-planning-demand"
   siteId: "SIM1"
+inbound:
+  consumerGroup: "warehouse-planning-inbound-demand"
+observed:
+  consumerGroup: "warehouse-planning-observed-capacity"
 gatewayApi:
   enabled: true
   parentRefs:

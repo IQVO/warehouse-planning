@@ -196,6 +196,27 @@ demand:
   # `location` the labor and facility data use.
   siteId: ""
 
+# Dock-appointment consumer (docs/adr/0017): inbound-receiving's
+# DockAppointmentBooked / DockAppointmentCancelled events
+# (warehouse.inbound-receiving.events) into the local inbound-demand read model.
+# ALWAYS on (docs/adr/0016): the value is REQUIRED and the chart refuses to
+# render while it is empty. Appointments carry no site, so they are attributed to
+# demand.siteId.
+inbound:
+  # INBOUND_DEMAND_CONSUMER_GROUP: a STABLE Kafka consumer group id (warehouse-infra
+  # pins "warehouse-planning-inbound-demand").
+  consumerGroup: ""
+
+# Observed-capacity consumer (docs/adr/0017): fulfillment-execution's
+# TaskCompleted events (warehouse.fulfillment.events) into the local
+# observed-capacity read model behind GET /capacity-plans/{id}/variance. ALWAYS
+# on (docs/adr/0016): REQUIRED, the chart refuses to render while it is empty.
+# Completions carry no site, so they are attributed to demand.siteId.
+observed:
+  # OBSERVED_CAPACITY_CONSUMER_GROUP: a STABLE Kafka consumer group id
+  # (warehouse-infra pins "warehouse-planning-observed-capacity").
+  consumerGroup: ""
+
 # The chart refuses to render unless database.url or database.existingSecret
 # is set (templates/_helpers.tpl: warehouse-planning.requireDatabase): the
 # service runs on real Postgres only (docs/adr/0016).
