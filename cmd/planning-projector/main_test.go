@@ -6,14 +6,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"sync/atomic"
+	"strings"
 	"testing"
+
+	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
 )
 
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
 func TestLoadConfig_Defaults(t *testing.T) {
-	c, err := loadConfig(env(map[string]string{"ANALYTICS_DATABASE_URL": "postgres://u@h/db", "KAFKA_BROKERS": "k1:9092, k2:9092,,"}))
+	c, err := loadConfig(env(map[string]string{"ANALYTICS_DATABASE_URL": "postgres://u@h/db", "KAFKA_BROKERS": "k1:9092, k2:9092,,", "ANALYTICS_CONSUMER_GROUP": "warehouse-planning-analytics"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,12 +42,33 @@ func TestLoadConfig_EnvironmentOverridesEverything(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_RequiresTheAnalyticalDatabaseAndKafka(t *testing.T) {
-	if _, err := loadConfig(env(map[string]string{"KAFKA_BROKERS": "k:9092"})); !errors.Is(err, errMissingAnalyticsURL) {
-		t.Fatalf("err = %v", err)
+// Every mandatory value is a boot error that names its variable; the consumer
+// group has NO default (a default would let a local process join the live group).
+func TestLoadConfig_RequiresTheAnalyticalDatabaseKafkaAndGroup(t *testing.T) {
+	full := map[string]string{"ANALYTICS_DATABASE_URL": "postgres://u@h/db", "KAFKA_BROKERS": "k:9092", "ANALYTICS_CONSUMER_GROUP": "g"}
+	cases := []struct {
+		drop string
+		want error
+	}{
+		{"ANALYTICS_DATABASE_URL", errMissingAnalyticsURL},
+		{"KAFKA_BROKERS", errMissingBrokers},
+		{"ANALYTICS_CONSUMER_GROUP", errMissingGroup},
 	}
-	if _, err := loadConfig(env(map[string]string{"ANALYTICS_DATABASE_URL": "postgres://u@h/db"})); !errors.Is(err, errMissingBrokers) {
-		t.Fatalf("err = %v", err)
+	for _, tc := range cases {
+		m := map[string]string{}
+		for k, v := range full {
+			if k != tc.drop {
+				m[k] = v
+			}
+		}
+		_, err := loadConfig(env(m))
+		if !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.drop) {
+			t.Errorf("without %s: err = %v, want %v naming the variable", tc.drop, err, tc.want)
+		}
+	}
+	blank := map[string]string{"ANALYTICS_DATABASE_URL": "postgres://u@h/db", "KAFKA_BROKERS": " , ", "ANALYTICS_CONSUMER_GROUP": "g"}
+	if _, err := loadConfig(env(blank)); !errors.Is(err, errMissingBrokers) {
+		t.Errorf("blank brokers: err = %v", err)
 	}
 }
 
@@ -58,8 +81,8 @@ func TestRun_FailsFastWithoutTheAnalyticalDatabase(t *testing.T) {
 }
 
 func TestAdminMux_HealthzIsLivenessAndReadyzFlipsOnShutdown(t *testing.T) {
-	var notReady atomic.Bool
-	mux := newAdminMux(&notReady)
+	readiness := inboundhttp.NewReadiness(0, 0) // no dependency: the drain gate alone
+	mux := newAdminMux(readiness)
 	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -68,15 +91,32 @@ func TestAdminMux_HealthzIsLivenessAndReadyzFlipsOnShutdown(t *testing.T) {
 	if rec := get("/healthz"); rec.Code != 200 || rec.Body.String() != `{"status":"ok"}` {
 		t.Fatalf("healthz = %d %s", rec.Code, rec.Body)
 	}
-	if rec := get("/readyz"); rec.Code != 200 || rec.Body.String() != `{"status":"ready"}` {
+	if rec := get("/readyz"); rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"status":"ready"}` {
 		t.Fatalf("readyz = %d %s", rec.Code, rec.Body)
 	}
-	notReady.Store(true)
-	if rec := get("/readyz"); rec.Code != 503 || rec.Body.String() != `{"status":"not_ready"}` {
+	readiness.SetNotReady()
+	if rec := get("/readyz"); rec.Code != 503 || strings.TrimSpace(rec.Body.String()) != `{"status":"not_ready"}` {
 		t.Fatalf("readyz during shutdown = %d %s", rec.Code, rec.Body)
 	}
 	if rec := get("/healthz"); rec.Code != 200 {
 		t.Fatalf("healthz must stay up during shutdown, got %d", rec.Code)
+	}
+}
+
+// The real gate: the analytical Postgres and Kafka are both named when down,
+// and healthz stays up.
+func TestAdminMux_ReadyzReportsDownDependencies(t *testing.T) {
+	down := func(context.Context) error { return errors.New("connection refused") }
+	mux := newAdminMux(newReadiness(down, []string{"127.0.0.1:1"})) // nothing listens on port 1
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "not ready: analytics-postgres, kafka") {
+		t.Fatalf("readyz = %d %s, want 503 naming analytics-postgres and kafka", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthz = %d, want 200 (liveness ignores dependencies)", rec.Code)
 	}
 }
 

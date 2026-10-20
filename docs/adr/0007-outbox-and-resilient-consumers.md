@@ -2,6 +2,8 @@
 
 ## Status
 
+> Amended by [ADR 0016](./0016-postgres-and-kafka-are-the-only-runtime.md): `LogSink` is no longer a runtime option; the relay always publishes to Kafka and `EVENT_PUBLISHER=log` is a boot error.
+
 Accepted (2026-10-05). Records decisions already in effect since Phase 3/4
 with no ADR of their own, found by the 2026-10-04 ADR-conformance audit.
 No behaviour changes here beyond §3's dead-letter fix for the three domain

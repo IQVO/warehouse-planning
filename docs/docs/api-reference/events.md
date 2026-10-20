@@ -77,8 +77,8 @@ analytics copy: the analytics stream is plan facts only.
 | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `LABOR_CAPACITY_CONSUMER_GROUP` |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `STORAGE_CAPACITY_CONSUMER_GROUP` |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `STORAGE_CAPACITY_CONSUMER_GROUP` |
-| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (unset = not consumed) |
-| `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (unset = not consumed) |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (required, always consumed) |
 
 The two order-management types feed the expected-demand read model
 (`GET /demand`, MCP `get_expected_demand`, and the default of `assigned_demand`

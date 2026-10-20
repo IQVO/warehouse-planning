@@ -1,4 +1,14 @@
-# Used by `ct lint` (chart-testing): the chart refuses to render without a
-# database source. Dummy DSN, no password.
+# Used by `ct lint` (chart-testing): the chart refuses to render without the
+# real runtime's mandatory values (ADR 0016): a database source, the Kafka
+# brokers, every consumer group and the demand site. Dummy DSN, no password;
+# nothing here is ever dialled.
 database:
   url: "postgres://u@example.invalid:5432/db"
+kafka:
+  brokers: "kafka.example.invalid:9092"
+config:
+  laborCapacityConsumerGroup: "warehouse-planning-labor-capacity"
+  storageCapacityConsumerGroup: "warehouse-planning-storage-capacity"
+demand:
+  consumerGroup: "warehouse-planning-demand"
+  siteId: "SIM1"

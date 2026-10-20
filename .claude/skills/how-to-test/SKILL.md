@@ -14,7 +14,7 @@ make targets and the CI job each one mirrors:
 | Unit / httptest | `make test` (`go test ./... -race`) | code runs; table-driven, memory adapters only |
 | Coverage | `make coverage` | lines executed; 90% gate on `./internal/domain/...,./internal/application/...` |
 | Mutation (fast subset) | `make mutation-fast` | tests actually ASSERT; gremlins on `./internal/domain/processcapacity`, `./internal/domain/capacityplan`, `./internal/domain/processpath` (`MUTATION_FAST_PKGS` in the `Makefile` = the CI `mutation-fast` job) |
-| BDD | `make bdd` | godog scenarios through the real chi router, in-memory repos and outbox |
+| BDD | `make bdd` | godog scenarios through the real chi router, the in-memory test doubles and outbox |
 | Architecture | `make arch-test` | hexagonal dependency rule and fleet fitness tests |
 | Integration | `make integration` (`-tags=integration`, needs Docker) | real Postgres and Kafka via testcontainers; NOT in `check-all` |
 

@@ -131,7 +131,7 @@ unknown role), the duplicate-claim branch and the retry-then-DLQ path to
 `warehouse.facility.events.dlq`, all identical to diagram 2. No use case and no
 `ProcessCapacity` are involved.
 
-## 4. Expected demand from OrderAllocated (Kafka, opt-in)
+## 4. Expected demand from OrderAllocated (Kafka)
 
 ```mermaid
 sequenceDiagram
@@ -161,10 +161,10 @@ sequenceDiagram
 Source: `internal/adapters/inbound/kafka/order_demand_consumer.go`,
 `internal/application/usecases/expected_demand.go` (`RecordOrderDemand`),
 `internal/adapters/outbound/postgres/order_demand_repository.go`,
-`internal/domain/demand/order.go`, `cmd/api/demand.go`.
+`internal/domain/demand/order.go`, `cmd/api/runtime.go`.
 Omits: the skip branches and the retry-then-DLQ path to
-`warehouse.order-management.events.dlq` (as diagram 2). The consumer only runs
-when `DEMAND_CONSUMER_GROUP` is set.
+`warehouse.order-management.events.dlq` (as diagram 2). The consumer is always
+on: `DEMAND_CONSUMER_GROUP` and `DEMAND_SITE_ID` are required at boot.
 
 ## 5. Register a process path and declare a station standard (REST / MCP)
 
@@ -300,8 +300,8 @@ sequenceDiagram
 Source: `internal/application/usecases/publish_capacity_plan.go`,
 `internal/adapters/outbound/postgres/capacity_plan_repository.go`,
 `internal/domain/capacityplan/capacity_plan.go`.
-Omits: the in-memory repositories (no row lock; the memory unit of work rolls
-participants back on error).
+Omits: the in-memory test doubles (no row lock; the memory unit of work rolls
+participants back on error), which no shipped binary uses.
 
 ## 8. Outbox relay to Kafka
 
@@ -310,7 +310,7 @@ sequenceDiagram
   autonumber
   participant Relay as outbox Relay in cmd/api
   participant DB as OutboxRepo Drain
-  participant Sink as RelaySink or LogSink
+  participant Sink as RelaySink
   participant K as Kafka
   loop every OUTBOX_RELAY_INTERVAL, immediately again after a full batch of 100
     Relay->>DB: Drain(limit 100)
@@ -332,8 +332,9 @@ Source: `internal/adapters/outbound/outbox/relay.go`,
 `internal/adapters/outbound/postgres/outbox_repository.go`,
 `internal/adapters/outbound/kafka/relay_sink.go`, `cmd/api/main.go`
 (`startOutboxRelay`).
-Omits: `EVENT_PUBLISHER=log`, where `LogSink` logs and nothing reaches Kafka,
-and the lazy first dial of the Kafka writer.
+Omits: the lazy first dial of the Kafka writer (and the one-off
+`Unknown Topic Or Partition` on the first write to an output topic that does not
+exist yet). The log sink is gone ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)).
 
 ## 9. Analytics projection (cmd/planning-projector)
 

@@ -2,6 +2,8 @@
 
 ## Status
 
+> Amended by [ADR 0016](./0016-postgres-and-kafka-are-the-only-runtime.md): the consumer is always on and `DEMAND_CONSUMER_GROUP` / `DEMAND_SITE_ID` are required (the off switch below no longer exists).
+
 Accepted (2026-10-04). Closes the "Phase 4 simplification" recorded on
 `CreateCapacityPlanCommand` and in ADR 0001 (demand arrives in the request
 body, final ingestion "a later decision"). Additive: nothing that worked
