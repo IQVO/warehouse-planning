@@ -3,8 +3,10 @@
 // /reports/{bottleneck-frequency,shortage-trend,plan-throughput} and
 // /healthz on :8092, answered from the ANALYTICAL database only (a
 // read-only pool; the database role should be read-only too). It writes
-// nothing and never opens the OLTP database or Kafka. No auth layer: access
-// control is the in-cluster boundary (fleet rule).
+// nothing and never opens the OLTP database or Kafka. GET /readyz is 200 only
+// while the analytical Postgres answers a ping (3s cache, 2s bound) and the
+// process is not draining. No auth layer: access control is the in-cluster
+// boundary (fleet rule).
 package main
 
 import (
@@ -78,9 +80,11 @@ func run() error {
 		return err
 	}
 
+	readiness := inboundhttp.NewReadiness(inboundhttp.DefaultReadinessTTL, inboundhttp.DefaultReadinessTimeout,
+		inboundhttp.Dependency{Name: "analytics-postgres", Check: pool.Ping})
 	srv := &http.Server{
 		Addr:              httpAddr,
-		Handler:           inboundhttp.NewReportsRouter(&inboundhttp.ReportsServer{Reader: analyticsstore.NewReader(pool)}),
+		Handler:           inboundhttp.NewReportsRouter(&inboundhttp.ReportsServer{Reader: analyticsstore.NewReader(pool), Readiness: readiness}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)
@@ -99,6 +103,7 @@ func run() error {
 	case <-sig.Done():
 	}
 
+	readiness.SetNotReady()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)

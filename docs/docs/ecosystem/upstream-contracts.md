@@ -33,7 +33,7 @@ flowchart LR
   API -- "Kafka: warehouse.warehouse-planning.analytics" --> PROJ
 ```
 
-Source: `cmd/api/main.go`, `cmd/api/demand.go`, `cmd/mcp/main.go`,
+Source: `cmd/api/main.go`, `cmd/api/runtime.go`, `cmd/mcp/main.go`,
 `cmd/planning-projector/main.go`, `internal/adapters/inbound/kafka/*_consumer.go`,
 `internal/adapters/outbound/kafka/encoder.go`, `web/src/api.ts`.
 Omits: the DLQ topics, Postgres and the OTel Collector.
@@ -42,7 +42,7 @@ Omits: the DLQ topics, Postgres and the OTel Collector.
 | --- | --- | --- | --- | --- |
 | upstream | `workforce-management` | Kafka, `warehouse.workforce.events` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | transient errors retried 5 times, then `warehouse.workforce.events.dlq` |
 | upstream | `facility-layout` | Kafka, `warehouse.facility.events` | `...facility-layout.locationslot.LocationSlotRegistered`, `...LocationSlotDecommissioned` | same, `warehouse.facility.events.dlq` |
-| upstream | `order-management` | Kafka, `warehouse.order-management.events` | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` | same, `warehouse.order-management.events.dlq`; consumer off unless `DEMAND_CONSUMER_GROUP` is set |
+| upstream | `order-management` | Kafka, `warehouse.order-management.events` | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` | same, `warehouse.order-management.events.dlq`; consumer always on |
 | inbound caller | `warehouse-console` (remote `capacity_mfe` from `web/`) | REST through Kong at `/api/warehouse-planning` | `apis/openapi.yaml` ([API reference](/docs/api-reference)) | RFC 7807 problem responses (`application/problem+json`); the call fails, nothing is retried by this service |
 | inbound caller | `warehouse-ops-agent` | MCP (Streamable HTTP, `cmd/mcp` on `:8090`) | `get_process_path_capacity`, `get_capacity_plan`, `get_storage_capacity`, `list_station_standards` ([MCP tools](/docs/mcp/tools)) | the tool returns an error result; how the agent degrades is that repo's concern |
 | downstream | `order-management` | Kafka, `warehouse.warehouse-planning.events` | the four `com.warehouse.wes.warehouse-planning.capacityplan.*` types ([event catalogue](/docs/api-reference/events)) | outbox: the row stays unpublished and is retried every relay pass |
@@ -97,14 +97,15 @@ StationStandard
 ## Upstream: order-management
 
 [ADR 0004](/docs/adr/0004-demand-ingestion-from-order-management). The
-consumer is **off** unless `DEMAND_CONSUMER_GROUP` is set; it then requires
-`DEMAND_SITE_ID`, and the binary exits at boot without it.
+consumer is always on ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)
+removed the off switch): `DEMAND_CONSUMER_GROUP` and `DEMAND_SITE_ID` are
+required and the binary exits at boot, naming the variable, without either.
 
 | | |
 | --- | --- |
 | Types | `com.warehouse.wes.order-management.order.OrderAllocated` and `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` |
 | Topic | `warehouse.order-management.events` |
-| Consumer group | `DEMAND_CONSUMER_GROUP` (no default) |
+| Consumer group | `DEMAND_CONSUMER_GROUP` (required, no default) |
 | Fields used | `order_id` (must equal the CloudEvents `subject`), `promise_date`, `len(lines)`, and the CloudEvents `time` |
 | Effect | upserts one `order_demand` row per order id (last writer wins on `time`); every order is attributed to the one configured site `DEMAND_SITE_ID`, because the events carry no fulfillment site |
 | Ignored | `OrderRepromised` (no new cutoff instant) and every other type on the topic |

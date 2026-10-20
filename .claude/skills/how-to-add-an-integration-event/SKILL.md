@@ -69,8 +69,8 @@ commits with the aggregate, so there is no dual write): save the plan, then
 `id` is minted once in `Encoder.Encode` and persisted, so a relay retry
 republishes the same id. Never write to Kafka from a handler or use case;
 the relay (`internal/adapters/outbound/outbox`, started in `cmd/api`, sink
-`outbound/kafka/relay_sink.go`) does it, with `EVENT_PUBLISHER=kafka|log`
-(default `log`, which needs no broker).
+`outbound/kafka/relay_sink.go`) does it, always to real Kafka
+(`EVENT_PUBLISHER` may only be `kafka`; the log sink was removed, ADR 0016).
 
 A breaking payload change is a new `.v2` type and dataschema, never a
 mutation of an existing one.
@@ -143,20 +143,23 @@ return c.UoW.Do(ctx, func(ctx context.Context) error {
   (`usecases.RegisterProcessCapacityConstraint`); do not duplicate aggregate
   logic in the consumer. A new consumer name for `Claim` namespaces its
   idempotency rows.
-- Wire it in `startKafkaConsumers` in `cmd/api/main.go`: no `KAFKA_BROKERS`
-  means ingestion is disabled, never fatal; the reader dials lazily.
+- Wire it as a `consumerSpec` in `consumerSpecs` (`cmd/api/runtime.go`): every
+  consumer always runs, `KAFKA_BROKERS` and its group are required at boot, and
+  the reader still dials lazily (a broker outage never blocks boot). The
+  process exits non-zero if the consumer returns on its own.
 
 ### 3. Consumer group ids
 
-This repo's consumers are durable single-purpose groups (labor, storage)
-whose group id comes from an env var with a named default:
-`LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`
-(`startKafkaConsumers`). Add the same for a new consumer; never an inline
-`GroupID: "literal"` (`TestKafkaConsumerGroupNeverHardcodedInline` fails CI).
-Because the defaults are shared names, a process run locally against the
-cluster broker joins the SAME group as the in-cluster Deployment and one of
-the two silently starves: set the env var to a unique value for any local
-run against a shared broker.
+This repo's consumers are durable single-purpose groups (labor, storage, order
+demand) whose group id comes from a REQUIRED env var with NO default:
+`LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`,
+`DEMAND_CONSUMER_GROUP` (`consumerGroupEnvs` / `loadRuntime` in
+`cmd/api/runtime.go`: a missing one is a boot error that names it). Add the same
+for a new consumer; never an inline `GroupID: "literal"`
+(`TestKafkaConsumerGroupNeverHardcodedInline` fails CI). A process run locally
+against a shared broker with a deployed instance's group id joins the SAME
+group as the in-cluster Deployment and one of the two silently starves: use a
+unique value for any local run against a shared broker.
 
 If you ever add a consumer that rebuilds a local cache by replaying a topic's
 full history on every start, that is a different pattern: it needs a

@@ -63,7 +63,7 @@ database and the broker (see [Suggested alerts](#suggested-alerts)).
 ## Traces
 
 - **Server spans**: `otelchi.Middleware` on the same three routers creates one span per request. With `WithChiRoutes`, the span name is the chi route pattern without the method, for example `/capacity-plans/{id}/publish` or `/reports/shortage-trend`. Spans carry `http.route` and the response `http.status_code`.
-- **Trace context crosses the outbox** ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)). `postgres.OutboxRepo.Insert` injects the request span's W3C context (`traceparent`, plus `tracestate` / `baggage` when present) into each row's `outbox_events.headers`, and the relay copies the stored headers onto the Kafka message. A consumer that extracts them continues the request's trace. Rows written without an active span (or before this change) carry only `content-type`. The in-memory outbox (no `DATABASE_URL`) does not inject.
+- **Trace context crosses the outbox** ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)). `postgres.OutboxRepo.Insert` injects the request span's W3C context (`traceparent`, plus `tracestate` / `baggage` when present) into each row's `outbox_events.headers`, and the relay copies the stored headers onto the Kafka message. A consumer that extracts them continues the request's trace. Rows written without an active span (or before this change) carry only `content-type`. The in-memory outbox double used by unit tests does not inject; no shipped binary uses it.
 - **Nothing else is traced.** The Kafka consumers, the outbox relay, the use cases and the Postgres calls create no spans of their own; this service's consumers do not extract incoming trace headers because they open no span.
 
 ## Logs
@@ -75,7 +75,7 @@ Every binary writes JSON lines to stdout through `log/slog`
 | Key | Appears on |
 | --- | --- |
 | `error` | every failure line |
-| `topic`, `group_id`, `brokers` | consumer and relay start lines (`labor capacity consumer running`, `storage capacity consumer running`, `order demand consumer running`, `analytics consumer running`, `outbox relay running`) |
+| `topic`, `group_id`, `brokers` | consumer and relay start lines (`consumer running` (with `consumer` = `labor-capacity`, `storage-capacity` or `order-demand`), `analytics consumer running`, `outbox relay running`) |
 | `partition`, `offset`, `attempt`, `max_attempts`, `retry_in` | `... handling failed; retrying the same message` and `... offset commit failed; retrying the same message` |
 | `attempts` | `... handling failed after the maximum attempts; dead-lettering the message` |
 | `dlq_topic` | `analytics: dead-lettering a message that can never be projected` |
@@ -83,12 +83,12 @@ Every binary writes JSON lines to stdout through `log/slog`
 | `publisher`, `interval`, `max_attempts` | `outbox relay running` |
 | `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error` | ERROR `outbox relay: row reached the attempt cap and is excluded from future claims; ...`, logged once for the failure that reaches `OUTBOX_MAX_ATTEMPTS` ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)) |
 | `service_name`, `service_version`, `environment`, `otlp_endpoint` | `telemetry configured` (`cmd/planning-projector`) |
-| `topic`, `type`, `subject`, `id` | `event published (log sink)`, written for every relayed event when `EVENT_PUBLISHER=log` |
+| `dependency`, `error` | WARN `readiness: dependency is not ready` (`postgres`, `kafka`, `analytics-postgres`) |
 | `op`, `attempt`, `in`, `err` | `retrying` and `succeeded after retry` from the boot retry (migrations, first ping) |
 | `migrations_path` | `postgres adapters configured` |
 | `site_id` | `order demand consumer running` |
 | `drain_delay` | `shutdown: readiness flipped to not-ready; waiting for traffic to drain` |
-| `consumer` | `kafka consumer did not stop before the shutdown drain deadline` |
+| `consumer`, `worker` | `consumer stopped`, `worker did not stop before the shutdown drain deadline` |
 
 Log lines carry **no** `trace_id` or `span_id`: no code in this repo adds them.
 
@@ -116,7 +116,7 @@ These are built only from signals that exist today:
 
 | Alert | Signal | Why |
 | --- | --- | --- |
-| Outbox backlog | `SELECT count(*), min(created_at) FROM outbox_events WHERE published_at IS NULL` rising, or `max(attempts)` growing with a `last_error` | The relay is failing (broker down, `EVENT_PUBLISHER=log` left on) and order-management is not seeing plans. |
+| Outbox backlog | `SELECT count(*), min(created_at) FROM outbox_events WHERE published_at IS NULL` rising, or `max(attempts)` growing with a `last_error` | The relay is failing (broker down) and order-management is not seeing plans. |
 | Outbox rows excluded by the attempt cap | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` (the `OUTBOX_MAX_ATTEMPTS` value) above 0, or the Loki ERROR line `row reached the attempt cap` | A poison row (or a long broker outage) was excluded; it is never retried until an operator re-arms it ([Runbook](/docs/operations/runbook#outbox-relay)). |
 | DLQ growth | the end offsets of `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq` and `warehouse.warehouse-planning.analytics.dlq` increasing | A message was given up on and nothing re-drives it. |
 | Consumer lag | `kafka-consumer-groups.sh --describe` for the four groups | A wedged partition: the analytics consumer retries transient errors forever. |

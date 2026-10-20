@@ -40,8 +40,14 @@ ENABLE_KONG = [
     # This chart refuses to render analytics without an analytical DSN (a
     # deliberate guard in reports-deployment.yaml) — supply a dummy.
     "--set", "analytics.database.projectorUrl=postgres://user:pass@localhost:5432/analytics",
-    "--set", "kafka.enabled=true",
+    # ... and the real runtime's Kafka brokers, consumer groups and demand site
+    # (ADR 0016).
     "--set", "kafka.brokers=dummy:9092",
+    "--set", "config.laborCapacityConsumerGroup=g-labor",
+    "--set", "config.storageCapacityConsumerGroup=g-storage",
+    "--set", "demand.consumerGroup=g-demand",
+    "--set", "demand.siteId=SIM1",
+    "--set", "analytics.projector.consumerGroup=g-analytics",
     "--set", "gatewayApi.enabled=true",
     "--set", "gatewayApi.parentRefs[0].name=warehouse-gateway",
     "--set", "gatewayApi.parentRefs[0].namespace=kong",
@@ -77,7 +83,14 @@ def main() -> int:
     failures: list[str] = []
 
     # 1. Defaults render zero Kong objects.
-    default_docs = render(["--set", "database.url=postgres://user:pass@localhost:5432/db"])
+    default_docs = render([
+        "--set", "database.url=postgres://user:pass@localhost:5432/db",
+        "--set", "kafka.brokers=dummy:9092",
+        "--set", "config.laborCapacityConsumerGroup=g-labor",
+        "--set", "config.storageCapacityConsumerGroup=g-storage",
+        "--set", "demand.consumerGroup=g-demand",
+        "--set", "demand.siteId=SIM1",
+    ])
     kong_docs = [d for d in default_docs if "Kong" in (d.get("kind") or "")]
     if kong_docs:
         failures.append(

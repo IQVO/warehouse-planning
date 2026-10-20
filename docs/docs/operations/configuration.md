@@ -13,6 +13,12 @@ few adapters that read the environment themselves. An empty value counts as
 unset: every lookup goes through a `getenv(key, fallback)` helper or an
 explicit `== ""` check.
 
+**Postgres and Kafka are the only runtime** ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)).
+A variable marked **yes** under *Required* is a boot error that names it when it
+is unset, raised before the listener binds; there is no in-memory fallback, no
+log sink and no consumer that is off. The chart refuses to render without the
+matching values (`helm template` names the value).
+
 The Helm chart (`charts/warehouse-planning`) renders most variables from
 dedicated values. The **Chart value** column names the key. "not rendered"
 means the chart never sets the variable, so the binary's default applies
@@ -43,15 +49,15 @@ of them for this service, so the chart defaults apply in the kind cluster.
 | --- | --- | --- | --- | --- | --- |
 | `HTTP_ADDR` | `:8080` | no | Listen address of the REST server. | `config.httpAddr` | `cmd/api/main.go` |
 | `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn` (or `warning`) or `error`, case-insensitive. Any other value means `info`. Logs are JSON on stdout. | `config.logLevel` | `cmd/api/main.go` |
-| `DATABASE_URL` | none | no for the binary, yes for the chart | Postgres DSN of the OLTP database (pgxpool). **Unset means in-memory adapters**: nothing survives a restart. The chart refuses to render without `database.url` or `database.existingSecret`. | `database.url` / `database.existingSecret` + `database.existingSecretKey` | `cmd/api/main.go` |
+| `DATABASE_URL` | none | **yes** | Postgres DSN of the OLTP database (pgxpool). Unset is a boot error (`DATABASE_URL is required: ...`); there is no in-memory mode ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)). The chart refuses to render without `database.url` or `database.existingSecret`. | `database.url` / `database.existingSecret` + `database.existingSecretKey` | `cmd/api/runtime.go` |
 | `MIGRATIONS_DATABASE_URL` | the value of `DATABASE_URL` | no | DSN used **only** by the golang-migrate step at boot. In the kind cluster `DATABASE_URL` goes through PgBouncer (transaction pooling), which cannot hold golang-migrate's session-scoped `pg_advisory_lock`, so this one is a direct Postgres DSN ([ADR 0010](/docs/adr/0010-migrations-over-direct-connection)). The runtime pool never uses it. | `database.migrationsExistingSecretKey` (rendered with `optional: true`) | `cmd/api/main.go` |
 | `MIGRATIONS_PATH` | `internal/adapters/outbound/postgres/migrations` | no | Directory of the OLTP `*.up.sql` files, relative to the working directory. The image copies them to `/app/migrations`. | `config.migrationsPath` (`migrations`) | `cmd/api/main.go` |
-| `KAFKA_BROKERS` | none | only with `EVENT_PUBLISHER=kafka` or `DEMAND_CONSUMER_GROUP` | Comma-separated broker list, split on `,` without trimming (do not put spaces in it). Unset disables the labor and storage consumers (a WARN line, not a failure) and the order-demand consumer. | `kafka.brokers`, rendered only when `kafka.enabled=true` | `cmd/api/main.go`, `cmd/api/demand.go` |
-| `LABOR_CAPACITY_CONSUMER_GROUP` | `warehouse-planning-labor-capacity` | no | Consumer group of the labor consumer on `warehouse.workforce.events`. | `config.laborCapacityConsumerGroup` | `cmd/api/main.go` |
-| `STORAGE_CAPACITY_CONSUMER_GROUP` | `warehouse-planning-storage-capacity` | no | Consumer group of the facility consumer on `warehouse.facility.events`. | `config.storageCapacityConsumerGroup` | `cmd/api/main.go` |
-| `DEMAND_CONSUMER_GROUP` | none | no | Consumer group of the order-demand consumer on `warehouse.order-management.events`. **Unset switches the feature off** ([ADR 0004](/docs/adr/0004-demand-ingestion-from-order-management)). It has no default on purpose, so that a local process never joins the live group. | `demand.consumerGroup` | `cmd/api/demand.go` |
-| `DEMAND_SITE_ID` | none | yes when `DEMAND_CONSUMER_GROUP` is set | The one site every consumed order is attributed to, because order-management's events carry no site. If the group is set without it, the binary exits at boot. | `demand.siteId` | `cmd/api/demand.go` |
-| `EVENT_PUBLISHER` | `log` | no | Outbox relay sink. `log` writes each drained event to the log. `kafka` writes to Kafka and needs `KAFKA_BROKERS`, otherwise the binary exits at boot. Any other value is a boot error. | `config.eventPublisher` | `cmd/api/main.go` |
+| `KAFKA_BROKERS` | none | **yes** | Comma-separated broker list (each entry trimmed, empty entries dropped). Unset or blank is a boot error (`KAFKA_BROKERS is required: ...`). It feeds the three consumers, the outbox relay and the `/readyz` broker check. | `kafka.brokers` (required; a legacy `kafka.enabled: true` still renders, `false` is refused) | `cmd/api/runtime.go` |
+| `LABOR_CAPACITY_CONSUMER_GROUP` | none | **yes** | Consumer group of the labor consumer on `warehouse.workforce.events`. No default on purpose, so that a local process never joins the live group; unset is a boot error. | `config.laborCapacityConsumerGroup` (required) | `cmd/api/runtime.go` |
+| `STORAGE_CAPACITY_CONSUMER_GROUP` | none | **yes** | Consumer group of the facility consumer on `warehouse.facility.events`. No default; unset is a boot error. | `config.storageCapacityConsumerGroup` (required) | `cmd/api/runtime.go` |
+| `DEMAND_CONSUMER_GROUP` | none | **yes** | Consumer group of the order-demand consumer on `warehouse.order-management.events`. The consumer is always on ([ADR 0004](/docs/adr/0004-demand-ingestion-from-order-management) made it opt-in; [ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime) removed the off switch). No default; unset is a boot error. | `demand.consumerGroup` (required) | `cmd/api/runtime.go` |
+| `DEMAND_SITE_ID` | none | **yes** | The one site every consumed order is attributed to, because order-management's events carry no site. Unset is a boot error. | `demand.siteId` (required) | `cmd/api/runtime.go` |
+| `EVENT_PUBLISHER` | `kafka` | no | Outbox relay sink. Only `kafka` (also the default) is accepted: `log` is a boot error (`EVENT_PUBLISHER=log is not supported: ...`), as is any other value. The variable stays because the chart and warehouse-infra set it. | `config.eventPublisher` (`kafka`) | `cmd/api/runtime.go` |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | no | Pause between relay passes that did not fill a batch of 100. A Go duration (`500ms`, `2s`) or plain seconds (`0.5`). A malformed or non-positive value logs a WARN and uses `1s`. | `config.outboxRelayInterval` (rendered only when set) | `cmd/api/main.go` |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | no | How many times one outbox row may fail before the relay excludes it from claims ([ADR 0013](/docs/adr/0013-outbox-relay-attempt-cap)). The row stays in `outbox_events` with `attempts` and `last_error` until an operator re-arms it (`UPDATE outbox_events SET attempts = 0 WHERE id = ...`, see the [Runbook](/docs/operations/runbook#outbox-relay)). `0` means unlimited (one poison row then blocks the relay forever). A negative or unparsable value logs a WARN and uses `20`. | `config.outboxMaxAttempts` (`20`) | `cmd/api/main.go` |
 | `SHUTDOWN_DRAIN_DELAY` | `5s` | no | How long shutdown waits after flipping `/readyz` to 503 and before closing the listener. `0` disables the wait. A negative or unparsable value logs a WARN and uses `5s`. Only `cmd/api` reads it. | `config.shutdownDrainDelay` (rendered only when set) | `cmd/api/main.go` |
@@ -69,7 +75,7 @@ relay. Its plan tools write outbox rows that the `cmd/api` relay drains.
 | --- | --- | --- | --- | --- | --- |
 | `MCP_ADDR` | `:8090` | no | Listen address of the Streamable HTTP server (`/`, `/mcp` and `GET /healthz`). | `mcp.httpAddr` | `cmd/mcp/main.go` |
 | `LOG_LEVEL` | `info` | no | As for `cmd/api`, and also accepts `warning`. | `config.logLevel` | `cmd/mcp/main.go` |
-| `DATABASE_URL` | none | no for the binary, yes for the chart | The same OLTP database as `cmd/api`. Unset means in-memory adapters that share nothing with `cmd/api`. | as for `cmd/api` | `cmd/mcp/main.go` |
+| `DATABASE_URL` | none | **yes** | The same OLTP database as `cmd/api`. Unset is a boot error (`DATABASE_URL is required: ...`); there is no in-memory mode. | as for `cmd/api` | `cmd/mcp/main.go` |
 | `MIGRATIONS_DATABASE_URL` | the value of `DATABASE_URL` | no | Direct DSN for the migration step. `cmd/mcp` also migrates on boot, and the advisory lock makes concurrent starts with `cmd/api` safe. | `database.migrationsExistingSecretKey` | `cmd/mcp/main.go` |
 | `MIGRATIONS_PATH` | `internal/adapters/outbound/postgres/migrations` | no | As for `cmd/api`. | `config.migrationsPath` | `cmd/mcp/main.go` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `cmd/api`. The service name is `warehouse-planning-mcp`. | `otel.endpoint`, rendered while `otel.enabled` | `cmd/mcp/main.go` |
@@ -87,9 +93,9 @@ exits non-zero when a required variable is missing. It then calls
 | --- | --- | --- | --- | --- | --- |
 | `ANALYTICS_DATABASE_URL` | none | **yes** | Read-write DSN of the separate analytical database (`warehouse_planning_analytics`). It is also used for the analytical migrations, so make it a direct DSN, not PgBouncer. | secret key `ANALYTICS_DATABASE_URL` (`analytics.database.projectorUrl` or `analytics.database.existingSecret`) | `cmd/planning-projector/main.go` |
 | `KAFKA_BROKERS` | none | **yes** | Comma-separated broker list. Each entry is trimmed and empty entries are dropped. | `kafka.brokers` | `cmd/planning-projector/main.go` |
-| `ANALYTICS_CONSUMER_GROUP` | `warehouse-planning-analytics` | no | Fixed consumer group on `warehouse.warehouse-planning.analytics`. A new group id starts from the earliest offset and rebuilds the model from history. | `analytics.projector.consumerGroup` | `cmd/planning-projector/main.go` |
+| `ANALYTICS_CONSUMER_GROUP` | none | **yes** | Fixed consumer group on `warehouse.warehouse-planning.analytics`. No default; unset is a boot error. A new group id starts from the earliest offset and rebuilds the model from history. | `analytics.projector.consumerGroup` (required while `analytics.enabled`) | `cmd/planning-projector/main.go` |
 | `ANALYTICS_MIGRATIONS_PATH` | `analytics/migrations` | no | Directory of the analytical `*.up.sql` files (`/app/analytics/migrations` in the image). | `analytics.migrationsPath` | `cmd/planning-projector/main.go` |
-| `ADMIN_ADDR` | `:8091` | no | Admin listener for `/healthz` and `/readyz`. The chart's container port is fixed at 8091, so change both together. | `analytics.projector.adminAddr` | `cmd/planning-projector/main.go` |
+| `ADMIN_ADDR` | `:8091` | no | Admin listener for `/healthz` (liveness) and `/readyz` (drain gate, analytical Postgres ping and Kafka metadata). The chart's container port is fixed at 8091, so change both together. | `analytics.projector.adminAddr` | `cmd/planning-projector/main.go` |
 | `LOG_LEVEL` | `info` | no | As for `cmd/mcp`. | `config.logLevel` | `cmd/planning-projector/main.go` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `cmd/api`. The service name is `warehouse-planning-projector`. | `otel.endpoint`, rendered while `otel.enabled` | `cmd/planning-projector/main.go` |
 | `SERVICE_VERSION` | `dev` | no | As for `cmd/api`. | `image.tag` | `cmd/planning-projector/main.go` |
@@ -100,7 +106,7 @@ exits non-zero when a required variable is missing. It then calls
 | Variable | Default | Required | Meaning | Chart value | Source |
 | --- | --- | --- | --- | --- | --- |
 | `ANALYTICS_DATABASE_URL` | none | **yes** | DSN of the analytical database. The pool forces `default_transaction_read_only=on`. The chart feeds it the reader DSN (secret key `ANALYTICS_READER_DATABASE_URL`, from `analytics.database.reportsUrl`, falling back to `projectorUrl`). | `analytics.database.reportsUrl` / `analytics.database.existingSecret` | `cmd/planning-reports/main.go` |
-| `HTTP_ADDR` | `:8092` | no | Listen address of the reports server. | `analytics.reports.httpAddr` | `cmd/planning-reports/main.go` |
+| `HTTP_ADDR` | `:8092` | no | Listen address of the reports server (`/healthz`, `/readyz` with an analytical Postgres ping, and the reports). | `analytics.reports.httpAddr` | `cmd/planning-reports/main.go` |
 | `LOG_LEVEL` | `info` | no | As for `cmd/mcp`. | `config.logLevel` | `cmd/planning-reports/main.go` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `cmd/api`. The service name is `warehouse-planning-reports`. | `otel.endpoint`, rendered while `otel.enabled` | `cmd/planning-reports/main.go` |
 | `SERVICE_VERSION` | `dev` | no | As for `cmd/api`. | `image.tag` | `cmd/planning-reports/main.go` |

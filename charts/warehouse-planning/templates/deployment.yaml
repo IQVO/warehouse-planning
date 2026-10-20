@@ -1,6 +1,4 @@
-{{- include "warehouse-planning.requireDatabase" . -}}
-{{- include "warehouse-planning.requireKafkaForPublisher" . -}}
-{{- include "warehouse-planning.requireDemandConfig" . -}}
+{{- include "warehouse-planning.requireRealRuntime" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -103,15 +101,12 @@ spec:
               value: {{ .Values.config.laborCapacityConsumerGroup | quote }}
             - name: STORAGE_CAPACITY_CONSUMER_GROUP
               value: {{ .Values.config.storageCapacityConsumerGroup | quote }}
-            {{- if .Values.demand.consumerGroup }}
-            # Order-demand consumer (docs/adr/0004). Both come from the
-            # dedicated `demand` values, never from extraEnv; they are absent
-            # while demand.consumerGroup is empty, which keeps the feature OFF.
+            # Order-demand consumer (docs/adr/0004): always on, both come from
+            # the dedicated `demand` values, never from extraEnv.
             - name: DEMAND_CONSUMER_GROUP
               value: {{ .Values.demand.consumerGroup | quote }}
             - name: DEMAND_SITE_ID
               value: {{ .Values.demand.siteId | quote }}
-            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -130,10 +125,8 @@ spec:
                   key: {{ .Values.database.migrationsExistingSecretKey }}
                   optional: true
             {{- end }}
-            {{- if .Values.kafka.enabled }}
             - name: KAFKA_BROKERS
               value: {{ .Values.kafka.brokers | quote }}
-            {{- end }}
             {{- range .Values.extraEnv }}
             - {{ toYaml . | nindent 14 | trim }}
             {{- end }}
