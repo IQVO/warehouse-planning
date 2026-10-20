@@ -80,6 +80,16 @@ func TestInboundLabourStandard_InvalidIs422(t *testing.T) {
 	}
 }
 
+// requireFields fails unless every wanted key of got holds the wanted value.
+func requireFields(t *testing.T, what string, got, want map[string]any) {
+	t.Helper()
+	for key, value := range want {
+		if got[key] != value {
+			t.Errorf("%s: %s = %v, want %v (body %v)", what, key, got[key], value, got)
+		}
+	}
+}
+
 func TestInboundDemand_PricedByStandardAndFailsVisibleWithout(t *testing.T) {
 	srv, appointments := newInboundObservedServer(t)
 	start := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
@@ -99,23 +109,18 @@ func TestInboundDemand_PricedByStandardAndFailsVisibleWithout(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("demand = %d %s", status, body)
 	}
-	got := decodeMap(t, body)
-	if got["appointments"] != 1.0 || got["labour_minutes"] != 0.0 || got["standard_missing"] != true || got["standard_declared"] != false {
-		t.Fatalf("without a standard the appointment must be counted but unpriced and flagged: %v", got)
-	}
+	requireFields(t, "without a standard the appointment is counted, unpriced and flagged", decodeMap(t, body),
+		map[string]any{"appointments": 1.0, "labour_minutes": 0.0, "standard_missing": true, "standard_declared": false})
 
 	if status, body := declareStandard(t, srv, "/inbound-labour-standards/SIM1/receive", map[string]any{"minutes_per_appointment": 40, "minutes_per_asn": 10}); status != http.StatusCreated {
 		t.Fatalf("declare = %d %s", status, body)
 	}
 	_, _, body = getPath(t, srv, query)
-	got = decodeMap(t, body)
 	// 40 per appointment + 2 ASNs * 10 = 60 minutes over an 8h window.
-	if got["labour_minutes"] != 60.0 || got["asns"] != 2.0 || got["standard_missing"] != false || got["standard_declared"] != true || got["as_of"] != "2026-10-05T08:00:00Z" || got["source"] != "inbound-receiving" {
-		t.Fatalf("priced demand = %v", got)
-	}
-	if heads, isNum := got["average_heads"].(float64); !isNum || heads != 60.0/480.0 {
-		t.Fatalf("average_heads = %v, want %v", got["average_heads"], 60.0/480.0)
-	}
+	requireFields(t, "priced demand", decodeMap(t, body), map[string]any{
+		"labour_minutes": 60.0, "asns": 2.0, "standard_missing": false, "standard_declared": true,
+		"as_of": "2026-10-05T08:00:00Z", "source": "inbound-receiving", "average_heads": 60.0 / 480.0,
+	})
 }
 
 func TestInboundDemand_BadQueryIs400(t *testing.T) {
