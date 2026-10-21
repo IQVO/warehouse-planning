@@ -37,6 +37,7 @@ func newDeps() (inboundmcp.Deps, *memory.OutboxRepo) {
 
 func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo) {
 	standards, tallyRepo := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
+	inboundStandards := memory.NewInboundStandardRepo()
 	pc := memory.NewProcessCapacityRepo()
 	paths := memory.NewProcessPathRepo()
 	plans, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
@@ -54,6 +55,12 @@ func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo) 
 		DeclareStationStandard:            &usecases.DeclareStationStandard{Repo: standards},
 		StationStandards:                  standards,
 		GetStorageCapacity:                &usecases.GetStorageCapacity{Tally: tallyRepo},
+
+		// ADR 0017: the inbound labour standard, inbound demand and plan
+		// variance tools, wired as cmd/mcp wires them.
+		DeclareInboundLabourStandard: &usecases.DeclareInboundLabourStandard{Repo: inboundStandards},
+		GetInboundDemand:             &usecases.GetInboundDemand{Appointments: memory.NewInboundAppointmentRepo(), Standards: inboundStandards},
+		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: plans, Observed: memory.NewObservedCapacityRepo()},
 	}, outboxRepo, tallyRepo
 }
 

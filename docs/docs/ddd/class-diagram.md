@@ -387,8 +387,8 @@ interfaces.
 flowchart LR
   subgraph Inbound adapters
     HTTP["inbound/http<br/>chi router, reports router"]
-    MCPA["inbound/mcp<br/>11 tools"]
-    KIN["inbound/kafka<br/>labor, storage, order-demand, analytics consumers"]
+    MCPA["inbound/mcp<br/>14 tools"]
+    KIN["inbound/kafka<br/>labor, storage, order-demand, inbound-demand, observed-capacity, analytics consumers"]
   end
   subgraph Application
     UC["usecases<br/>Register..., GetProcessPathCapacity,<br/>Create/PublishCapacityPlan, DeclareStationStandard,<br/>RecordOrderDemand, GetExpectedDemand, List..."]

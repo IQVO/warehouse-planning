@@ -43,6 +43,14 @@ type Deps struct {
 	// GetExpectedDemand backs get_expected_demand (docs/adr/0004): the
 	// expected-demand read model fed by order-management's order events.
 	GetExpectedDemand *usecases.GetExpectedDemand
+
+	// Inbound labour demand and observed capacity (docs/adr/0017):
+	// DeclareInboundLabourStandard backs declare_inbound_labour_standard,
+	// GetInboundDemand backs get_inbound_demand and GetCapacityPlanVariance
+	// backs get_capacity_plan_variance.
+	DeclareInboundLabourStandard *usecases.DeclareInboundLabourStandard
+	GetInboundDemand             *usecases.GetInboundDemand
+	GetCapacityPlanVariance      *usecases.GetCapacityPlanVariance
 }
 
 // --- shared helpers -----------------------------------------------------------
@@ -301,6 +309,13 @@ type capacityPlanOutput struct {
 	// before it was recorded) and Warnings (never null) are additive.
 	BottleneckConstraint string   `json:"bottleneck_constraint"`
 	Warnings             []string `json:"warnings"`
+
+	// Inbound labour demand (docs/adr/0017), additive and informational; the
+	// REST body's twin. Never summed into assigned_demand (orders).
+	InboundAppointments    int     `json:"inbound_appointments"`
+	InboundLabourMinutes   float64 `json:"inbound_labour_minutes"`
+	InboundAverageHeads    float64 `json:"inbound_average_heads"`
+	InboundStandardMissing bool    `json:"inbound_standard_missing"`
 }
 
 func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
@@ -323,6 +338,11 @@ func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
 
 		BottleneckConstraint: string(p.BottleneckConstraint()),
 		Warnings:             nonNilStrings(p.Warnings()),
+
+		InboundAppointments:    p.Inbound().Appointments,
+		InboundLabourMinutes:   p.Inbound().LabourMinutes,
+		InboundAverageHeads:    p.InboundAverageHeads(),
+		InboundStandardMissing: p.Inbound().StandardMissing,
 	}
 	if !p.PublishedAt().IsZero() {
 		publishedAt := p.PublishedAt().UTC().Format(time.RFC3339)
@@ -633,6 +653,7 @@ func (d Deps) registerTools(server *mcp.Server) {
 	}, d.getCapacityPlan)
 
 	d.registerReadModelTools(server, idempotent, readOnly)
+	d.registerInboundObservedTools(server, idempotent, readOnly)
 }
 
 // registerReadModelTools adds the station-capacity tools (ADR 0002) and calls

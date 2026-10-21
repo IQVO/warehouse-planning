@@ -142,6 +142,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		outbox:            postgres.NewOutboxRepo(pool),
 		demand:            postgres.NewOrderDemandRepo(pool),
 		uow:               postgres.NewUnitOfWork(pool),
+
+		inboundAppointments: postgres.NewInboundAppointmentRepo(pool),
+		inboundStandards:    postgres.NewInboundStandardRepo(pool),
+		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
 	})
 	if err != nil {
 		pool.Close()
@@ -162,6 +166,11 @@ type repositories struct {
 	outbox            ports.OutboxRepository
 	demand            ports.OrderDemandRepository
 	uow               ports.UnitOfWork
+
+	// ADR 0017.
+	inboundAppointments ports.InboundAppointmentRepository
+	inboundStandards    ports.InboundStandardRepository
+	observedCapacity    ports.ObservedCapacityRepository
 }
 
 // newDeps assembles the MCP dependencies (the SAME use cases the REST adapter
@@ -171,6 +180,7 @@ func newDeps(r repositories) (inboundmcp.Deps, error) {
 		ProcessPaths: r.processPaths, ProcessCapacities: r.processCapacities, StationStandards: r.standards, Tally: r.tally,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: r.demand}
+	inboundDemand := &usecases.GetInboundDemand{Appointments: r.inboundAppointments, Standards: r.inboundStandards}
 	encoder := outboundkafka.NewFanoutEncoder()
 	planMetrics, err := telemetry.NewPlanMetrics()
 	if err != nil {
@@ -189,7 +199,7 @@ func newDeps(r repositories) (inboundmcp.Deps, error) {
 		GetProcessPathCapacity: pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
-			Demand: expectedDemand, Metrics: planMetrics,
+			Demand: expectedDemand, Inbound: inboundDemand, Metrics: planMetrics,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
@@ -200,6 +210,10 @@ func newDeps(r repositories) (inboundmcp.Deps, error) {
 		StationStandards:       r.standards,
 		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: r.tally},
 		GetExpectedDemand:      expectedDemand,
+
+		DeclareInboundLabourStandard: &usecases.DeclareInboundLabourStandard{Repo: r.inboundStandards},
+		GetInboundDemand:             inboundDemand,
+		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: r.plans, Observed: r.observedCapacity},
 	}, nil
 }
 

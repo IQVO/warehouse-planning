@@ -57,7 +57,31 @@ var (
 	// Create is not an ORDER rate. ComputeProcessPathCapacity always
 	// normalizes to ORDER; anything else means the caller skipped it.
 	ErrPathRateNotOrder = errors.New("capacityplan: path capacity must be an ORDER rate")
+
+	// ErrNegativeInbound is returned when the inbound appointment count or
+	// labour minutes handed to Create is negative.
+	ErrNegativeInbound = errors.New("capacityplan: inbound demand must not be negative")
 )
+
+// InboundDemand is the inbound-receiving dock-appointment demand a plan was
+// created against (docs/adr/0017): a second demand source NEXT TO the order
+// demand, in LABOUR MINUTES. It is never summed into the plan's order demand
+// (different units) and no published event carries it. The zero value is "no
+// inbound demand evaluated", which is also what a plan stored before
+// migration 0009 reads back as.
+type InboundDemand struct {
+	// Appointments is the number of BOOKED dock appointments whose door
+	// window starts inside the plan window.
+	Appointments int
+	// LabourMinutes is what the operator-declared inbound labour standard
+	// attributes to them; 0 when no standard is declared for the plan's
+	// (location, process path).
+	LabourMinutes float64
+	// StandardMissing is true when appointments exist but no standard is
+	// declared for the plan's (location, process path): they contribute no
+	// demand and the plan says so instead of guessing a number.
+	StandardMissing bool
+}
 
 // CapacityPlan is the aggregate root, identified by its id (a UUID string).
 // Its natural key is (WarehouseID, PlanningWindow) -- see domain-model.md --
@@ -90,6 +114,10 @@ type CapacityPlan struct {
 	bottleneckConstraint processcapacity.ConstraintType
 	warnings             []string
 
+	// inbound is the dock-appointment labour demand evaluated at creation
+	// (docs/adr/0017); informational, no published event carries it.
+	inbound InboundDemand
+
 	status      Status
 	createdAt   time.Time
 	publishedAt time.Time
@@ -121,6 +149,11 @@ type CreateParams struct {
 	// capacity (processcapacity.ComposeProcessPathCapacity).
 	BottleneckConstraint processcapacity.ConstraintType
 	Warnings             []string
+
+	// Inbound is the dock-appointment labour demand of the window
+	// (docs/adr/0017); the zero value is no inbound demand. Negative
+	// figures are rejected with ErrNegativeInbound.
+	Inbound InboundDemand
 }
 
 // Create builds a DRAFT CapacityPlan, computes its derived fields and
@@ -138,6 +171,9 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 	}
 	if p.PathRate.Unit() != processcapacity.UnitOrder {
 		return nil, ErrPathRateNotOrder
+	}
+	if p.Inbound.Appointments < 0 || p.Inbound.LabourMinutes < 0 {
+		return nil, ErrNegativeInbound
 	}
 
 	perHour := p.PathRate.Quantity() / p.PathRate.Period().Hours()
@@ -161,6 +197,7 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 
 		bottleneckConstraint: p.BottleneckConstraint,
 		warnings:             append([]string(nil), p.Warnings...),
+		inbound:              p.Inbound,
 	}
 	plan.record(CapacityPlanCreated{
 		Header:             Header{PlanID: plan.id, At: now},
@@ -203,6 +240,9 @@ type RehydrateParams struct {
 
 	BottleneckConstraint processcapacity.ConstraintType
 	Warnings             []string
+
+	// Inbound: the zero value for rows stored before migration 0009.
+	Inbound InboundDemand
 }
 
 // Rehydrate rebuilds a CapacityPlan from persisted state. It records no
@@ -227,6 +267,7 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 
 		bottleneckConstraint: p.BottleneckConstraint,
 		warnings:             append([]string(nil), p.Warnings...),
+		inbound:              p.Inbound,
 	}
 }
 
@@ -362,3 +403,18 @@ func (c *CapacityPlan) BottleneckConstraint() processcapacity.ConstraintType {
 // computed (e.g. stations tallied without a declared station standard). The
 // result is a copy.
 func (c *CapacityPlan) Warnings() []string { return append([]string(nil), c.warnings...) }
+
+// Inbound returns the dock-appointment labour demand evaluated when the plan
+// was created (docs/adr/0017); the zero value for plans stored before it.
+func (c *CapacityPlan) Inbound() InboundDemand { return c.inbound }
+
+// InboundAverageHeads returns the average number of people the plan's inbound
+// labour minutes need over its window: minutes / window minutes. It is the
+// human-comparable bridge to planned heads; 0 when there is no inbound demand.
+func (c *CapacityPlan) InboundAverageHeads() float64 {
+	minutes := c.window.Duration().Minutes()
+	if minutes <= 0 {
+		return 0
+	}
+	return c.inbound.LabourMinutes / minutes
+}

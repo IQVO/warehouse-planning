@@ -76,10 +76,14 @@ inside the same unit of work as the effect.
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | `facility-layout` | `locationCode` | decrements the same tally buckets | `StorageCapacityConsumer` (same) |
 | `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | `order-management` | `order_id` (= `subject`), `promise_date`, `len(lines)`, CloudEvents `time` | upserts one `order_demand` row at site `DEMAND_SITE_ID`, last writer wins | `OrderDemandConsumer`, `DEMAND_CONSUMER_GROUP` (required, always on), `warehouse.order-management.events.dlq` |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | `order-management` | same as `OrderAllocated` | same | `OrderDemandConsumer` (same) |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | `warehouse.inbound-receiving.events` | `inbound-receiving` | `appointment_id` (= `subject`), `window_start`, `window_end`, `len(asn_numbers)`, CloudEvents `time` | stores one `inbound_appointments` row at site `DEMAND_SITE_ID` through `inbound.Resolve` (last writer wins on `time`; a Cancelled wins a tie) | `InboundDemandConsumer`, `INBOUND_DEMAND_CONSUMER_GROUP` (required, always on), `warehouse.inbound-receiving.events.dlq` |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | `warehouse.inbound-receiving.events` | `inbound-receiving` | `appointment_id` (= `subject`), CloudEvents `time` | flips the row to `CANCELLED` (a tombstone with no window when it arrives before its Booked); the appointment stops being demand | `InboundDemandConsumer` (same) |
+| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | `fulfillment-execution` | `task_id` (= `subject`), `task_type`, `duration_seconds` (optional), CloudEvents `time` | adds the completion to the `observed_capacity` bucket of (site `DEMAND_SITE_ID`, upper-cased `task_type`, minute of `time`) | `ObservedCapacityConsumer`, `OBSERVED_CAPACITY_CONSUMER_GROUP` (required, always on), `warehouse.fulfillment.events.dlq` |
 | the four `com.warehouse.wes.warehouse-planning.capacityplan.*` types | `warehouse.warehouse-planning.analytics` | this context | the analytics payloads above | upserts `plan_facts` in the analytical database | `AnalyticsConsumer` in `cmd/planning-projector`, `ANALYTICS_CONSUMER_GROUP`, `warehouse.warehouse-planning.analytics.dlq` |
 
 Ignored on purpose: `OrderRepromised` (cpt ids only, no new cutoff instant) and
-every other type on the order-management topic; everything on
+every other type on the order-management topic; the other `inbound-receiving` types
+(ASN, check-in, completion, receipt) and every other fulfillment-execution type; everything on
 `process-path-management`'s topic (not consumed at all, ADR 0001 Addendum).
 
 Source: `internal/domain/capacityplan/events.go`,
@@ -87,5 +91,5 @@ Source: `internal/domain/capacityplan/events.go`,
 `internal/adapters/outbound/kafka/encoder.go`, `analytics_encoder.go`,
 `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
 `storage_capacity_consumer.go`, `order_demand_consumer.go`,
-`analytics_consumer.go`, `deadletter.go`, `cmd/api/main.go`, `cmd/api/runtime.go`,
+`inbound_demand_consumer.go`, `observed_capacity_consumer.go`, `analytics_consumer.go`, `deadletter.go`, `cmd/api/main.go`, `cmd/api/runtime.go`,
 `cmd/planning-projector/main.go`, `apis/asyncapi.yaml`.

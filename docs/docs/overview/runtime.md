@@ -28,8 +28,8 @@ ports with their adapters.
 
 | Binary | Role | Port (default) | Probes | Data store |
 | --- | --- | --- | --- | --- |
-| `cmd/api` | REST API, the three domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`, required) and Kafka (`KAFKA_BROKERS`, required) |
-| `cmd/mcp` | MCP server (Streamable HTTP, 11 tools); writes outbox rows but never relays them | `MCP_ADDR` `:8090` (`/` and `/mcp`) | `/healthz` | the same OLTP Postgres (`DATABASE_URL`, required) |
+| `cmd/api` | REST API, the five domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`, required) and Kafka (`KAFKA_BROKERS`, required) |
+| `cmd/mcp` | MCP server (Streamable HTTP, 14 tools); writes outbox rows but never relays them | `MCP_ADDR` `:8090` (`/` and `/mcp`) | `/healthz` | the same OLTP Postgres (`DATABASE_URL`, required) |
 | `cmd/planning-projector` | the only writer of the analytical database, fed by `warehouse.warehouse-planning.analytics` | `ADMIN_ADDR` `:8091` (admin only) | `/healthz`, `/readyz` (analytical Postgres ping and Kafka metadata) | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-write) |
 | `cmd/planning-reports` | read-only `GET /reports/...` over the analytical database | `HTTP_ADDR` `:8092` | `/healthz`, `/readyz` (analytical Postgres ping) | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-only transactions) |
 
@@ -59,7 +59,7 @@ flowchart LR
   AGENT --> MCP
   API --> OLTP
   MCP --> OLTP
-  KAFKA -- "workforce, facility, order-management events" --> API
+  KAFKA -- "workforce, facility, order-management, inbound-receiving, fulfillment events" --> API
   API -- "outbox relay: events and analytics topics" --> KAFKA
   KAFKA -- "warehouse.warehouse-planning.analytics" --> PROJ
   PROJ --> ANA
@@ -107,16 +107,23 @@ non-zero when the relay or a consumer stops on its own, so the pod restarts.
   domain-validation rejections) are skipped.
 - Consumer group ids come from environment variables
   (`LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`,
-  `DEMAND_CONSUMER_GROUP`, and the projector's `ANALYTICS_CONSUMER_GROUP`),
-  never from string literals. The order-demand consumer is off unless
-  `DEMAND_CONSUMER_GROUP` is set, and then requires `DEMAND_SITE_ID`.
+  `DEMAND_CONSUMER_GROUP`, `INBOUND_DEMAND_CONSUMER_GROUP`,
+  `OBSERVED_CAPACITY_CONSUMER_GROUP`, and the projector's
+  `ANALYTICS_CONSUMER_GROUP`), never from string literals. Every consumer is
+  always on ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)):
+  a missing group, or a missing `DEMAND_SITE_ID` (the one site the order,
+  dock-appointment and task-completion events are attributed to), is a boot
+  error.
 
 Dead-lettering ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers) §3,
-`internal/adapters/inbound/kafka/deadletter.go`): the three domain consumers
+`internal/adapters/inbound/kafka/deadletter.go`): the five domain consumers
 retry a transient failure on the same message up to 5 times, then publish it to
 `<topic>.dlq` (`warehouse.workforce.events.dlq`,
-`warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`) with
-`x-dlq-*` headers and commit past it. The DLQ publish itself is retried until it
+`warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`,
+`warehouse.inbound-receiving.events.dlq`, `warehouse.fulfillment.events.dlq`) with
+`x-dlq-*` headers and commit past it. The two ADR 0017 consumers (dock
+appointments, task completions) also dead-letter a *deterministic* failure (not
+CloudEvents 1.0, malformed or unusable payload) at once instead of skipping it. The DLQ publish itself is retried until it
 succeeds, so nothing is silently dropped. The analytics projector is different
 by design ([ADR 0005](/docs/adr/0005-analytics-read-side)): a transient failure
 is retried forever and never dead-lettered; only a known type with an unusable
@@ -131,11 +138,13 @@ the header `content-type: application/cloudevents+json; charset=UTF-8`. See the
 
 ## MCP
 
-`cmd/mcp` exposes 11 tools (budget is 11, pinned by `maxTools` in
+`cmd/mcp` exposes 14 tools (budget is 14, pinned by `maxTools` in
 `internal/adapters/inbound/mcp/governance_test.go`):
 `register_process_capacity_constraint`, `get_effective_process_capacity`,
 `register_process_path`, `get_process_path_capacity`, `create_capacity_plan`,
 `publish_capacity_plan`, `get_capacity_plan`, `declare_station_standard`,
-`list_station_standards`, `get_storage_capacity` and `get_expected_demand`. Arguments are snake_case, matching the REST bodies;
+`list_station_standards`, `get_storage_capacity`, `get_expected_demand`,
+`declare_inbound_labour_standard`, `get_inbound_demand` and
+`get_capacity_plan_variance` (ADR 0017). Arguments are snake_case, matching the REST bodies;
 failures are MCP tool errors whose text is `<slug>: <message>` using the REST
 problem slugs.

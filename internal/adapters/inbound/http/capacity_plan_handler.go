@@ -143,6 +143,11 @@ func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {
 
 		BottleneckConstraint: string(p.BottleneckConstraint()),
 		Warnings:             nonNilStrings(p.Warnings()),
+
+		InboundAppointments:    p.Inbound().Appointments,
+		InboundLabourMinutes:   p.Inbound().LabourMinutes,
+		InboundAverageHeads:    p.InboundAverageHeads(),
+		InboundStandardMissing: p.Inbound().StandardMissing,
 	}
 	if !p.PublishedAt().IsZero() {
 		publishedAt := p.PublishedAt().UTC().Format(time.RFC3339)
