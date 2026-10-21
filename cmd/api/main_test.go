@@ -19,12 +19,14 @@ func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard
 // breaks one variable.
 func validEnv() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":                    "postgres://u@db.invalid:5432/d",
-		"KAFKA_BROKERS":                   "kafka-1.invalid:9092, kafka-2.invalid:9092",
-		"LABOR_CAPACITY_CONSUMER_GROUP":   "g-labor",
-		"STORAGE_CAPACITY_CONSUMER_GROUP": "g-storage",
-		"DEMAND_CONSUMER_GROUP":           "g-demand",
-		"DEMAND_SITE_ID":                  "SIM1",
+		"DATABASE_URL":                     "postgres://u@db.invalid:5432/d",
+		"KAFKA_BROKERS":                    "kafka-1.invalid:9092, kafka-2.invalid:9092",
+		"LABOR_CAPACITY_CONSUMER_GROUP":    "g-labor",
+		"STORAGE_CAPACITY_CONSUMER_GROUP":  "g-storage",
+		"DEMAND_CONSUMER_GROUP":            "g-demand",
+		"INBOUND_DEMAND_CONSUMER_GROUP":    "g-inbound",
+		"OBSERVED_CAPACITY_CONSUMER_GROUP": "g-observed",
+		"DEMAND_SITE_ID":                   "SIM1",
 	}
 }
 
@@ -40,7 +42,7 @@ func TestLoadRuntime_AcceptsACompleteEnvironment(t *testing.T) {
 	if len(rt.brokers) != 2 || rt.brokers[1] != "kafka-2.invalid:9092" {
 		t.Errorf("brokers = %v, want two trimmed addresses", rt.brokers)
 	}
-	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" {
+	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" || rt.groups["INBOUND_DEMAND_CONSUMER_GROUP"] != "g-inbound" || rt.groups["OBSERVED_CAPACITY_CONSUMER_GROUP"] != "g-observed" {
 		t.Errorf("groups = %v", rt.groups)
 	}
 	if rt.demandSiteID != "SIM1" {
@@ -71,6 +73,8 @@ func TestLoadRuntime_BootErrorsNameTheVariable(t *testing.T) {
 		{"no labor group", func(e map[string]string) { delete(e, "LABOR_CAPACITY_CONSUMER_GROUP") }, "LABOR_CAPACITY_CONSUMER_GROUP"},
 		{"no storage group", func(e map[string]string) { delete(e, "STORAGE_CAPACITY_CONSUMER_GROUP") }, "STORAGE_CAPACITY_CONSUMER_GROUP"},
 		{"no demand group", func(e map[string]string) { delete(e, "DEMAND_CONSUMER_GROUP") }, "DEMAND_CONSUMER_GROUP"},
+		{"no inbound demand group", func(e map[string]string) { delete(e, "INBOUND_DEMAND_CONSUMER_GROUP") }, "INBOUND_DEMAND_CONSUMER_GROUP"},
+		{"no observed capacity group", func(e map[string]string) { delete(e, "OBSERVED_CAPACITY_CONSUMER_GROUP") }, "OBSERVED_CAPACITY_CONSUMER_GROUP"},
 		{"no demand site", func(e map[string]string) { delete(e, "DEMAND_SITE_ID") }, "DEMAND_SITE_ID"},
 	}
 	for _, tc := range cases {

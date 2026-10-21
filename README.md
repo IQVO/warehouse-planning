@@ -45,7 +45,7 @@ no support guarantee.
 
 - **Image**: root `Dockerfile` builds every `cmd/*` directory (`api`, `mcp`, `planning-projector` and `planning-reports`) into `/app/<name>`; `ENTRYPOINT` is `./api`. OLTP migrations are copied to `/app/migrations`, the analytical ones to `/app/analytics/migrations`.
 - **Chart**: `charts/warehouse-planning` (OLTP `api` component; optional `mcp`, `frontend` and analytics (`analytics-projector`, `analytics-reports`) components, all off by default). It refuses to render without `database.url` or `database.existingSecret`, `kafka.brokers`, the three consumer groups (`config.laborCapacityConsumerGroup`, `config.storageCapacityConsumerGroup`, `demand.consumerGroup`) and `demand.siteId` (and, with analytics on, `analytics.projector.consumerGroup`): Postgres and Kafka are the only runtime ([ADR 0016](docs/adr/0016-postgres-and-kafka-are-the-only-runtime.md)). Run `helm lint charts/warehouse-planning -f charts/warehouse-planning/ci/default-values.yaml`, `bash charts/warehouse-planning/tests/render_test.sh` (also renders warehouse-infra's current values) and `python3 charts/warehouse-planning/tests/test_service_selectors.py`.
-- **MCP**: `cmd/mcp` serves 11 tools over Streamable HTTP on `:8090` (`/` and `/mcp`, `GET /healthz`, no auth); see `.claude/rules/mcp.md`. Enable in the chart with `mcp.enabled=true`.
+- **MCP**: `cmd/mcp` serves 14 tools over Streamable HTTP on `:8090` (`/` and `/mcp`, `GET /healthz`, no auth); see `.claude/rules/mcp.md`. Enable in the chart with `mcp.enabled=true`.
 - **Frontend remote** (`web/`, Module Federation container `capacity_mfe`): the operator screens (capacity overview, path capacity, capacity plans) that `warehouse-console` lazy-loads. Served by its own nginx workload (chart `frontend.enabled=true`, image `warehouse/warehouse-planning-frontend`) at `http://localhost/mfes/warehouse-planning/` behind the Nginx web gateway, and reads `apiOrigin` from the console's `/config.json` to call this service through Kong at `/api/warehouse-planning`. See `web/` and `.claude/rules/frontend.md`.
 - **Kind cluster**: wired by `warehouse-infra` (`local.services`); ArgoCD deploys the chart from this repo's `develop`.
 - **Analytics read side** (ADR 0005): the four capacity-plan events are also written to `warehouse.warehouse-planning.analytics` in the same outbox transaction; `cmd/planning-projector` (admin `:8091`) projects them into a SEPARATE analytical database and `cmd/planning-reports` (`:8092`, read-only) serves `GET /reports/{bottleneck-frequency,shortage-trend,plan-throughput,freshness}`. Chart: `analytics.enabled=true` (default `false`) renders both components; the analytical DSN comes from `analytics.databaseUrl` or `analytics.existingSecret`.
@@ -55,14 +55,15 @@ no support guarantee.
 Postgres and Kafka are the only runtime ([ADR 0016](docs/adr/0016-postgres-and-kafka-are-the-only-runtime.md)):
 there is no in-memory mode, and `cmd/api` exits at boot, naming the variable,
 unless `DATABASE_URL`, `KAFKA_BROKERS`, `LABOR_CAPACITY_CONSUMER_GROUP`,
-`STORAGE_CAPACITY_CONSUMER_GROUP`, `DEMAND_CONSUMER_GROUP` and `DEMAND_SITE_ID`
+`STORAGE_CAPACITY_CONSUMER_GROUP`, `DEMAND_CONSUMER_GROUP`,
+`INBOUND_DEMAND_CONSUMER_GROUP`, `OBSERVED_CAPACITY_CONSUMER_GROUP` and `DEMAND_SITE_ID`
 are set (`EVENT_PUBLISHER=log` is refused). `cmd/mcp` needs `DATABASE_URL`.
 
 ```bash
 docker compose up -d --wait   # Postgres :55432 + Kafka :9092 (see the header of docker-compose.yml)
 export DATABASE_URL='postgres://planning:planning@localhost:55432/planning?sslmode=disable'
 export KAFKA_BROKERS=localhost:9092 DEMAND_SITE_ID=SIM1
-export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-$USER-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-$USER-storage DEMAND_CONSUMER_GROUP=wp-local-$USER-demand
+export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-$USER-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-$USER-storage DEMAND_CONSUMER_GROUP=wp-local-$USER-demand INBOUND_DEMAND_CONSUMER_GROUP=wp-local-$USER-inbound-demand OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-$USER-observed-capacity
 go run ./cmd/api
 ```
 

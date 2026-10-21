@@ -32,6 +32,10 @@ tags:
     description: Operator-declared station standards and the storage/station read model of a site (ADR 0002).
   - name: demand
     description: Expected demand of a site, read from the local read model fed by order-management's order events (ADR 0004).
+  - name: inbound-demand
+    description: Operator-declared inbound labour standards and the inbound demand of a site, read from the local read model fed by inbound-receiving's dock appointment events (ADR 0017).
+  - name: observed-capacity
+    description: Advisory planned-versus-observed variance of a capacity plan, from the local read model fed by fulfillment-execution's task completions (ADR 0017).
   - name: reports
     description: >
       Read-only analytics reports (ADR 0005) served by the separate planning-reports binary on port 8092,
@@ -648,6 +652,200 @@ paths:
                 $ref: "#/components/schemas/ExpectedDemandResponse"
         "400":
           description: location missing, window_start/window_end missing or not RFC 3339, or a window whose end is not after its start.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /inbound-labour-standards/{location}/{path_id}:
+    put:
+      operationId: declareInboundLabourStandard
+      summary: Declare the labour minutes a dock appointment costs at a site for a process path
+      tags: [inbound-demand]
+      description: >
+        Upserts the inbound labour standard keyed by (location, path_id): fixed
+        `minutes_per_appointment` plus an optional `minutes_per_asn` per ASN the
+        appointment covers (the booked event carries no units, pallets or
+        lines). The standard is a planning parameter owned by this service
+        (docs/adr/0017): nobody upstream publishes it. Without one, dock
+        appointments are recorded but contribute NO labour demand and the plan
+        reports `inbound_standard_missing`; no default number is ever guessed.
+        Nothing derived is stored, so a late declaration applies on the next
+        read.
+      parameters:
+        - name: location
+          in: path
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: path_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: receive
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeclareInboundLabourStandardRequest"
+      responses:
+        "200":
+          description: An existing standard was replaced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboundLabourStandardResponse"
+        "201":
+          description: A new standard was declared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboundLabourStandardResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: minutes_per_appointment is not positive, minutes_per_asn is negative, or a figure is not finite.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /inbound-labour-standards:
+    get:
+      operationId: listInboundLabourStandards
+      summary: List the declared inbound labour standards
+      tags: [inbound-demand]
+      description: The standards of one site, or every standard when `location` is omitted, ordered by location then path id.
+      parameters:
+        - name: location
+          in: query
+          required: false
+          schema:
+            type: string
+          example: SIM1
+      responses:
+        "200":
+          description: The declared standards (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboundLabourStandardsResponse"
+  /inbound-demand:
+    get:
+      operationId: getInboundDemand
+      summary: Inbound demand of a site over a window (inbound-receiving read model)
+      tags: [inbound-demand]
+      description: >
+        The BOOKED dock appointments at a site whose door window STARTS in the
+        half-open window [window_start, window_end), read from the LOCAL read
+        model this service builds from inbound-receiving's
+        DockAppointmentBooked / DockAppointmentCancelled CloudEvents
+        (docs/adr/0017; never a live call). A cancelled appointment never
+        counts, whatever the arrival order of the two events (the producer's
+        event time is the ordering guard). `labour_minutes` is what the
+        standard declared for `path_id` attributes to them; with no standard it
+        is 0 and `standard_missing` is true when appointments exist.
+        Appointments carry no site, so every one is attributed to the ONE site
+        configured on this service; any other location reads 0. 200 with
+        appointments 0 and as_of null when nothing is known.
+      parameters:
+        - name: location
+          in: query
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: path_id
+          in: query
+          required: true
+          description: The process path whose declared inbound standard prices the appointments.
+          schema:
+            type: string
+          example: receive
+        - name: window_start
+          in: query
+          required: true
+          description: RFC 3339; inclusive.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T08:00:00Z"
+        - name: window_end
+          in: query
+          required: true
+          description: RFC 3339; exclusive, must be after window_start.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T16:00:00Z"
+      responses:
+        "200":
+          description: The inbound demand (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboundDemandResponse"
+        "400":
+          description: location or path_id missing, window_start/window_end missing or not RFC 3339, or a window whose end is not after its start.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /capacity-plans/{id}/variance:
+    get:
+      operationId: getCapacityPlanVariance
+      summary: Planned versus observed throughput of a capacity plan (advisory)
+      tags: [observed-capacity]
+      description: >
+        Compares the stored plan with the TASKS fulfillment-execution reports
+        completed (TaskCompleted, minute resolution) for the plan's bottleneck
+        step at its location over its window, from the LOCAL observed_capacity
+        read model (docs/adr/0017). ADVISORY: it never changes the planned
+        capacity or the plan, and nothing is republished. Tasks are not orders,
+        so the comparison needs `tasks_per_order`; without it `comparison.comparable`
+        is false with the reason. `observed.has_data` false means nothing was
+        observed, not zero throughput.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+        - name: tasks_per_order
+          in: query
+          required: false
+          description: Conversion factor from completed tasks to orders; must be positive.
+          schema:
+            type: number
+            format: double
+          example: 3
+      responses:
+        "200":
+          description: The variance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanVarianceResponse"
+        "400":
+          description: tasks_per_order is not a number.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: No CapacityPlan exists under id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: tasks_per_order is not positive.
           content:
             application/problem+json:
               schema:
@@ -1417,3 +1615,232 @@ components:
           description: Additive. Composition warnings raised when the plan was created (never null).
           items:
             type: string
+        inbound_appointments:
+          type: integer
+          minimum: 0
+          description: >
+            Additive (docs/adr/0017). BOOKED dock appointments whose door window
+            starts in the plan window. Informational: it sits NEXT TO
+            assigned_demand (orders) and is never summed into it.
+          example: 4
+        inbound_labour_minutes:
+          type: number
+          format: double
+          description: Labour minutes the declared inbound standard for the plan's path attributes to those appointments; 0 without a standard.
+          example: 240
+        inbound_average_heads:
+          type: number
+          format: double
+          description: inbound_labour_minutes over the plan window length, in people.
+          example: 0.5
+        inbound_standard_missing:
+          type: boolean
+          description: True when appointments exist but no inbound standard is declared for the plan's (location, path_id); they contribute no labour demand.
+          example: false
+    DeclareInboundLabourStandardRequest:
+      type: object
+      required: [minutes_per_appointment]
+      properties:
+        minutes_per_appointment:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Fixed labour minutes of ONE dock appointment.
+          example: 45
+        minutes_per_asn:
+          type: number
+          format: double
+          minimum: 0
+          description: Optional extra labour minutes per ASN the appointment covers; omitted means 0.
+          example: 5
+    InboundLabourStandardResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          example: SIM1
+        path_id:
+          type: string
+          example: receive
+        minutes_per_appointment:
+          type: number
+          format: double
+          example: 45
+        minutes_per_asn:
+          type: number
+          format: double
+          example: 5
+    InboundLabourStandardsResponse:
+      type: object
+      properties:
+        location:
+          type: string
+          description: The location filter, when one was given.
+        standards:
+          type: array
+          items:
+            $ref: "#/components/schemas/InboundLabourStandardResponse"
+    InboundDemandResponse:
+      type: object
+      required:
+        - location
+        - path_id
+        - window_start
+        - window_end
+        - appointments
+        - asns
+        - labour_minutes
+        - average_heads
+        - standard_declared
+        - standard_missing
+        - source
+        - as_of
+      properties:
+        location:
+          type: string
+          example: SIM1
+        path_id:
+          type: string
+          example: receive
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        appointments:
+          type: integer
+          minimum: 0
+          description: BOOKED appointments whose door window starts in [window_start, window_end).
+          example: 4
+        asns:
+          type: integer
+          minimum: 0
+          description: ASNs those appointments cover.
+          example: 7
+        labour_minutes:
+          type: number
+          format: double
+          description: Labour minutes the declared standard attributes to them; 0 when none is declared (never a guessed default).
+          example: 215
+        average_heads:
+          type: number
+          format: double
+          description: labour_minutes over the window length, in people.
+          example: 0.45
+        standard_declared:
+          type: boolean
+          description: A standard exists for (location, path_id).
+        standard_missing:
+          type: boolean
+          description: Appointments exist but no standard is declared for (location, path_id).
+        source:
+          type: string
+          enum: [inbound-receiving]
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: CloudEvents time of the newest dock appointment event the site's model reflects; null when none.
+    PlanVarianceResponse:
+      type: object
+      required:
+        - plan_id
+        - location
+        - step
+        - window_start
+        - window_end
+        - planned_orders_per_hour
+        - planned_orders_over_window
+        - observed
+        - comparison
+        - advisory
+      properties:
+        plan_id:
+          type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+        location:
+          type: string
+          example: SIM1
+        step:
+          type: string
+          description: The plan's bottleneck step, whose task completions are compared.
+          example: PACK
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        planned_orders_per_hour:
+          type: number
+          format: double
+          description: The plan's path capacity, ORDER per HOUR.
+          example: 1000
+        planned_orders_over_window:
+          type: number
+          format: double
+          description: The plan's capacity over the window, in orders.
+          example: 8000
+        observed:
+          type: object
+          required: [source, has_data, tasks, tasks_per_hour, mean_task_seconds, as_of]
+          properties:
+            source:
+              type: string
+              enum: [fulfillment-execution]
+            has_data:
+              type: boolean
+              description: False means nothing was observed -- never zero throughput.
+            tasks:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Tasks completed for the step at the location in the window.
+              example: 21000
+            tasks_per_hour:
+              type: number
+              format: double
+              example: 2625
+            mean_task_seconds:
+              type: number
+              format: double
+              nullable: true
+              description: Mean task duration; null when no completion carried a duration.
+            as_of:
+              type: string
+              format: date-time
+              nullable: true
+              description: CloudEvents time of the newest completion the model reflects for the site; null when none.
+        comparison:
+          type: object
+          required: [comparable, tasks_per_order, observed_orders, variance_orders, variance_percent]
+          properties:
+            comparable:
+              type: boolean
+              description: False when tasks_per_order was not supplied or nothing was observed; reason says which.
+            reason:
+              type: string
+            tasks_per_order:
+              type: number
+              format: double
+              nullable: true
+            observed_orders:
+              type: number
+              format: double
+              nullable: true
+              description: Observed tasks divided by tasks_per_order.
+            variance_orders:
+              type: number
+              format: double
+              nullable: true
+              description: observed_orders minus planned_orders_over_window.
+            variance_percent:
+              type: number
+              format: double
+              nullable: true
+              description: variance_orders as a percentage of planned_orders_over_window.
+        advisory:
+          type: boolean
+          description: Always true. The variance never changes the planned capacity or republishes a plan.

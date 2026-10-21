@@ -38,6 +38,8 @@ const (
 	topicLabor     = "warehouse.workforce.events"
 	topicFacility  = "warehouse.facility.events"
 	topicOrders    = "warehouse.order-management.events"
+	topicInbound   = "warehouse.inbound-receiving.events"
+	topicFulfil    = "warehouse.fulfillment.events"
 	topicEvents    = "warehouse.warehouse-planning.events"
 	topicAnalytics = "warehouse.warehouse-planning.analytics"
 
@@ -48,6 +50,11 @@ const (
 	windowStart = "2026-10-05T08:00:00Z"
 	windowEnd   = "2026-10-05T16:00:00Z"
 )
+
+// consumedEvents is how many distinct CloudEvents ids the five consumers
+// claim in the whole test: 4 in phaseConsumers, 4 dock-appointment events and 5
+// task completions in phaseInboundObserved (duplicates excluded).
+const consumedEvents = 13
 
 // containerStartTimeout bounds a testcontainers start.
 const containerStartTimeout = 120 * time.Second
@@ -237,6 +244,8 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("LABOR_CAPACITY_CONSUMER_GROUP", "warehouse-planning-labor-capacity-e2e")
 	t.Setenv("STORAGE_CAPACITY_CONSUMER_GROUP", "warehouse-planning-storage-capacity-e2e")
 	t.Setenv("DEMAND_CONSUMER_GROUP", "warehouse-planning-demand-e2e")
+	t.Setenv("INBOUND_DEMAND_CONSUMER_GROUP", "warehouse-planning-inbound-demand-e2e")
+	t.Setenv("OBSERVED_CAPACITY_CONSUMER_GROUP", "warehouse-planning-observed-capacity-e2e")
 	t.Setenv("DEMAND_SITE_ID", siteID)
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
@@ -501,6 +510,110 @@ func phaseConsumers(t *testing.T, w *world) {
 	}
 }
 
+func dockData(id, start, end string, asns ...string) map[string]any {
+	return map[string]any{"appointment_id": id, "door_code": "WH1-DOCK-IN-01", "carrier": "ACME", "window_start": start, "window_end": end, "asn_numbers": asns}
+}
+
+func taskData(id, taskType string) map[string]any {
+	return map[string]any{"task_id": id, "task_type": taskType, "duration_seconds": 60}
+}
+
+// Phase 2b (ADR 0017): the dock-appointment and task-completion consumers are
+// fed through Kafka only. A Cancelled that arrives BEFORE its Booked wins, a
+// redelivered id is applied once, an appointment on the window end is not in
+// the window, and the labour comes only from the declared standard: until one
+// is declared the appointment is counted, unpriced and reported missing.
+func phaseInboundObserved(t *testing.T, s *service, w *world) {
+	t.Helper()
+	const dockType = "com.warehouse.wms.inbound-receiving.dockappointment."
+	const taskType = "com.warehouse.wes.fulfillment-execution.task.TaskCompleted"
+	at := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	ev := func(id, typ, subject string, when time.Time, data any) kafkago.Message {
+		return kafkago.Message{Key: []byte(subject), Value: inputEvent(t, id, "/warehouse/e2e", typ, subject, when, data)}
+	}
+	booked2 := ev("dock-e3", dockType+"DockAppointmentBooked", "appt-2", at.Add(5*time.Minute), dockData("appt-2", "2026-10-05T09:00:00Z", "2026-10-05T10:30:00Z", "ASN-2"))
+	produce(t, w.brokers, topicInbound,
+		ev("dock-e1", dockType+"DockAppointmentCancelled", "appt-1", at.Add(time.Hour), map[string]any{"appointment_id": "appt-1", "door_code": "WH1-DOCK-IN-01"}),
+		ev("dock-e2", dockType+"DockAppointmentBooked", "appt-1", at, dockData("appt-1", "2026-10-05T08:30:00Z", "2026-10-05T09:30:00Z", "ASN-1", "ASN-1b")),
+		booked2, booked2,
+		ev("dock-e4", dockType+"DockAppointmentBooked", "appt-3", at.Add(10*time.Minute), dockData("appt-3", windowEnd, "2026-10-05T17:00:00Z", "ASN-3")))
+	done := func(id, kind string, when string) kafkago.Message {
+		ts, err := time.Parse(time.RFC3339, when)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ev("task-e-"+id, taskType, "task-"+id, ts, taskData("task-"+id, kind))
+	}
+	first := done("1", "PICK", "2026-10-05T09:00:00Z")
+	produce(t, w.brokers, topicFulfil, first, first,
+		done("2", "PICK", "2026-10-05T09:00:30Z"), done("3", "PICK", "2026-10-05T15:59:00Z"),
+		done("4", "PACK", "2026-10-05T09:00:00Z"), done("5", "PICK", "2026-10-05T07:59:00Z"))
+
+	waitFor(t, 90*time.Second, "the dock-appointment and task-completion consumers to be fed from Kafka", func() bool {
+		return w.db.count(`SELECT count(*) FROM inbound_appointments`) == 3 && w.db.count(`SELECT count(*) FROM processed_events`) == consumedEvents
+	})
+	if n := w.db.count(`SELECT count(*) FROM inbound_appointments WHERE status = 'BOOKED'`); n != 2 {
+		t.Fatalf("BOOKED appointments = %d, want 2 (appt-1 was cancelled before it was booked)", n)
+	}
+	if n := w.db.count(`SELECT COALESCE(sum(tasks_completed), 0)::bigint FROM observed_capacity`); n != 5 {
+		t.Fatalf("observed tasks = %d, want 5 (the duplicate id counted once)", n)
+	}
+
+	query := "/inbound-demand?location=" + siteID + "&path_id=pick-only&window_start=" + windowStart + "&window_end=" + windowEnd
+	var dem struct {
+		Appointments    int     `json:"appointments"`
+		ASNs            int     `json:"asns"`
+		LabourMinutes   float64 `json:"labour_minutes"`
+		StandardMissing bool    `json:"standard_missing"`
+	}
+	mustDecode(t, s.call(http.MethodGet, query, "", http.StatusOK), &dem)
+	if dem.Appointments != 1 || dem.ASNs != 1 || dem.LabourMinutes != 0 || !dem.StandardMissing {
+		t.Fatalf("GET /inbound-demand before any standard = %+v, want 1 appointment, 1 ASN, 0 minutes and the standard reported missing", dem)
+	}
+	s.call(http.MethodPut, "/inbound-labour-standards/"+siteID+"/pick-only", `{"minutes_per_appointment":30,"minutes_per_asn":10}`, http.StatusCreated)
+	mustDecode(t, s.call(http.MethodGet, query, "", http.StatusOK), &dem)
+	if dem.Appointments != 1 || dem.LabourMinutes != 40 || dem.StandardMissing {
+		t.Fatalf("GET /inbound-demand with the standard = %+v, want 1 appointment and 40 labour minutes", dem)
+	}
+}
+
+// Phase 3b (ADR 0017): the advisory variance of the published plan. Only PICK
+// completions inside the plan window count (3 of the 5 fed), the read changes
+// no plan and queues no event.
+func phaseVariance(t *testing.T, s *service, w *world) {
+	t.Helper()
+	outboxBefore := w.db.count(`SELECT count(*) FROM outbox_events`)
+	var v struct {
+		Step     string `json:"step"`
+		Observed struct {
+			HasData bool  `json:"has_data"`
+			Tasks   int64 `json:"tasks"`
+		} `json:"observed"`
+		Comparison struct {
+			Comparable     bool     `json:"comparable"`
+			ObservedOrders *float64 `json:"observed_orders"`
+		} `json:"comparison"`
+		Advisory bool `json:"advisory"`
+	}
+	mustDecode(t, s.call(http.MethodGet, "/capacity-plans/"+w.planID+"/variance?tasks_per_order=1", "", http.StatusOK), &v)
+	if v.Step != "PICK" || !v.Observed.HasData || v.Observed.Tasks != 3 || !v.Comparison.Comparable || v.Comparison.ObservedOrders == nil || *v.Comparison.ObservedOrders != 3 || !v.Advisory {
+		t.Fatalf("variance = %+v, want the 3 PICK completions inside the window compared at 1 task per order, advisory", v)
+	}
+	var noFactor struct {
+		Comparison struct {
+			Comparable bool `json:"comparable"`
+		} `json:"comparison"`
+	}
+	mustDecode(t, s.call(http.MethodGet, "/capacity-plans/"+w.planID+"/variance", "", http.StatusOK), &noFactor)
+	if noFactor.Comparison.Comparable {
+		t.Fatalf("variance without tasks_per_order is comparable: no variance may be invented")
+	}
+	assertProblem(t, s.call(http.MethodGet, "/capacity-plans/"+w.planID+"/variance?tasks_per_order=0", "", http.StatusUnprocessableEntity), "non-positive-tasks-per-order")
+	if after := w.db.count(`SELECT count(*) FROM outbox_events`); after != outboxBefore {
+		t.Fatalf("outbox rows %d -> %d: the advisory variance read queued something", outboxBefore, after)
+	}
+}
+
 // Phase 3: REST only: register a path, read the expected demand the order
 // consumer built, create a plan from it (a shortage, since the labor capacity
 // is tiny), publish it.
@@ -523,10 +636,20 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 		AssignedDemand float64 `json:"assigned_demand"`
 		DemandSource   string  `json:"demand_source"`
 		Shortage       float64 `json:"shortage"`
+
+		InboundAppointments    int     `json:"inbound_appointments"`
+		InboundLabourMinutes   float64 `json:"inbound_labour_minutes"`
+		InboundStandardMissing bool    `json:"inbound_standard_missing"`
 	}
 	mustDecode(t, s.call(http.MethodPost, "/capacity-plans", body, http.StatusCreated), &plan)
 	if plan.Status != "DRAFT" || plan.AssignedDemand != 2 || plan.DemandSource != "orders" || plan.Shortage <= 0 {
 		t.Fatalf("created plan = %+v, want a DRAFT with demand 2 from orders and a shortage", plan)
+	}
+	// ADR 0017: the plan carries the one dock appointment of its window (the
+	// cancelled one is not demand) priced with the standard phaseInboundObserved
+	// declared (30 + 1 ASN x 10 minutes), next to, not inside, the order demand.
+	if plan.InboundAppointments != 1 || plan.InboundLabourMinutes != 40 || plan.InboundStandardMissing {
+		t.Fatalf("created plan inbound = %+v, want 1 appointment, 40 labour minutes and the standard present", plan)
 	}
 	w.planID = plan.ID
 	s.call(http.MethodPost, "/capacity-plans/"+plan.ID+"/publish", "", http.StatusOK)
@@ -628,8 +751,8 @@ func phaseRestart(t *testing.T, w *world, s *service, events, analytics int) *se
 	// Give the restarted consumers time to (wrongly) re-apply and the relay to
 	// (wrongly) re-publish; neither may happen.
 	time.Sleep(3 * time.Second)
-	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 4 {
-		t.Fatalf("processed_events after the restart = %d, want still 4", n)
+	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != consumedEvents {
+		t.Fatalf("processed_events after the restart = %d, want still %d", n, consumedEvents)
 	}
 	noMoreMessages(t, w.brokers, topicEvents, events)
 	noMoreMessages(t, w.brokers, topicAnalytics, analytics)
@@ -667,7 +790,7 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	pg, dbURL := startPostgres(t)
 	kc, brokers := startKafka(t)
 	// The input topics are infra's: create them the way the cluster has them.
-	for _, topic := range []string{topicLabor, topicFacility, topicOrders} {
+	for _, topic := range []string{topicLabor, topicFacility, topicOrders, topicInbound, topicFulfil} {
 		createTopic(t, brokers, topic)
 	}
 	w := &world{e: env{dbURL: dbURL, brokers: brokers, addr: freeAddr(t)}, pg: pg, kc: kc, db: newPGView(t, dbURL), brokers: brokers}
@@ -675,7 +798,9 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	s := w.e.start(t)
 	phaseTopicsMissing(t, s, brokers)
 	phaseConsumers(t, w)
+	phaseInboundObserved(t, s, w)
 	phaseWorkflow(t, s, w)
+	phaseVariance(t, s, w)
 	phaseNUL(t, s, w)
 	events, analytics := phaseRows(t, w)
 	phaseTopics(t, w, events, analytics)

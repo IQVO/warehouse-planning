@@ -21,17 +21,21 @@ flowchart LR
   FL["facility-layout<br/>Generic"]
   OMU["order-management<br/>Generic/Supporting<br/>as demand source"]
   OMD["order-management<br/>Generic/Supporting<br/>as plan consumer"]
+  IRC["inbound-receiving<br/>Supporting<br/>as inbound demand source"]
+  FEX["fulfillment-execution<br/>Core<br/>as observed capacity source"]
   OPS["warehouse-ops-agent<br/>Supporting"]
   CON["warehouse-console<br/>frontend shell"]
   PPM["process-path-management<br/>Generic"]
   INV["inventory-storage<br/>Core"]
   PM["product-master<br/>Supporting"]
   NIP["network-inventory-planning<br/>Core<br/>as plan consumer"]
-  LATER["fulfillment-execution, wes-work-planning Core<br/>network-fulfillment Supporting"]
+  LATER["wes-work-planning Core<br/>network-fulfillment Supporting"]
 
   WFM -- "U: OHS+PL / D: ACL<br/>Kafka ShiftPlanCommitted" --> WP
   FL -- "U: OHS+PL / D: ACL<br/>Kafka LocationSlotRegistered, LocationSlotDecommissioned" --> WP
   OMU -. "U: OHS+PL / D: ACL<br/>Kafka OrderAllocated, OrderPartiallyAllocated" .-> WP
+  IRC -- "U: OHS+PL / D: ACL<br/>Kafka DockAppointmentBooked, DockAppointmentCancelled (ADR 0017)" --> WP
+  FEX -- "U: OHS+PL / D: ACL<br/>Kafka TaskCompleted (ADR 0017)" --> WP
   WP -. "U: OHS+PL / D: ACL, opt-in<br/>Kafka CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected" .-> OMD
   WP -- "U: OHS+PL / D: ACL<br/>Kafka CapacityPlanPublished (with site_id, ADR 0012)" --> NIP
   WP -- "U: OHS / D: Customer, ACL<br/>MCP get_process_path_capacity, 3 more read tools wired" --> OPS
@@ -67,6 +71,8 @@ upstream and downstream edges readable; it is one context.
 | 2 | `facility-layout` | `warehouse-planning` | OHS + PL / ACL: slots are folded into a tally, never into a capacity (ADR 0002) | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` and `...LocationSlotDecommissioned` | **Live** (group `STORAGE_CAPACITY_CONSUMER_GROUP`) | `internal/adapters/inbound/kafka/storage_capacity_consumer.go` |
 | 3 | `order-management` | `warehouse-planning` | OHS + PL / ACL: an order becomes a `demand.Order` attributed to one configured site | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` and `...OrderPartiallyAllocated` | **Wired, always on** (ADR 0004; ADR 0016 removed the off switch): `DEMAND_CONSUMER_GROUP` and `DEMAND_SITE_ID` are required at boot | `internal/adapters/inbound/kafka/order_demand_consumer.go`, `cmd/api/runtime.go` |
 | 4 | `warehouse-planning` | `order-management` | OHS + PL / ACL (local read model, per order-management's own context map) | Kafka `warehouse.warehouse-planning.events`, `com.warehouse.wes.warehouse-planning.capacityplan.*` | **Wired, opt-in** on the consumer side (`PLANNED_CAPACITY_CONSUMER_GROUP` in order-management); it acts on Created, Published and ShortageDetected and ignores `BottleneckDetected` | this repo: `internal/adapters/outbound/kafka/encoder.go`; order-management: `planned_capacity_consumer.go` (its ADR 0031) |
+| 5a | `inbound-receiving` | `warehouse-planning` | OHS + PL / ACL: an appointment becomes an `inbound.Appointment` (window start, ASN count) attributed to one configured site; labour comes only from the operator-declared inbound standard | Kafka `warehouse.inbound-receiving.events`, `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` | **Live, always on** (ADR 0017): `INBOUND_DEMAND_CONSUMER_GROUP` required at boot | `internal/adapters/inbound/kafka/inbound_demand_consumer.go`, `cmd/api/runtime.go` |
+| 5b | `fulfillment-execution` | `warehouse-planning` | OHS + PL / ACL: a completion becomes a minute bucket of `observed_capacity` (location, upper-cased `task_type`); advisory only, never feeds a plan back | Kafka `warehouse.fulfillment.events`, `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | **Live, always on** (ADR 0017): `OBSERVED_CAPACITY_CONSUMER_GROUP` required at boot | `internal/adapters/inbound/kafka/observed_capacity_consumer.go`, `cmd/api/runtime.go` |
 | 5 | `warehouse-planning` | `warehouse-ops-agent` | OHS / Customer with an ACL (its MCP client adapter) | MCP Streamable HTTP, read tools only | **Live** for `get_process_path_capacity` (the agent's daily-brief capacity outlook); `get_capacity_plan`, `get_storage_capacity`, `list_station_standards` **wired but unused** (its ADR 0013) | `internal/adapters/inbound/mcp/tools.go`; ops-agent `internal/adapters/outbound/mcpclient/warehouse_planning.go` |
 | 6 | `warehouse-planning` | `warehouse-console` | OHS; the console only hosts this context's own Module Federation remote `capacity_mfe`, which calls this service's REST API through Kong | REST (`/api/warehouse-planning`) | **Live** | `web/src/api.ts`, `web/vite.config.ts`; console `src/App.tsx` |
 | 7 | `process-path-management` | none | **Separate Ways**: its `ProcessPath` has no physical step sequence; the two contexts share the `path_id` string only as a human cross-reference | none | **Deliberately absent** (ADR 0001 Addendum) | no consumer exists; `POST /process-paths` declares paths locally |

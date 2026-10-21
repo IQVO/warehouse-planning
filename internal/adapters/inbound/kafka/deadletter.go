@@ -28,6 +28,8 @@ package kafka
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -42,6 +44,24 @@ import (
 // package's existing "fails twice then succeeds" test fixtures while
 // still bounding the previously-infinite retry.
 const domainMaxHandlerAttempts = 5
+
+// errPoison marks a DETERMINISTIC failure: a message that is not CloudEvents
+// 1.0, or a known type whose payload is unusable. Retrying can never succeed,
+// so a consumer whose HandleMessage returns an error wrapping it is
+// dead-lettered at once instead of being retried (docs/adr/0017 decision 13).
+// The three older domain consumers never return it: they skip such messages.
+var errPoison = errors.New("unusable message")
+
+// poisonError wraps cause (nil allowed) as an errPoison with a reason.
+func poisonError(reason string, cause error) error {
+	if cause == nil {
+		return fmt.Errorf("%w: %s", errPoison, reason)
+	}
+	return fmt.Errorf("%w: %s: %w", errPoison, reason, cause)
+}
+
+// isPoison reports whether err is (or wraps) an errPoison.
+func isPoison(err error) bool { return errors.Is(err, errPoison) }
 
 // newDomainDLQWriter builds the dead-letter writer for the three domain
 // Kafka consumers. It follows the

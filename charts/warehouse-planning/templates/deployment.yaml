@@ -107,6 +107,12 @@ spec:
               value: {{ .Values.demand.consumerGroup | quote }}
             - name: DEMAND_SITE_ID
               value: {{ .Values.demand.siteId | quote }}
+            # Dock-appointment and task-completion consumers (docs/adr/0017):
+            # always on, each group comes from its dedicated value.
+            - name: INBOUND_DEMAND_CONSUMER_GROUP
+              value: {{ .Values.inbound.consumerGroup | quote }}
+            - name: OBSERVED_CAPACITY_CONSUMER_GROUP
+              value: {{ .Values.observed.consumerGroup | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

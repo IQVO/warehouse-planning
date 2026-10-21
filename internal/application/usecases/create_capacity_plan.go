@@ -3,6 +3,7 @@ package usecases
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,6 +73,13 @@ type CreateCapacityPlan struct {
 	// demand model is wired: an omitted assigned_demand then fails with
 	// ErrMissingAssignedDemand exactly as before the model existed.
 	Demand *GetExpectedDemand
+
+	// Inbound is the dock-appointment demand read (docs/adr/0017): the
+	// appointments starting in the window priced with the declared inbound
+	// labour standard, stored on the plan NEXT TO (never summed into) the order
+	// demand. Nil means no inbound model is wired and the plan carries no
+	// inbound demand, exactly as before the model existed.
+	Inbound *GetInboundDemand
 
 	// NewID mints the plan id (uuid.NewString when nil) and Now supplies
 	// the creation time (utcNow when nil); both are injectable
@@ -147,6 +155,11 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 		now = utcNow
 	}
 
+	inboundDemand, inboundWarnings, err := uc.resolveInbound(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+
 	plan, err := capacityplan.Create(capacityplan.CreateParams{
 		ID:             newID(),
 		WarehouseID:    cmd.WarehouseID,
@@ -160,7 +173,8 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 		BottleneckStep: result.BottleneckStep,
 
 		BottleneckConstraint: result.BottleneckConstraint,
-		Warnings:             result.Warnings,
+		Warnings:             append(append([]string(nil), result.Warnings...), inboundWarnings...),
+		Inbound:              inboundDemand,
 	}, now())
 	if err != nil {
 		return nil, err
@@ -203,6 +217,33 @@ func (uc *CreateCapacityPlan) resolveDemand(ctx context.Context, cmd CreateCapac
 		return 0, "", ErrMissingAssignedDemand
 	}
 	return float64(summary.Orders), capacityplan.DemandSourceOrders, nil
+}
+
+// resolveInbound reads the inbound demand of the plan's (location, path,
+// window) and returns it with the warning the plan carries when appointments
+// exist and the site declared no inbound standard for ANY path (the "inbound
+// standard missing" of docs/adr/0017 decision 6). No inbound model wired is
+// no inbound demand and no warning.
+func (uc *CreateCapacityPlan) resolveInbound(ctx context.Context, cmd CreateCapacityPlanCommand) (capacityplan.InboundDemand, []string, error) {
+	if uc.Inbound == nil {
+		return capacityplan.InboundDemand{}, nil, nil
+	}
+	res, err := uc.Inbound.Handle(ctx, cmd.Location, cmd.ProcessPathID, cmd.WindowStart, cmd.WindowEnd)
+	if err != nil {
+		return capacityplan.InboundDemand{}, nil, err
+	}
+	demand := capacityplan.InboundDemand{
+		Appointments:    res.Demand.Appointments,
+		LabourMinutes:   res.LabourMinutes,
+		StandardMissing: res.StandardMissing,
+	}
+	var warnings []string
+	if res.StandardMissing && res.SiteHasNoStandard {
+		warnings = append(warnings, fmt.Sprintf(
+			"inbound standard missing: %d dock appointment(s) at %s start in this window and contribute no labour demand; declare minutes per appointment with PUT /inbound-labour-standards/%s/%s",
+			res.Demand.Appointments, cmd.Location, cmd.Location, cmd.ProcessPathID))
+	}
+	return demand, warnings, nil
 }
 
 // utcNow is the default clock of the plan use cases: the current time in

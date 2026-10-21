@@ -2,7 +2,7 @@ asyncapi: 2.6.0
 
 info:
   title: warehouse-planning Domain Events
-  version: "0.6.0"
+  version: "0.7.0"
   contact:
     name: warehouse-planning maintainers
     url: https://github.com/IQVO/warehouse-planning
@@ -35,13 +35,26 @@ info:
     local ProcessCapacity read models current; this context never makes a
     live cross-context call.
 
-    **Consumed (ADR 0004, opt-in).** `OrderAllocated` and
+    **Consumed (ADR 0004).** `OrderAllocated` and
     `OrderPartiallyAllocated` (order-management, topic
     `warehouse.order-management.events`) keep a local expected-demand read
-    model current when `DEMAND_CONSUMER_GROUP` is set (unset = no consumer).
+    model current under the REQUIRED consumer group `DEMAND_CONSUMER_GROUP`.
     Each order is counted once, at its latest promise cutoff, and attributed to
     the ONE configured site (`DEMAND_SITE_ID`): order-management's events carry
     no fulfillment site. `OrderRepromised` and every other type are ignored.
+
+    **Consumed (ADR 0017).** `DockAppointmentBooked` and
+    `DockAppointmentCancelled` (inbound-receiving, topic
+    `warehouse.inbound-receiving.events`, group `INBOUND_DEMAND_CONSUMER_GROUP`)
+    keep a local inbound-demand read model current: a capacity plan carries the
+    dock appointments of its window and the labour the operator-declared inbound
+    standard attributes to them (a Cancelled that arrives before its Booked
+    wins). `TaskCompleted` (fulfillment-execution, topic
+    `warehouse.fulfillment.events`, group `OBSERVED_CAPACITY_CONSUMER_GROUP`)
+    keeps a local observed-capacity read model current that feeds an ADVISORY
+    planned-versus-observed variance; it never changes a planned capacity. Both
+    attribute to the same configured site and dead-letter unusable payloads to
+    `<topic>.dlq`.
 
     **Analytics stream (ADR 0005).** The same four events are ALSO written to
     `warehouse.warehouse-planning.analytics` in the SAME outbox transaction
@@ -205,8 +218,8 @@ channels:
   warehouse.order-management.events:
     description: |
       order-management's integration topic (`OrderTopic`). This service consumes
-      it with a STABLE consumer group read from env `DEMAND_CONSUMER_GROUP` (no
-      default; unset means the consumer is not started). Only
+      it with a STABLE consumer group read from env `DEMAND_CONSUMER_GROUP` (REQUIRED,
+      no default; ADR 0016). Only
       `OrderAllocated` and `OrderPartiallyAllocated` are acted on; every other
       CloudEvents `type` -- `OrderRepromised` included -- is ignored, and a
       message that is not a valid CloudEvent is skipped (WARN), never blocking
@@ -234,6 +247,61 @@ channels:
         oneOf:
           - $ref: "#/components/messages/OrderAllocated"
           - $ref: "#/components/messages/OrderPartiallyAllocated"
+
+  warehouse.inbound-receiving.events:
+    description: |
+      inbound-receiving's integration topic (`InboundTopic`, key = appointment id for
+      appointment events). This service consumes it with a STABLE consumer group read from
+      env `INBOUND_DEMAND_CONSUMER_GROUP` (REQUIRED, no default; ADR 0016/0017). Only
+      `DockAppointmentBooked` and `DockAppointmentCancelled` are acted on; every other
+      `type` on the topic (ASN, check-in, completion, receipt events) is ignored. A message
+      that is not CloudEvents 1.0, or a known type with an unusable payload, is published to
+      `warehouse.inbound-receiving.events.dlq` (raw bytes plus `x-dlq-*` headers).
+    publish:
+      operationId: consumeDockAppointmentEvents
+      summary: Consume inbound-receiving's dock appointment events.
+      description: |
+        Consumed by this service into a LOCAL inbound-demand read model
+        (`inbound_appointments`, one row per appointment id; `GET /inbound-demand`,
+        `get_inbound_demand`, the inbound figures on a capacity plan). An appointment is
+        demand in a window [start, end) when its door window STARTS at or after start and
+        strictly before end. Last writer wins per appointment on the CloudEvents `time`; a
+        Cancelled wins a tie and is stored as a tombstone if it arrives before its Booked.
+        The idempotency claim on the CloudEvents `id` and the upsert commit in ONE database
+        transaction; the offset is committed only afterwards. The labour minutes are NOT in
+        the event: they come from the operator-declared inbound labour standard. See
+        docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md.
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/DockAppointmentBooked"
+          - $ref: "#/components/messages/DockAppointmentCancelled"
+
+  warehouse.fulfillment.events:
+    description: |
+      fulfillment-execution's integration topic (`FulfillmentTopic`, key = task id). This
+      service consumes it with a STABLE consumer group read from env
+      `OBSERVED_CAPACITY_CONSUMER_GROUP` (REQUIRED, no default; ADR 0016/0017). Only
+      `TaskCompleted` is acted on; every other `type` is ignored. A message that is not
+      CloudEvents 1.0, or a TaskCompleted without `task_id`/`task_type`, is published to
+      `warehouse.fulfillment.events.dlq` (raw bytes plus `x-dlq-*` headers).
+    publish:
+      operationId: consumeTaskCompletedEvents
+      summary: Consume fulfillment-execution's TaskCompleted.
+      description: |
+        Consumed by this service into a LOCAL observed-capacity read model
+        (`observed_capacity`, one row per location + process type + minute; additive).
+        It feeds the ADVISORY planned-versus-observed variance
+        (`GET /capacity-plans/{id}/variance`, `get_capacity_plan_variance`); it never
+        changes a planned capacity and never republishes a plan. The idempotency claim on
+        the CloudEvents `id` and the upsert commit in ONE transaction, so a redelivered
+        event adds nothing. See
+        docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md.
+      tags:
+        - name: consumed
+      message:
+        $ref: "#/components/messages/TaskCompleted"
 
 components:
   messages:
@@ -787,6 +855,117 @@ components:
             dataschema: "urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1"
             data:
               locationCode: "A-01-01"
+
+    DockAppointmentBooked:
+      name: DockAppointmentBooked
+      title: Dock appointment booked (consumed)
+      summary: inbound-receiving booked a door window for a carrier.
+      description: |
+        CONSUMED from `warehouse.inbound-receiving.events` (producer: inbound-receiving, its own
+        `apis/asyncapi.yaml`). Stores the appointment in the local inbound-demand read model
+        (`inbound_appointments`, one row per `data.appointment_id`): door window start/end and
+        ASN count = `len(data.asn_numbers)`, site = the configured `DEMAND_SITE_ID` (the event
+        carries none). `subject` must equal `data.appointment_id`. Ordering guard: last writer
+        wins per appointment on the CloudEvents `time`, and a Cancelled wins a tie, so a Booked
+        that arrives after the Cancelled that supersedes it changes nothing. Deduped on the
+        CloudEvents `id`. `type` =
+        `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/DockAppointmentBookedEvent"
+      examples:
+        - name: booked
+          summary: A two-hour window at an inbound door covering one ASN.
+          payload:
+            specversion: "1.0"
+            id: "4a8c2e91-5b3d-4c7f-a012-9e6d1b8f3c25"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-08T12:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentBooked:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              door_code: "WH1-DOCK-IN-01"
+              carrier: "ACME Freight"
+              window_start: "2026-10-09T08:00:00Z"
+              window_end: "2026-10-09T10:00:00Z"
+              asn_numbers: ["ASN-1001"]
+
+    DockAppointmentCancelled:
+      name: DockAppointmentCancelled
+      title: Dock appointment cancelled (consumed)
+      summary: inbound-receiving cancelled a Booked appointment.
+      description: |
+        CONSUMED from `warehouse.inbound-receiving.events`. Removes the appointment's demand:
+        the row flips to CANCELLED and stops counting. A Cancelled that arrives BEFORE its
+        Booked is stored as a tombstone (no window) and wins over any Booked with an older or
+        equal `time`. Idempotent: a redelivered `id` is a no-op. `type` =
+        `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/DockAppointmentCancelledEvent"
+      examples:
+        - name: cancelled
+          summary: Cancelled because the carrier was delayed.
+          payload:
+            specversion: "1.0"
+            id: "b2c4d6e8-1f3a-4b5c-9d7e-8f0a1b2c3d4e"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-08T18:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentCancelled:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              door_code: "WH1-DOCK-IN-01"
+              reason: "Carrier delayed"
+
+    TaskCompleted:
+      name: TaskCompleted
+      title: Task completed (consumed)
+      summary: fulfillment-execution reports that a station completed a task.
+      description: |
+        CONSUMED from `warehouse.fulfillment.events` (producer: fulfillment-execution, its own
+        `apis/asyncapi.yaml`). Adds the completion to the local `observed_capacity` read model:
+        one row per (location, process_type = upper-cased `data.task_type`, minute of the
+        CloudEvents `time`) with the task count and the duration total. Site = the configured
+        `DEMAND_SITE_ID`. The idempotency claim on the CloudEvents `id` and the additive upsert
+        commit in ONE transaction, so a redelivered `id` adds nothing. A completion without
+        `task_type` or `task_id` is dead-lettered. Only the fields below are read; the
+        enrichment fields fulfillment-execution adds (`work_unit_id`, `associate_id`,
+        relocation fields) are ignored. `type` =
+        `com.warehouse.wes.fulfillment-execution.task.TaskCompleted`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/TaskCompletedEvent"
+      examples:
+        - name: pickCompleted
+          summary: A PICK task completed after 245 s.
+          payload:
+            specversion: "1.0"
+            id: "a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+            source: "/warehouse/fulfillment-execution"
+            type: "com.warehouse.wes.fulfillment-execution.task.TaskCompleted"
+            subject: "task-7c9e6679"
+            time: "2026-10-05T09:14:30Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:fulfillment-execution:events:TaskCompleted:v1"
+            data:
+              task_id: "task-7c9e6679"
+              task_type: "PICK"
+              duration_seconds: 245
 
   schemas:
     CloudEventEnvelope:
@@ -1487,3 +1666,89 @@ components:
               const: "urn:warehouse:order-management:events:OrderPartiallyAllocated:v1"
             data:
               $ref: "#/components/schemas/OrderAllocationData"
+    DockAppointmentBookedData:
+      type: object
+      description: >-
+        Fields this service reads from inbound-receiving's DockAppointmentBooked `data`
+        (hand-mirrored, never imported). door_code and carrier are ignored.
+      required: [appointment_id, window_start, window_end, asn_numbers]
+      properties:
+        appointment_id:
+          type: string
+          description: Must equal the CloudEvents `subject`.
+        window_start:
+          type: string
+          format: date-time
+          description: Door window start; the window predicate (ADR 0003) is applied to it.
+        window_end:
+          type: string
+          format: date-time
+          description: Must be after window_start.
+        asn_numbers:
+          type: array
+          minItems: 1
+          description: Only its length is read (the ASN count that `minutes_per_asn` multiplies).
+          items:
+            type: string
+    DockAppointmentBookedEvent:
+      description: CloudEvents 1.0 envelope of inbound-receiving's DockAppointmentBooked (consumed).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked"
+            dataschema:
+              const: "urn:warehouse:inbound-receiving:events:DockAppointmentBooked:v1"
+            data:
+              $ref: "#/components/schemas/DockAppointmentBookedData"
+    DockAppointmentCancelledData:
+      type: object
+      description: Fields this service reads from inbound-receiving's DockAppointmentCancelled `data`. door_code and reason are ignored.
+      required: [appointment_id]
+      properties:
+        appointment_id:
+          type: string
+          description: Must equal the CloudEvents `subject`.
+    DockAppointmentCancelledEvent:
+      description: CloudEvents 1.0 envelope of inbound-receiving's DockAppointmentCancelled (consumed).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled"
+            dataschema:
+              const: "urn:warehouse:inbound-receiving:events:DockAppointmentCancelled:v1"
+            data:
+              $ref: "#/components/schemas/DockAppointmentCancelledData"
+    TaskCompletedData:
+      type: object
+      description: >-
+        Fields this service reads from fulfillment-execution's TaskCompleted `data`
+        (hand-mirrored, never imported). Everything else is ignored.
+      required: [task_id, task_type]
+      properties:
+        task_id:
+          type: string
+        task_type:
+          type: string
+          description: The process step (PICK, PACK, ...); upper-cased to form the read model's process_type.
+          example: "PICK"
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Optional; completions without it count as tasks but do not contribute to the mean duration.
+    TaskCompletedEvent:
+      description: CloudEvents 1.0 envelope of fulfillment-execution's TaskCompleted (consumed).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wes.fulfillment-execution.task.TaskCompleted"
+            dataschema:
+              const: "urn:warehouse:fulfillment-execution:events:TaskCompleted:v1"
+            data:
+              $ref: "#/components/schemas/TaskCompletedData"
