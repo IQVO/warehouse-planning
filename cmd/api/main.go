@@ -1,7 +1,7 @@
 // Command api is the warehouse-planning composition root: it wires env
 // config into adapters, adapters into use cases, and use cases into the HTTP
-// router, the three Kafka consumers (labor capacity, storage capacity, order
-// demand) and the outbox relay, all on real Postgres and real Kafka (ADR
+// router, the five Kafka consumers (labor capacity, storage capacity, order
+// demand, inbound dock appointments, observed task completions) and the outbox relay, all on real Postgres and real Kafka (ADR
 // 0016): there is no in-memory mode, no log sink and no consumer that is off.
 //
 // Environment:
@@ -17,7 +17,9 @@
 //	LABOR_CAPACITY_CONSUMER_GROUP    stable group id of the labor-capacity consumer (REQUIRED)
 //	STORAGE_CAPACITY_CONSUMER_GROUP  stable group id of the storage-capacity consumer (REQUIRED)
 //	DEMAND_CONSUMER_GROUP            stable group id of the order-demand consumer (REQUIRED)
-//	DEMAND_SITE_ID                   the one site every consumed order is attributed to (REQUIRED)
+//	INBOUND_DEMAND_CONSUMER_GROUP    stable group id of the dock-appointment consumer (REQUIRED, ADR 0017)
+//	OBSERVED_CAPACITY_CONSUMER_GROUP stable group id of the task-completion consumer (REQUIRED, ADR 0017)
+//	DEMAND_SITE_ID                   the one site every consumed order, dock appointment and task completion is attributed to (REQUIRED)
 //	OTEL_EXPORTER_OTLP_ENDPOINT      OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY             wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
@@ -160,6 +162,8 @@ func buildServer(
 	planMetrics ports.PlanMetrics,
 	readiness *inboundhttp.Readiness,
 ) *inboundhttp.Server {
+	// ADR 0017: the same use case prices the plan's inbound demand and backs GET /inbound-demand.
+	inboundDemand := &usecases.GetInboundDemand{Appointments: ad.inboundAppointments, Standards: ad.inboundStandards}
 	return &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
 		ProcessCapacities:                 ad.processCapacities,
@@ -174,6 +178,7 @@ func buildServer(
 			Encoder:      encoder,
 			UnitOfWork:   ad.uow,
 			Demand:       expectedDemand,
+			Inbound:      inboundDemand,
 			Metrics:      planMetrics,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
@@ -194,6 +199,11 @@ func buildServer(
 		// demand consumer; GET /demand and the plan's default demand read it.
 		GetExpectedDemand: expectedDemand,
 
+		// Inbound labour demand and observed capacity (ADR 0017).
+		DeclareInboundLabourStandard: &usecases.DeclareInboundLabourStandard{Repo: ad.inboundStandards},
+		InboundStandards:             ad.inboundStandards,
+		GetInboundDemand:             inboundDemand,
+		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: ad.capacityPlans, Observed: ad.observedCapacity},
 		// Console remote list reads (REST only; no MCP tool).
 		ListProcessPaths:  &usecases.ListProcessPaths{Paths: ad.pathLister},
 		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: ad.planLister},
@@ -228,6 +238,12 @@ type adapters struct {
 	// orderDemand is the expected-demand read model (ADR 0004), written by
 	// the order demand consumer and read by GET /demand and plan creation.
 	orderDemand ports.OrderDemandRepository
+
+	// ADR 0017: the dock-appointment read model and the declared inbound
+	// labour standards, and the observed-completion read model.
+	inboundAppointments ports.InboundAppointmentRepository
+	inboundStandards    ports.InboundStandardRepository
+	observedCapacity    ports.ObservedCapacityRepository
 
 	// pathLister and planLister are the list-read sides of processPaths and
 	// capacityPlans (the same repositories), behind GET /process-paths and
@@ -285,9 +301,13 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		outbox:            outboxRepo,
 		outboxStore:       outboxRepo,
 		orderDemand:       postgres.NewOrderDemandRepo(pool),
-		pathLister:        pathRepo,
-		planLister:        planRepo,
-		pool:              pool,
+
+		inboundAppointments: postgres.NewInboundAppointmentRepo(pool),
+		inboundStandards:    postgres.NewInboundStandardRepo(pool),
+		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
+		pathLister:          pathRepo,
+		planLister:          planRepo,
+		pool:                pool,
 	}, pool.Close, nil
 }
 

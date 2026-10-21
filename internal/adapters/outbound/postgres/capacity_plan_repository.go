@@ -40,14 +40,16 @@ func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPla
 		INSERT INTO capacity_plans (
 			id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 			assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
-			status, created_at, published_at, bottleneck_constraint, warnings, demand_source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+			status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
+			inbound_appointments, inbound_labour_minutes, inbound_standard_missing)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			published_at = EXCLUDED.published_at
 	`, p.ID(), p.WarehouseID(), p.SiteID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
 		p.AssignedDemand(), p.PathCapacity(), string(p.BottleneckStep()), p.CapacityOverWindow(), p.Shortage(),
-		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings, string(p.DemandSource()))
+		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings, string(p.DemandSource()),
+		p.Inbound().Appointments, p.Inbound().LabourMinutes, p.Inbound().StandardMissing)
 	return err
 }
 
@@ -103,7 +105,8 @@ func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, limi
 // planColumns is the column list scanPlan expects, in order.
 const planColumns = `id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
-		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source`
+		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
+		       inbound_appointments, inbound_labour_minutes, inbound_standard_missing`
 
 // scanPlan rehydrates one capacity_plans row selected with planColumns.
 func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
@@ -118,7 +121,8 @@ func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
 	err := row.Scan(
 		&p.ID, &p.WarehouseID, &p.SiteID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
 		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
-		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource)
+		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource,
+		&p.Inbound.Appointments, &p.Inbound.LabourMinutes, &p.Inbound.StandardMissing)
 	if err != nil {
 		return nil, err
 	}

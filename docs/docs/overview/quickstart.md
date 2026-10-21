@@ -49,6 +49,8 @@ export KAFKA_BROKERS=localhost:9092
 export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-$USER-labor
 export STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-$USER-storage
 export DEMAND_CONSUMER_GROUP=wp-local-$USER-demand
+export INBOUND_DEMAND_CONSUMER_GROUP=wp-local-$USER-inbound-demand
+export OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-$USER-observed-capacity
 export DEMAND_SITE_ID=SIM1
 SHUTDOWN_DRAIN_DELAY=0 go run ./cmd/api
 ```

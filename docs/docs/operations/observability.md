@@ -75,7 +75,7 @@ Every binary writes JSON lines to stdout through `log/slog`
 | Key | Appears on |
 | --- | --- |
 | `error` | every failure line |
-| `topic`, `group_id`, `brokers` | consumer and relay start lines (`consumer running` (with `consumer` = `labor-capacity`, `storage-capacity` or `order-demand`), `analytics consumer running`, `outbox relay running`) |
+| `topic`, `group_id`, `brokers` | consumer and relay start lines (`consumer running` (with `consumer` = `labor-capacity`, `storage-capacity`, `order-demand`, `inbound-demand` or `observed-capacity`), `analytics consumer running`, `outbox relay running`) |
 | `partition`, `offset`, `attempt`, `max_attempts`, `retry_in` | `... handling failed; retrying the same message` and `... offset commit failed; retrying the same message` |
 | `attempts` | `... handling failed after the maximum attempts; dead-lettering the message` |
 | `dlq_topic` | `analytics: dead-lettering a message that can never be projected` |
@@ -118,7 +118,7 @@ These are built only from signals that exist today:
 | --- | --- | --- |
 | Outbox backlog | `SELECT count(*), min(created_at) FROM outbox_events WHERE published_at IS NULL` rising, or `max(attempts)` growing with a `last_error` | The relay is failing (broker down) and order-management is not seeing plans. |
 | Outbox rows excluded by the attempt cap | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` (the `OUTBOX_MAX_ATTEMPTS` value) above 0, or the Loki ERROR line `row reached the attempt cap` | A poison row (or a long broker outage) was excluded; it is never retried until an operator re-arms it ([Runbook](/docs/operations/runbook#outbox-relay)). |
-| DLQ growth | the end offsets of `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq` and `warehouse.warehouse-planning.analytics.dlq` increasing | A message was given up on and nothing re-drives it. |
+| DLQ growth | the end offsets of `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`, `warehouse.inbound-receiving.events.dlq`, `warehouse.fulfillment.events.dlq` and `warehouse.warehouse-planning.analytics.dlq` increasing | A message was given up on and nothing re-drives it. |
 | Consumer lag | `kafka-consumer-groups.sh --describe` for the four groups | A wedged partition: the analytics consumer retries transient errors forever. |
 | Analytics freshness | `GET /reports/freshness` `lag_seconds` above a threshold | The projector is stuck or down (it has no metrics of its own). |
 | Plan rejections | `rate(warehouse_planning_capacity_plans_created_total{outcome="rejected"}[15m])` as a share of all attempts | Callers send plans the invariants refuse, or capacity data or demand is missing. |

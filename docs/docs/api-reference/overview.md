@@ -11,7 +11,7 @@ sidebar_position: 1
 | --- | --- | --- |
 | REST | `apis/openapi.yaml` (OpenAPI 3.0.3) | Pages under *REST* are generated from the spec; do not edit them by hand. Default server `http://localhost:8080`. |
 | Events | `apis/asyncapi.yaml` (AsyncAPI 2.6.0) | Summarised on the [event catalogue](/docs/api-reference/events). |
-| MCP | `.claude/rules/mcp.md` | 11 tools over Streamable HTTP on `:8090`; same use cases as REST. |
+| MCP | `.claude/rules/mcp.md` | 14 tools over Streamable HTTP on `:8090`; same use cases as REST. |
 
 ## Conventions
 

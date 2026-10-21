@@ -79,16 +79,28 @@ analytics copy: the analytics stream is plan facts only.
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `STORAGE_CAPACITY_CONSUMER_GROUP` |
 | `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (required, always consumed) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | `warehouse.inbound-receiving.events` | inbound-receiving | `INBOUND_DEMAND_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | `warehouse.inbound-receiving.events` | inbound-receiving | `INBOUND_DEMAND_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | fulfillment-execution | `OBSERVED_CAPACITY_CONSUMER_GROUP` (required, always consumed) |
 
 The two order-management types feed the expected-demand read model
 (`GET /demand`, MCP `get_expected_demand`, and the default of `assigned_demand`
 on `POST /capacity-plans`); every other type on that topic, `OrderRepromised`
 included, is ignored. See `docs/adr/0004-demand-ingestion-from-order-management.md`.
 
-A transiently failing message on any of the three consumed topics is retried
+The two dock-appointment types feed the inbound-demand read model (`GET
+/inbound-demand`, MCP `get_inbound_demand`, the `inbound_*` fields of a capacity
+plan); the labour comes from the operator-declared inbound labour standard, not
+from the event, and a Cancelled that arrives before its Booked wins. `TaskCompleted`
+feeds the observed-capacity read model behind the advisory `GET
+/capacity-plans/{id}/variance`. Every other type on those two topics is ignored.
+See [ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback).
+
+A transiently failing message on any of the five consumed topics is retried
 up to 5 times and then published to `<topic>.dlq`
 (`warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`,
-`warehouse.order-management.events.dlq`) with `x-dlq-*` headers
+`warehouse.order-management.events.dlq`, `warehouse.inbound-receiving.events.dlq`,
+`warehouse.fulfillment.events.dlq`) with `x-dlq-*` headers
 ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers)).
 
 What each consumed event changes is described on

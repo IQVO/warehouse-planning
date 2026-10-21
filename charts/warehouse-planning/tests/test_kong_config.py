@@ -46,6 +46,8 @@ ENABLE_KONG = [
     "--set", "config.laborCapacityConsumerGroup=g-labor",
     "--set", "config.storageCapacityConsumerGroup=g-storage",
     "--set", "demand.consumerGroup=g-demand",
+    "--set", "inbound.consumerGroup=g-inbound",
+    "--set", "observed.consumerGroup=g-observed",
     "--set", "demand.siteId=SIM1",
     "--set", "analytics.projector.consumerGroup=g-analytics",
     "--set", "gatewayApi.enabled=true",
@@ -89,6 +91,8 @@ def main() -> int:
         "--set", "config.laborCapacityConsumerGroup=g-labor",
         "--set", "config.storageCapacityConsumerGroup=g-storage",
         "--set", "demand.consumerGroup=g-demand",
+        "--set", "inbound.consumerGroup=g-inbound",
+        "--set", "observed.consumerGroup=g-observed",
         "--set", "demand.siteId=SIM1",
     ])
     kong_docs = [d for d in default_docs if "Kong" in (d.get("kind") or "")]

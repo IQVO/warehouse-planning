@@ -36,6 +36,8 @@ SDK marks every field without `omitempty` as **required**, which is why
 | `list_station_standards` | none | `location` (site code filter) | `location`, `standards[]` (`location`, `process_type`, `quantity`, `unit`, `period_seconds`) |
 | `get_storage_capacity` | `location` (site code, e.g. `SIM1`) | none | `location`, `storage_positions[]` (`zone_id`, `location_type`, `positions`), `stations[]` (`zone_id`, `activity`, `stations`); empty lists when nothing is tallied |
 | `get_expected_demand` | `location`, `window_start` (inclusive), `window_end` (exclusive) | none | `orders`, `released_lines` (lines, not units), `source` = `order-management`, `as_of` (null when the site has no data) |
+| `get_inbound_demand` | `location`, `path_id`, `window_start` (inclusive), `window_end` (exclusive) | none | the REST `GET /inbound-demand` body: `appointments`, `asns`, `labour_minutes` (0 when no standard is declared), `average_heads`, `standard_declared`, `standard_missing`, `source` = `inbound-receiving`, `as_of` ([ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback)) |
+| `get_capacity_plan_variance` | `id` | `tasks_per_order` (tasks are not orders; without it `comparison.comparable` is false) | the REST `GET /capacity-plans/{id}/variance` body: planned orders/hour and over the window, `observed` (`has_data`, `tasks`, `tasks_per_hour`, `mean_task_seconds`, `as_of`), `comparison` (`observed_orders`, `variance_orders`, `variance_percent`), `advisory` always true; it never changes the plan |
 
 ## Write tools (`readOnlyHint: false`, `destructiveHint: true`)
 
@@ -45,6 +47,7 @@ SDK marks every field without `omitempty` as **required**, which is why
 | `register_process_path` | true | `id`, `name`, `steps` (ordered, non-empty) | none | declares or wholesale replaces a ProcessPath (`RegisterProcessPath`) |
 | `create_capacity_plan` | false | `warehouse_id`, `site_id`, `location`, `window_start`, `window_end`, `path_id` | `assigned_demand` (orders; omitted = the expected orders, else `missing-assigned-demand`), `units_per_order`, `packages_per_order` | creates a DRAFT plan and queues `CapacityPlanCreated` in the outbox (`CreateCapacityPlan`); every call creates a new plan; increments `warehouse_planning.capacity_plans.created` |
 | `publish_capacity_plan` | false | `id` | none | publishes once (`PublishCapacityPlan`) and queues `CapacityPlanPublished`, plus `CapacityShortageDetected` and `BottleneckDetected` when there is a shortage; a second call fails with `capacity-plan-already-published` |
+| `declare_inbound_labour_standard` | true | `location`, `path_id`, `minutes_per_appointment` (> 0) | `minutes_per_asn` (>= 0; omitted = 0) | upserts an inbound `LabourStandard` (`DeclareInboundLabourStandard`); `created` is true for a new one. Without a standard, dock appointments contribute no demand and say so |
 | `declare_station_standard` | true | `location`, `process_type`, `quantity` (> 0), `unit` (`UNIT`, `PACKAGE` or `ORDER`), `period_seconds` | none | upserts a StationStandard (`DeclareStationStandard`); `created` is true for a new one, false when replaced |
 
 Every **Optional inputs** field above carries `omitempty` on its JSON tag, so
@@ -54,8 +57,8 @@ out. The architecture fitness test `TestMCPOptionalToolInputsCarryOmitempty`
 a tool input whose `jsonschema` description says "optional" or "omitted" lacks
 it.
 
-Eleven tools in total; `maxTools` in
-`internal/adapters/inbound/mcp/governance_test.go` pins the budget at 11.
+Fourteen tools in total; `maxTools` in
+`internal/adapters/inbound/mcp/governance_test.go` pins the budget at 14 (ADR 0017 added three).
 
 ## Errors
 

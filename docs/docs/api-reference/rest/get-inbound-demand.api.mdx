@@ -1,0 +1,71 @@
+---
+id: get-inbound-demand
+title: "Inbound demand of a site over a window (inbound-receiving read model)"
+description: "The BOOKED dock appointments at a site whose door window STARTS in the half-open window [window_start, window_end), read from the LOCAL read model this service builds from inbound-receiving's DockAppointmentBooked / DockAppointmentCancelled CloudEvents (docs/adr/0017; never a live call). A cancelled appointment never counts, whatever the arrival order of the two events (the producer's event time is the ordering guard). `labour_minutes` is what the standard declared for `path_id` attributes to them; with no standard it is 0 and `standard_missing` is true when appointments exist. Appointments carry no site, so every one is attributed to the ONE site configured on this service; any other location reads 0. 200 with appointments 0 and as_of null when nothing is known."
+sidebar_label: "Inbound demand of a site over a window (inbound-receiving read model)"
+hide_title: true
+hide_table_of_contents: true
+api: eJztWFtTGzkW/iun9BJc29gNyUyy5mHLAXaLGiawwOzDZlMgq0+7NailHklt46X837dOq6/YEDKbxzy5rNa5376jR2YKtNxLo88SNmUL9Gd6bkqdnGDOdcIi5vnCselnJsP5fhI+fIlYgk5YWRAxm7KbDOHjxcUvpyeQGHEPvCiM1D5H7R1wDxyc9AirzDiExBgLK6kTs4Lrm9nVzTVIDT5DyLhK902Buvn8OfzeOs+tj+rTW9TJKAKLPIHUmrwiPb84np2Hs9wkqMBn0oFDu5QCYV5Klbhwu7HFokC5lHrxxsGJEfezTuePxtxjApOn58dcC1QKEzhWpkxOl5V9e4kRbsITO4njg/dHoHGJFjgouUQQXKnRGGYgWtqec+q7wpTauwhWGffVAVnErZVLrsDYBC2YtDr0KwNYi6X/hTVJKdC+ceEYvMwRpKsuV5RSL2BRcpuMxnCn+NyU9jaXuvTo7ugiyaxuO891wm0CCQrFLSaQGgt3BffZrUzugHtv5ZzowBuiyI9gJX0G2nS00hPPGLhO4K45vc2lc1IvKnnelpQIqIdJgg/S+THM+meCW7uu2EuPEbjKdLsGoysTW4WSWiG4+HQaEk0YncpFSUYYPUiFI+B6DcZnaEEZUWV/lTYO4jEcxnGwaaBbMIe7W5OCLpUK6mvjM3KudHCvzUqP/6NZxApueY4eLdXNI9M8RzZljSQWMUn18keJds0iZvGPUlpM2JTcEjEnMsw5mz4yvy6I0HkKINtEDB94Xig6uz779YBtopZ5HaGv8d6u2MIagc4BMWhqs4l9XSVdZAsrBYa86jtnzF6pdSg37CveL+5v0/7q78fw9u3bvx6B1EKVTi7xJUUilhqbc8+mLOEe96lIhtodxoc/7x/E+/FPN/GHaRxP4/jfO1RF/Y1u7hTFh1rRCPLSeZgj8NRj0wmDF76bEQc/t0Z8IR1dYbRDR1wP45h+ttOhCXlo8rBXGOfkXK0B88KvR6SbMNqj9kTPi0LJkNWT3x0xedxW3cx/R+EHXvrcL4YudZ/kwsDf/Xyjv07Tz7CX0fkSLV/gbUbVTI5s2k+T1P2zuiXRkSmtwIrvrUlpthWWBqOXwV+tujsislWUrUUvXu5qYWj3q2Pec8+raQZe7Kik9rhAyyKWSy3zMmfT+GkW16N90BS3Z3llg6NZ/vzYHvf98G5TB/PbtJldf6I+ROIHGgmzRDsQ8H6zlSadKF3m80pS5y5TzhVlwlDeecUBag5VB2zbZNsed03HuBkUYV61RHsNQliU6BxSxaW8VH7oncODnzZPk/pPaD+0H0wDL+qgKdQLn0UUtQJNoXCgQzx+R0psV1KnyNwYhVxvyZ11vqlmu6vgxF5TTRHUlTIas82OunyFgC34APPSD9GIG4KZZ6WHFrCrZjWlYAeAW9DIvmyajvG6CowYQQdOIdo5KfqIsgJxNeLTuELnt2B1A/cIuEmPb1wNey2mCoV3RwOkonHMNpuIeemrBjTA+Vf1dGCbDd15t2s+tFDJ2MZ1UIcqGkywSVfszQWi0cZDMwsjOuBNAoY+Qtelq66FqSi9g3YkPjN2CmvmCvO/fH38bA/l9x/i91AzgAQ9l4okDVt/YPNCeEsrWefWHfjHee7LXQ1uQ0qR1J1kUlMO70rJfhQvg/ongc8mhC9Hn5l6nasnLJuyyZMNLmKEhxuUWlrFpizzvphOJhRqlRnnpx/iD3GFH6ROTaVKLXjFLWamdLhfKK51cMqTdOY17m7vtnAzNNA8YGonFzoAeOkjWMgl6ir2orSWEpzal42gK1wCEgVVQET5Ec6E0UtcU1bpBOZlmlY7lXbecqm9+xtcZtwhHAA+FMahA809LWeXQaNjXnAh/RosLiQRVZlOvEhVYfKiWjIwTVFUdJZ7PKqZHoYqpYxQ8r+YNEwvCVSLmnNz+R00si4V1w72WgfUDlm6cYDjDWUELjPW8wVGMDfeK9Qo7kd12SiZolgLhc1SqJAvEXxmTbnIgIO3XDsuyCBaJUs/Nw+w5xCBu7UWvJDjNc9pQ70OzmwFTxv3OvBcKYn1sp1yIZX0633F16b0kJFAbRqZRenrziUtmJWmfQvCO4Ox+203rqVdN516r0deoG1kj6gpUAAMjclqMzuffby4aoMTFrlerGF2A1ensxO4Ofv1dLCax4ejqKVz3tBYhcI4GYycNDLrbZysqJ8tuEXgvbeFsOlR9YRcj8cH47huU1xUbapZG7YKBXJSk0tNtRf1Ks9NJ5OF9Fk5HwuTT87++a+LyY46I0QjBVK77sT89un87Pj00/XpSdUfCuN8znXvwtkQ2nemmQBE6l68tzXmelaPntb4Y9eXfzwA/XgA+vEAVLWFelx7fPCTQnGpqWSrMn+sh/Gu51Sat/Tl8XHOHf5m1WZDx+GRgUZ0Ih1hx4RNU67cU/TYL8W9q3rXHsFz6tzjevgoteSqpGvVk8efEvU935Ne0Ll7MPj/VX7mEekF6U8eKb6nCq9+Hvq6euHRpFPuC/2xMqwen2lvoWUSbZVXgXImBBZ9k7Zed4hLCy3/cXrDNpv/AUWbg7U=
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Inbound demand of a site over a window (inbound-receiving read model)"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/inbound-demand"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The BOOKED dock appointments at a site whose door window STARTS in the half-open window [window_start, window_end), read from the LOCAL read model this service builds from inbound-receiving's DockAppointmentBooked / DockAppointmentCancelled CloudEvents (docs/adr/0017; never a live call). A cancelled appointment never counts, whatever the arrival order of the two events (the producer's event time is the ordering guard). `labour_minutes` is what the standard declared for `path_id` attributes to them; with no standard it is 0 and `standard_missing` is true when appointments exist. Appointments carry no site, so every one is attributed to the ONE site configured on this service; any other location reads 0. 200 with appointments 0 and as_of null when nothing is known.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-inbound-demand.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-inbound-demand.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-inbound-demand.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      
