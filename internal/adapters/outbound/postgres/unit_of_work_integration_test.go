@@ -15,7 +15,6 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
-
 func newMigratedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	databaseURL := startPostgres(t)

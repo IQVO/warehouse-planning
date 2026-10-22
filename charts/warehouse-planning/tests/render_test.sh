@@ -11,7 +11,8 @@ release=warehouse-planning
 base=(--set database.url=postgres://u@example.invalid:5432/db
   --set kafka.brokers=kafka.example.invalid:9092
   --set config.laborCapacityConsumerGroup=g-labor --set config.storageCapacityConsumerGroup=g-storage
-  --set demand.consumerGroup=g-demand --set demand.siteId=SIM1)
+  --set demand.consumerGroup=g-demand --set demand.siteId=SIM1
+  --set inbound.consumerGroup=g-inbound --set observed.consumerGroup=g-observed)
 analytics=(--set analytics.enabled=true --set analytics.projector.consumerGroup=g-analytics
   --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a
   --set analytics.database.reportsUrl=postgres://reports@example.invalid:5432/a)
@@ -110,6 +111,8 @@ refuse_without config.laborCapacityConsumerGroup "LABOR_CAPACITY_CONSUMER_GROUP"
 refuse_without config.storageCapacityConsumerGroup "STORAGE_CAPACITY_CONSUMER_GROUP"
 refuse_without demand.consumerGroup "DEMAND_CONSUMER_GROUP"
 refuse_without demand.siteId "DEMAND_SITE_ID"
+refuse_without inbound.consumerGroup "INBOUND_DEMAND_CONSUMER_GROUP"
+refuse_without observed.consumerGroup "OBSERVED_CAPACITY_CONSUMER_GROUP"
 refuses "kafka.enabled is false" "${base[@]}" --set kafka.enabled=false
 refuses "the only publisher is" "${base[@]}" --set config.eventPublisher=log
 refuses "sets EVENT_PUBLISHER=log" "${base[@]}" --set 'extraEnv[0].name=EVENT_PUBLISHER' --set 'extraEnv[0].value=log'
@@ -120,10 +123,15 @@ refuses "analytics.projector.consumerGroup is required" "${base[@]}" --set analy
 helm template "$release" "$chart_dir" "${base[@]}" --set kafka.enabled=true >/dev/null || fail "kafka.enabled=true must still render"
 
 # The api always gets the mandatory env, whatever the values (no conditional env).
-for env in KAFKA_BROKERS DEMAND_CONSUMER_GROUP DEMAND_SITE_ID LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP EVENT_PUBLISHER DATABASE_URL; do
+for env in KAFKA_BROKERS DEMAND_CONSUMER_GROUP DEMAND_SITE_ID LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP INBOUND_DEMAND_CONSUMER_GROUP OBSERVED_CAPACITY_CONSUMER_GROUP EVENT_PUBLISHER DATABASE_URL; do
   grep -q "name: $env\$" <<<"$api_deployment" || fail "the api Deployment does not set $env"
 done
 grep -A1 'name: EVENT_PUBLISHER' <<<"$api_deployment" | grep -q 'value: "kafka"' || fail "EVENT_PUBLISHER must default to kafka"
+# ADR 0017: the two new consumer groups come from their dedicated values.
+grep -A1 'name: INBOUND_DEMAND_CONSUMER_GROUP' <<<"$api_deployment" | grep -q 'value: "g-inbound"' \
+  || fail "INBOUND_DEMAND_CONSUMER_GROUP does not come from inbound.consumerGroup"
+grep -A1 'name: OBSERVED_CAPACITY_CONSUMER_GROUP' <<<"$api_deployment" | grep -q 'value: "g-observed"' \
+  || fail "OBSERVED_CAPACITY_CONSUMER_GROUP does not come from observed.consumerGroup"
 
 # warehouse-infra's CURRENT values (verbatim copies, refreshed from its
 # origin/develop) still render and provide every env the binaries require.
@@ -131,7 +139,7 @@ infra=(-f "$chart_dir/tests/warehouse-infra-platform-values.yaml" -f "$chart_dir
   -f "$chart_dir/tests/warehouse-infra-kind-resources-values.yaml" --set image.tag=local-test)
 infra_api="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/deployment.yaml)" \
   || fail "the chart does not render with warehouse-infra's current values"
-for env in DATABASE_URL KAFKA_BROKERS EVENT_PUBLISHER LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP DEMAND_CONSUMER_GROUP DEMAND_SITE_ID; do
+for env in DATABASE_URL KAFKA_BROKERS EVENT_PUBLISHER LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP DEMAND_CONSUMER_GROUP DEMAND_SITE_ID INBOUND_DEMAND_CONSUMER_GROUP OBSERVED_CAPACITY_CONSUMER_GROUP; do
   grep -q "name: $env\$" <<<"$infra_api" || fail "warehouse-infra's values do not provide $env to the api"
 done
 grep -A1 'name: KAFKA_BROKERS' <<<"$infra_api" | grep -q 'value: "kafka.warehouse-systems.svc.cluster.local:9092"' \

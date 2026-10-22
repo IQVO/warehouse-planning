@@ -1,0 +1,71 @@
+---
+id: declare-inbound-labour-standard
+title: "Declare the labour minutes a dock appointment costs at a site for a process path"
+description: "Upserts the inbound labour standard keyed by (location, path_id): fixed `minutes_per_appointment` plus an optional `minutes_per_asn` per ASN the appointment covers (the booked event carries no units, pallets or lines). The standard is a planning parameter owned by this service (docs/adr/0017): nobody upstream publishes it. Without one, dock appointments are recorded but contribute NO labour demand and the plan reports `inbound_standard_missing`; no default number is ever guessed. Nothing derived is stored, so a late declaration applies on the next read."
+sidebar_label: "Declare the labour minutes a dock appointment costs at a site for a process path"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "put api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Declare the labour minutes a dock appointment costs at a site for a process path"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"put"}
+  path={"/inbound-labour-standards/{location}/{path_id}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Upserts the inbound labour standard keyed by (location, path_id): fixed `minutes_per_appointment` plus an optional `minutes_per_asn` per ASN the appointment covers (the booked event carries no units, pallets or lines). The standard is a planning parameter owned by this service (docs/adr/0017): nobody upstream publishes it. Without one, dock appointments are recorded but contribute NO labour demand and the plan reports `inbound_standard_missing`; no default number is ever guessed. Nothing derived is stored, so a late declaration applies on the next read.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./declare-inbound-labour-standard.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./declare-inbound-labour-standard.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./declare-inbound-labour-standard.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

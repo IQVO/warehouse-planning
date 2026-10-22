@@ -38,14 +38,19 @@ var wantTools = map[string]bool{ // name -> read-only
 	"list_station_standards":               true,
 	"get_storage_capacity":                 true,
 	"get_expected_demand":                  true,
+	"declare_inbound_labour_standard":      false,
+	"get_inbound_demand":                   true,
+	"get_capacity_plan_variance":           true,
 }
 
 // maxTools is the tool budget. It was 8; the station-capacity composition
 // (ADR 0002) adds declare_station_standard, list_station_standards and
 // get_storage_capacity, so it became 10; demand ingestion (ADR 0004) adds
-// get_expected_demand, so it is now 11. Raising it is a deliberate,
+// get_expected_demand, so it became 11; inbound labour demand and observed
+// capacity (ADR 0017) add declare_inbound_labour_standard, get_inbound_demand
+// and get_capacity_plan_variance, so it is now 14. Raising it is a deliberate,
 // reviewed act: TestToolSurface still pins the exact curated set.
-const maxTools = 11
+const maxTools = 14
 
 // The MCP governance charter's mechanical gate: the advertised tool set is
 // exactly the curated one, within the tool budget, snake_case verb_noun,

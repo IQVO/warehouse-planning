@@ -180,7 +180,7 @@ func (l *consumeLoop) run(ctx context.Context) error {
 // never be silently dropped by committing past it anyway.
 func (l *consumeLoop) handleWithDeadLetter(ctx context.Context, p RetryPolicy, sleep sleepFunc, msg kafkago.Message) error {
 	if l.maxAttempts <= 0 || l.deadLetter == nil {
-		return l.retryUntilOK(ctx, p, sleep, "handling", msg, func() error { return l.handle(ctx, msg) })
+		return l.retryUntilOK(ctx, p, sleep, "handling", msg, func() error { return l.skipPoison(ctx, msg) })
 	}
 
 	delay := p.Initial
@@ -191,6 +191,15 @@ func (l *consumeLoop) handleWithDeadLetter(ctx context.Context, p RetryPolicy, s
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if isPoison(err) {
+			// Deterministic: retrying can never succeed, so the message goes
+			// to the dead-letter topic at once (docs/adr/0017 decision 13).
+			l.logger.WarnContext(ctx, l.name+" message is unusable; dead-lettering it without retrying",
+				"error", err, "partition", msg.Partition, "offset", msg.Offset)
+			return l.retryUntilOK(ctx, p, sleep, "dead-letter publish", msg, func() error {
+				return l.deadLetter(ctx, msg, err)
+			})
 		}
 		if attempt == l.maxAttempts {
 			l.logger.ErrorContext(ctx, l.name+" handling failed after the maximum attempts; dead-lettering the message",
@@ -208,6 +217,19 @@ func (l *consumeLoop) handleWithDeadLetter(ctx context.Context, p RetryPolicy, s
 		delay = p.next(delay)
 	}
 	return nil // unreachable: the loop above always returns
+}
+
+// skipPoison is the handling path of a loop with no dead-letter sink: a
+// poison error is logged and skipped (the loop commits past it), never retried
+// forever.
+func (l *consumeLoop) skipPoison(ctx context.Context, msg kafkago.Message) error {
+	err := l.handle(ctx, msg)
+	if err != nil && isPoison(err) {
+		l.logger.WarnContext(ctx, l.name+" skipping an unusable message (no dead-letter sink wired)",
+			"error", err, "partition", msg.Partition, "offset", msg.Offset)
+		return nil
+	}
+	return err
 }
 
 // retryUntilOK runs op until it returns nil, sleeping with capped
