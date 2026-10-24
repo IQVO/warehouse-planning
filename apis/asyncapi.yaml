@@ -461,6 +461,7 @@ components:
               path_capacity: 1000
 
     ProcessCapacityRegistered:
+      x-no-consumer-reason: "pending: new capacity fact (WPL #70); consumer not built yet"
       name: ProcessCapacityRegistered
       title: Process capacity registered
       summary: The first constraint brought a ProcessCapacity into being.
@@ -503,6 +504,7 @@ components:
               period_seconds: 3600
 
     ProcessCapacityChanged:
+      x-no-consumer-reason: "pending: new capacity fact (WPL #70); consumer not built yet"
       name: ProcessCapacityChanged
       title: Process capacity changed
       summary: A registration moved a ProcessCapacity's effective rate.
