@@ -1,5 +1,7 @@
 # warehouse-planning
 
+[![CI](https://github.com/IQVO/warehouse-planning/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/IQVO/warehouse-planning/actions/workflows/ci.yml?query=branch%3Adevelop) [![coverage gate](https://img.shields.io/badge/coverage%20gate-90%25-brightgreen)](https://github.com/IQVO/warehouse-planning/blob/develop/Makefile) [![Go](https://img.shields.io/badge/go-1.27.3-00ADD8?logo=go&logoColor=white)](https://github.com/IQVO/warehouse-planning/blob/develop/go.mod) [![release](https://img.shields.io/github/v/release/IQVO/warehouse-planning?sort=semver)](https://github.com/IQVO/warehouse-planning/releases) [![docs](https://img.shields.io/badge/docs-iqvo.github.io-blue)](https://iqvo.github.io/warehouse-planning/) [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/IQVO/warehouse-planning/blob/develop/LICENSE)
+
 The **Warehouse Planning** bounded context of the `warehouse-systems` fleet —
 a **Core Domain**. It answers: **can this warehouse process the demand
 assigned to it**, given its current labor, location, equipment, station,
