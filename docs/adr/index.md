@@ -32,6 +32,7 @@ decision amends or supersedes an earlier one by its own ADR.
 | [0015](0015-projector-telemetry-and-chart-otel-env.md) | Projector telemetry and the chart's OTel environment | Accepted (2026-10-13). Extends ADR 0011 |
 | [0016](0016-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime | Accepted (2026-10-19). Amends ADR 0004 (demand consumer off switch), ADR 0007 (`LogSink` default) and ADR 0008 (in-memory `cmd/mcp`) |
 | [0017](0017-inbound-labour-demand-and-observed-capacity-feedback.md) | Inbound labour demand and observed capacity feedback | Accepted (2026-10-20). Additive. Supersedes the "later phase" observed-capacity note of the ADR 0001 context map; reuses the window semantics of ADR 0003 and the read-model pattern of ADR 0004 |
+| [0018](0018-a2a-inbound-adapter.md) | A2A inbound adapter (third driving adapter): two curated skills, `path_capacity` (read) and `evaluate_capacity_plan` (write: a DRAFT plan), over the same use cases as REST and MCP; message-only, problems answered in-band with REST's status classification, delegation only (facts stay on Kafka via the outbox) | Accepted (2026-10-29). Additive. Mirrors [ADR 0008](0008-mcp-server-adoption.md) |
 
-All seventeen are Accepted; none is Superseded as a whole. Where a page in the
+All eighteen are Accepted; none is Superseded as a whole. Where a page in the
 main documentation states a rule, it links the ADR that decided it.

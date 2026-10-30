@@ -44,6 +44,7 @@ BASE = [
 ]
 ENABLE_EVERYTHING = BASE + [
     "--set", "mcp.enabled=true",
+    "--set", "a2a.enabled=true",
     "--set", "frontend.enabled=true",
     "--set", "autoscaling.api.enabled=true",
     "--set", "autoscaling.frontend.enabled=true",
@@ -101,6 +102,12 @@ def main() -> int:
         failures.append("the MCP Service was not rendered with mcp.enabled=true")
     elif selector_of(services[mcp_svc]).get("app.kubernetes.io/component") != "mcp":
         failures.append("the MCP Service selector must pin component=mcp")
+
+    a2a_svc = f"{RELEASE}-a2a"
+    if a2a_svc not in services:
+        failures.append("the A2A Service was not rendered with a2a.enabled=true")
+    elif selector_of(services[a2a_svc]).get("app.kubernetes.io/component") != "a2a":
+        failures.append("the A2A Service selector must pin component=a2a")
 
     frontend_svc = f"{RELEASE}-frontend"
     if frontend_svc not in services:
@@ -173,11 +180,11 @@ def main() -> int:
                 f"Service {svc_name} selects {len(hit)} Deployments {sorted(hit)}; expected exactly 1"
             )
 
-    # Default values must not deploy the MCP, frontend or analytics components at all.
+    # Default values must not deploy the MCP, A2A, frontend or analytics components at all.
     stray = [
         d["metadata"]["name"]
         for d in render(BASE)
-        if d.get("metadata", {}).get("name", "").endswith(("-mcp", "-frontend", "-projector", "-reports", "-analytics"))
+        if d.get("metadata", {}).get("name", "").endswith(("-mcp", "-a2a", "-frontend", "-projector", "-reports", "-analytics"))
     ]
     if stray:
         failures.append(f"optional components rendered with default values: {stray}")
@@ -206,7 +213,7 @@ def main() -> int:
         return 1
 
     print(f"PASS: {len(services)} Services each select exactly one Deployment; "
-          "mcp, frontend and analytics are off by default; chart refuses to render without a database source "
+          "mcp, a2a, frontend and analytics are off by default; chart refuses to render without a database source "
           "and refuses analytics without a DSN or a consumer group")
     return 0
 

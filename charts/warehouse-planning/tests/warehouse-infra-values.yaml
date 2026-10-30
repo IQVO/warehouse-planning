@@ -125,6 +125,14 @@ mcp:
   route:
     enabled: true
     path: /api/mcp/warehouse-planning
+# ANTICIPATED (ADR 0018): the warehouse-infra flip for the A2A agent is a
+# separate PR that lands after this chart change; drop this note when a refresh
+# from warehouse-infra origin/develop carries the block.
+a2a:
+  enabled: true
+  route:
+    enabled: true
+    path: /api/a2a/warehouse-planning
 pathCatalogue:
   content: ''
   enabled: false

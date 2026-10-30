@@ -33,6 +33,7 @@ cluster, ArgoCD installs it from this repo's `develop` branch with the values in
 | --- | --- | --- | --- | --- | --- |
 | `api` | `<fullname>` | `/app/api` (the entrypoint) | always | `http` 8080 | `<fullname>`, ClusterIP, port 80 to `http` |
 | `mcp` | `<fullname>-mcp` | `/app/mcp` | `mcp.enabled` (default `false`) | `http` 8090 | `<fullname>-mcp`, ClusterIP, port 8090 |
+| `a2a` | `<fullname>-a2a` | `/app/a2a` | `a2a.enabled` (default `false`) | `http` 8093 | `<fullname>-a2a`, ClusterIP, port 8093 |
 | `analytics-projector` | `<fullname>-projector` | `/app/planning-projector` | `analytics.enabled` (default `false`) | `admin` 8091 | none |
 | `analytics-reports` | `<fullname>-reports` | `/app/planning-reports` | `analytics.enabled` | `http` 8092 | `<fullname>-reports`, ClusterIP, port 80 to `http` |
 | `frontend` | `<fullname>-frontend` | nginx serving `web/` (`capacity_mfe`) | `frontend.enabled` (default `false`) | 8080 | `<fullname>-frontend`, port 80 |
