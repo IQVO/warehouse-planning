@@ -152,6 +152,11 @@ const sidebars: SidebarsConfig = {
           label: '0017 Inbound labour demand and observed capacity',
           href: '/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback',
         },
+        {
+          type: 'link',
+          label: '0018 A2A inbound adapter',
+          href: '/docs/adr/0018-a2a-inbound-adapter',
+        },
       ],
     },
   ],

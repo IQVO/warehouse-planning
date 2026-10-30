@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY . .
 
-# Build EVERY cmd/* binary (cmd/api, cmd/mcp, cmd/planning-projector and
+# Build EVERY cmd/* binary (cmd/api, cmd/mcp, cmd/a2a, cmd/planning-projector and
 # cmd/planning-reports) by
 # looping over the cmd/ directories, so a new composition root can never be
 # merged with a Dockerfile that silently forgets to build it (CI skips the
@@ -37,7 +37,7 @@ RUN apk upgrade --no-cache && \
     apk add --no-cache ca-certificates tzdata && \
     addgroup -g 1000 -S app && adduser -u 1000 -S app -G app
 WORKDIR /app
-# Every binary built above (api, mcp, planning-projector, planning-reports)
+# Every binary built above (api, mcp, a2a, planning-projector, planning-reports)
 # -> /app/<name>.
 COPY --from=build --chown=app:app /out/ ./
 # The service's golang-migrate files live under internal/; the chart sets
@@ -47,6 +47,6 @@ COPY --from=build --chown=app:app /src/internal/adapters/outbound/postgres/migra
 # planning-projector; ANALYTICS_MIGRATIONS_PATH defaults to this directory.
 COPY --from=build --chown=app:app /src/analytics/migrations ./analytics/migrations
 USER 1000
-# 8080 api, 8090 mcp, 8091 planning-projector admin, 8092 planning-reports.
-EXPOSE 8080 8090 8091 8092
+# 8080 api, 8090 mcp, 8091 planning-projector admin, 8092 planning-reports, 8093 a2a.
+EXPOSE 8080 8090 8091 8092 8093
 ENTRYPOINT ["./api"]

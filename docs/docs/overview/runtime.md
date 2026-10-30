@@ -15,11 +15,11 @@ Hexagonal architecture, enforced by architecture tests in
 | --- | --- |
 | Domain | `internal/domain/{processcapacity,capacityplan,processpath,demand}` |
 | Application (use cases, ports) | `internal/application/{usecases,ports,outbox,tally}` |
-| Inbound adapters | `internal/adapters/inbound/{http,kafka,mcp}` |
+| Inbound adapters | `internal/adapters/inbound/{http,kafka,mcp,a2a}` |
 | Outbound adapters | `internal/adapters/outbound/{postgres,memory,kafka,outbox,analyticsstore,telemetry}` |
 | CloudEvents helper | `internal/adapters/kafka/cloudevents` |
 | Analytics read side | `internal/analytics/report` (never imported by the OLTP layers) |
-| Composition roots | `cmd/api`, `cmd/mcp`, `cmd/planning-projector`, `cmd/planning-reports` |
+| Composition roots | `cmd/api`, `cmd/mcp`, `cmd/a2a`, `cmd/planning-projector`, `cmd/planning-reports` |
 
 The [class diagrams](/docs/ddd/class-diagram) show the domain types and the
 ports with their adapters.
@@ -30,10 +30,11 @@ ports with their adapters.
 | --- | --- | --- | --- | --- |
 | `cmd/api` | REST API, the five domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`, required) and Kafka (`KAFKA_BROKERS`, required) |
 | `cmd/mcp` | MCP server (Streamable HTTP, 14 tools); writes outbox rows but never relays them | `MCP_ADDR` `:8090` (`/` and `/mcp`) | `/healthz` | the same OLTP Postgres (`DATABASE_URL`, required) |
+| `cmd/a2a` | A2A agent ([ADR 0018](/docs/adr/0018-a2a-inbound-adapter); JSON-RPC over HTTP, 2 skills: `path_capacity` read, `evaluate_capacity_plan` write); writes outbox rows but never relays them | `A2A_ADDR` `:8093` (`/` and `/a2a`; card at `/.well-known/agent-card.json`) | `/healthz` | the same OLTP Postgres (`DATABASE_URL`, required) |
 | `cmd/planning-projector` | the only writer of the analytical database, fed by `warehouse.warehouse-planning.analytics` | `ADMIN_ADDR` `:8091` (admin only) | `/healthz`, `/readyz` (analytical Postgres ping and Kafka metadata) | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-write) |
 | `cmd/planning-reports` | read-only `GET /reports/...` over the analytical database | `HTTP_ADDR` `:8092` | `/healthz`, `/readyz` (analytical Postgres ping) | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-only transactions) |
 
-`cmd/api` and `cmd/mcp` both run the OLTP migrations at boot
+`cmd/api`, `cmd/mcp` and `cmd/a2a` all run the OLTP migrations at boot
 (`MIGRATIONS_DATABASE_URL`, falling back to `DATABASE_URL`); the projector runs
 the analytical ones. Every variable is listed on
 [Configuration](/docs/operations/configuration), and the probes are explained
@@ -48,6 +49,7 @@ flowchart LR
   subgraph warehouse-planning
     API[cmd/api :8080]
     MCP[cmd/mcp :8090]
+    A2A[cmd/a2a :8093]
     PROJ[cmd/planning-projector :8091]
     REP[cmd/planning-reports :8092]
   end
@@ -57,8 +59,10 @@ flowchart LR
   KONG --> API
   KONG -- "/reports/..." --> REP
   AGENT --> MCP
+  AGENT -- "A2A delegation" --> A2A
   API --> OLTP
   MCP --> OLTP
+  A2A --> OLTP
   KAFKA -- "workforce, facility, order-management, inbound-receiving, fulfillment events" --> API
   API -- "outbox relay: events and analytics topics" --> KAFKA
   KAFKA -- "warehouse.warehouse-planning.analytics" --> PROJ
@@ -66,7 +70,7 @@ flowchart LR
   REP --> ANA
 ```
 
-Source: `cmd/api/main.go`, `cmd/mcp/main.go`, `cmd/mcp/router.go`,
+Source: `cmd/api/main.go`, `cmd/mcp/main.go`, `cmd/mcp/router.go`, `cmd/a2a/main.go`, `cmd/a2a/router.go`,
 `cmd/planning-projector/main.go`, `cmd/planning-reports/main.go`.
 Omits: the DLQ topics, the OTel Collector and the `web/` remote's own nginx
 workload.
