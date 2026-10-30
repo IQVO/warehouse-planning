@@ -27,6 +27,11 @@ mcp:
   route:
     parentRefs: *gateway
 
+# ANTICIPATED (ADR 0018): added by the separate warehouse-infra A2A flip PR.
+a2a:
+  route:
+    parentRefs: *gateway
+
 analytics:
   reports:
     route:

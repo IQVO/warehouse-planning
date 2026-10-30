@@ -327,6 +327,52 @@ mcp:
       cpu: 100m
       memory: 128Mi
 
+# --- A2A agent ---
+# The Agent2Agent agent (cmd/a2a, ADR 0018): the third driving adapter over the
+# SAME use cases as the REST and MCP surfaces. Skills: path_capacity (read) and
+# evaluate_capacity_plan (write: records a DRAFT plan). DISABLED by default.
+# Enabling it renders its own Deployment + Service (component=a2a) over the
+# same OLTP database, JSON-RPC at "/" and "/a2a", the Agent Card at
+# /.well-known/agent-card.json and GET /healthz probes, command /app/a2a. Env
+# names in templates/a2a-deployment.yaml match cmd/a2a/main.go. It starts no
+# outbox relay and dials no Kafka (the relay runs in the api component); A2A
+# carries delegation only, the facts still leave as CloudEvents through the
+# outbox. No auth: A2A endpoints are unauthenticated fleet-wide.
+a2a:
+  enabled: false
+  replicaCount: 1
+  # A2A_ADDR the binary listens on; keep in sync with service.targetPort.
+  # (8080 api, 8090 mcp, 8091 projector admin, 8092 reports, so 8093.)
+  httpAddr: ":8093"
+  # Absolute URL advertised on the Agent Card (A2A_AGENT_URL, mandatory in the
+  # binary). Empty defaults to this release's in-cluster Service DNS
+  # (http://<release>-a2a.<ns>.svc.cluster.local:8093/); warehouse-infra can
+  # override it with the Kong path when the agent must be reachable off-cluster.
+  agentUrl: ""
+  service:
+    type: ClusterIP
+    port: 8093
+    targetPort: 8093
+  # Kong exposure of the A2A agent (a2a-route.yaml): host path
+  # /api/a2a/<context> rewritten to / (JSON-RPC root; the well-known agent
+  # card stays reachable under the same prefix). Off by default;
+  # warehouse-infra turns it on with the real parentRefs and path.
+  route:
+    enabled: false
+    path: "/api/a2a/warehouse-planning"
+    parentRefs:
+      - name: ""
+        namespace: ""
+        sectionName: "http"
+  extraEnv: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
 nodeSelector: {}
 tolerations: []
 affinity: {}

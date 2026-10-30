@@ -11,7 +11,7 @@ The final schemas after applying every migration in order. This service has
 **two** Postgres databases:
 
 - the **OLTP** database (`DATABASE_URL`), migrated by `cmd/api` and `cmd/mcp`
-  from `internal/adapters/outbound/postgres/migrations/0001` to `0007`;
+  from `internal/adapters/outbound/postgres/migrations/0001` to `0010`;
 - the separate **analytical** database (`ANALYTICS_DATABASE_URL`,
   `warehouse_planning_analytics`), migrated and written only by
   `cmd/planning-projector` from `analytics/migrations/0001` (ADR 0005).
@@ -61,6 +61,10 @@ erDiagram
     text bottleneck_constraint "0005, default empty"
     text_array warnings "0005"
     text demand_source "0006, request or orders"
+    text site_id "0008, default empty; required for new plans"
+    integer inbound_appointments "0009, dock-appointment demand the plan was created against"
+    double_precision inbound_labour_minutes "0009"
+    boolean inbound_standard_missing "0009"
   }
   process_paths {
     text id PK
@@ -94,6 +98,31 @@ erDiagram
     integer released_lines "CHECK at least 0"
     timestamptz as_of
   }
+  inbound_appointments {
+    text appointment_id PK "inbound-receiving's dock appointment id, 0009"
+    text location "DEMAND_SITE_ID"
+    text status "BOOKED or CANCELLED; a Cancelled arriving first is a tombstone"
+    timestamptz window_start "nullable; set together with window_end"
+    timestamptz window_end "nullable"
+    integer asn_count "nullable; CHECK at least 0, at least 1 when BOOKED"
+    timestamptz as_of "producer event time, last-writer-wins"
+  }
+  inbound_labour_standards {
+    text location PK "0009"
+    text process_path_id PK "no FK"
+    double_precision minutes_per_appointment "CHECK above 0"
+    double_precision minutes_per_asn "default 0, CHECK at least 0"
+    timestamptz updated_at
+  }
+  observed_capacity {
+    text location PK "DEMAND_SITE_ID, 0010"
+    text process_type PK "the event's task_type, upper-cased"
+    timestamptz bucket_start PK "event time truncated to the minute, UTC"
+    bigint tasks_completed "CHECK above 0"
+    bigint duration_seconds_total "default 0, CHECK at least 0"
+    bigint tasks_with_duration "default 0, CHECK at least 0"
+    timestamptz as_of
+  }
   processed_events {
     text consumer PK
     text event_id PK
@@ -121,10 +150,11 @@ erDiagram
 ```
 
 Source: `internal/adapters/outbound/postgres/migrations/0001_process_capacity.up.sql`
-through `0007_outbox_event_id_per_topic.up.sql`, `internal/adapters/outbound/postgres/migrate.go`.
+through `0010_observed_capacity.up.sql`, `internal/adapters/outbound/postgres/migrate.go`.
 Omits: the indexes (`idx_capacity_plans_warehouse_window`,
 `idx_outbox_events_unpublished` partial on `published_at IS NULL`,
-`idx_order_demand_location_promise`) and column defaults. Types are drawn in
+`idx_order_demand_location_promise`, `idx_inbound_appointments_location_window`
+partial on `status = 'BOOKED'`) and column defaults. Types are drawn in
 lower case with `_` instead of spaces (`double_precision`, `text_array` for
 `TEXT[]`) because Mermaid types cannot contain spaces or brackets.
 
@@ -147,8 +177,16 @@ logical and deliberately has no foreign key:
   knows what to decrement.
 - `outbox_events.subject` and `key` are the capacity plan id.
 - `processed_events.event_id` is the CloudEvents id of a consumed message;
-  `consumer` is `labor-capacity-consumer`, `storage-capacity-consumer` or
-  `order-demand-consumer`.
+  `consumer` is `labor-capacity-consumer`, `storage-capacity-consumer`,
+  `order-demand-consumer`, `inbound-demand-consumer` or
+  `observed-capacity-consumer`.
+- `inbound_appointments.appointment_id` names inbound-receiving's dock
+  appointment (ADR 0017); its events carry no site, so `location` is the one
+  configured site. `inbound_labour_standards.process_path_id` names a
+  `process_paths.id` but is operator-declared and never defaulted, so it has
+  no key. `observed_capacity` is fed by fulfillment-execution's
+  `TaskCompleted` events and is advisory input only (ADR 0017); none of the
+  three new tables has a foreign key.
 
 ## Analytical database
 
@@ -194,6 +232,9 @@ transaction as the `plan_facts` upsert.
 | `station_standards` | Stored value objects | `processcapacity.StationStandard` |
 | `location_slot_tally`, `location_slot_registration` | Read model of facility-layout events | facility tally (`internal/application/tally`) |
 | `order_demand` | Read model of order-management events | `demand.Order` |
+| `inbound_appointments` | Read model of inbound-receiving's dock appointments (ADR 0017) | inbound labour demand (`internal/application`) |
+| `inbound_labour_standards` | Operator-declared labour standard per site and path (ADR 0017) | none (read at plan creation) |
+| `observed_capacity` | Read model of fulfillment-execution's completed tasks (ADR 0017) | none (advisory variance input) |
 | `processed_events` | **Infrastructure**: consumer idempotency claims | none |
 | `outbox_events` | **Infrastructure**: transactional outbox (two rows per domain event since `0007`) | none |
 | `schema_migrations` | **Infrastructure**: golang-migrate bookkeeping | none |
