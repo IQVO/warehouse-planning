@@ -84,6 +84,27 @@ relay. Its plan tools write outbox rows that the `cmd/api` relay drains.
 | `SERVICE_VERSION` | `dev` | no | As for `cmd/api`. | `image.tag` | `cmd/mcp/main.go` |
 | `ENVIRONMENT` | `local` | no | As for `cmd/api`. | `environment` | `internal/adapters/outbound/telemetry/telemetry.go` |
 
+## `cmd/a2a` (A2A agent)
+
+`cmd/a2a` ([ADR 0018](/docs/adr/0018-a2a-inbound-adapter)) reads no Kafka variable:
+it never dials Kafka and never starts the relay. `evaluate_capacity_plan` writes
+outbox rows that the `cmd/api` relay drains. A missing `DATABASE_URL` or
+`A2A_AGENT_URL`, or an `A2A_AGENT_URL` that is not an absolute http(s) URL, is a
+boot error naming the variable, raised before telemetry, any connection and the
+listener.
+
+| Variable | Default | Required | Meaning | Chart value | Source |
+| --- | --- | --- | --- | --- | --- |
+| `A2A_ADDR` | `:8093` | no | Listen address of the JSON-RPC server (`/`, `/a2a`, the Agent Card at `/.well-known/agent-card.json` and `GET /healthz`). | `a2a.httpAddr` | `cmd/a2a/main.go` |
+| `A2A_AGENT_URL` | none | **yes** | Absolute http(s) URL of this agent's JSON-RPC endpoint, advertised on the Agent Card. | `a2a.agentUrl`; empty renders `http://<fullname>-a2a.<namespace>.svc.cluster.local:8093/` | `cmd/a2a/main.go` |
+| `LOG_LEVEL` | `info` | no | As for `cmd/mcp`. | `config.logLevel` | `cmd/a2a/main.go` |
+| `DATABASE_URL` | none | **yes** | The same OLTP database as `cmd/api`. Unset is a boot error (`DATABASE_URL is required: ...`); there is no in-memory mode. | as for `cmd/api` | `cmd/a2a/main.go` |
+| `MIGRATIONS_DATABASE_URL` | the value of `DATABASE_URL` | no | Direct DSN for the migration step. `cmd/a2a` also migrates on boot, and the advisory lock makes concurrent starts with `cmd/api` safe. | `database.migrationsExistingSecretKey` | `cmd/a2a/main.go` |
+| `MIGRATIONS_PATH` | `internal/adapters/outbound/postgres/migrations` | no | As for `cmd/api`. | `config.migrationsPath` | `cmd/a2a/main.go` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `cmd/api`. The service name is `warehouse-planning-a2a`. | `otel.endpoint`, rendered while `otel.enabled` | `cmd/a2a/main.go` |
+| `SERVICE_VERSION` | `dev` | no | As for `cmd/api`. | `image.tag` | `cmd/a2a/main.go` |
+| `ENVIRONMENT` | `local` | no | As for `cmd/api`. | `environment` | `internal/adapters/outbound/telemetry/telemetry.go` |
+
 ## `cmd/planning-projector` (analytics writer)
 
 The projector validates its configuration before it does anything else and

@@ -78,6 +78,13 @@ Fully qualified name of the MCP server deployment/service.
 {{- end }}
 
 {{/*
+Fully qualified name of the A2A agent Deployment/Service (<release>-a2a, ADR 0018).
+*/}}
+{{- define "warehouse-planning.a2aFullname" -}}
+{{- include "warehouse-planning.fullname" . }}-a2a
+{{- end }}
+
+{{/*
 Fully qualified name of the frontend Module Federation remote deployment/service.
 
 The remote (web/, `capacity_mfe`) is served by its own nginx pod and reached
@@ -135,8 +142,8 @@ group are checked here, and only while analytics is on.
 {{- end -}}
 
 {{/*
-MANDATORY (ADR 0016: Postgres is the only runtime). cmd/api and cmd/mcp exit at
-boot without DATABASE_URL; there is no in-memory mode. Fails the render naming
+MANDATORY (ADR 0016: Postgres is the only runtime). cmd/api, cmd/mcp and cmd/a2a exit
+at boot without DATABASE_URL; there is no in-memory mode. Fails the render naming
 the values instead of crash-looping.
 */}}
 {{- define "warehouse-planning.requireDatabase" -}}
@@ -224,6 +231,7 @@ Deployment (always rendered) includes it, so a mis-set release fails
 {{- include "warehouse-planning.requireConsumerGroups" . -}}
 {{- include "warehouse-planning.requireNoInMemoryEnv" (dict "list" .Values.extraEnv "where" "extraEnv") -}}
 {{- include "warehouse-planning.requireNoInMemoryEnv" (dict "list" .Values.mcp.extraEnv "where" "mcp.extraEnv") -}}
+{{- include "warehouse-planning.requireNoInMemoryEnv" (dict "list" .Values.a2a.extraEnv "where" "a2a.extraEnv") -}}
 {{- include "warehouse-planning.requireGracePeriod" . -}}
 {{- end -}}
 
