@@ -47,3 +47,9 @@ func (s *IdempotencyStore) Save(_ context.Context, rec idempotency.Record) error
 	s.entries[rec.Key] = idempotencyEntry{rec: rec, at: time.Now()}
 	return nil
 }
+
+// Savepoint implements ports.IdempotencyStore (no transaction to protect).
+func (s *IdempotencyStore) Savepoint(context.Context) error { return nil }
+
+// ReleaseSavepoint implements ports.IdempotencyStore (never aborted).
+func (s *IdempotencyStore) ReleaseSavepoint(context.Context) (bool, error) { return false, nil }

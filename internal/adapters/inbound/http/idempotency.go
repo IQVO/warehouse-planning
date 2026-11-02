@@ -25,6 +25,10 @@ const (
 // aggregate change and is never stored: the retry re-executes.
 var errServerAnswer = errors.New("5xx answers are not stored")
 
+// errAbortedSuccess fails a 2xx answer whose writes died with an aborted
+// transaction: it must be neither returned nor cached.
+var errAbortedSuccess = errors.New("success answer over an aborted transaction")
+
 // idempotent wraps a POST/PATCH handler (fleet REST API guideline section 2).
 // The key row, the aggregate change and the outbox rows commit in ONE unit of
 // work. A Server without UnitOfWork/Idempotency (unit-test servers; cmd/api
@@ -65,6 +69,17 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 // runKeyed is the body of the unit of work: replay or reject a seen key, else
 // execute next and store its deterministic answer. It reports whether the
 // answer is a replay.
+//
+// The handler runs behind a SAVEPOINT. A mapped domain conflict (a racing
+// request losing on a unique index, 23505 -> 409) fails a statement on the
+// server and leaves the shared transaction ABORTED even though the handler
+// answers a truthful 4xx; recording that outcome would then hit 25P02 and the
+// client would see a 500. Releasing the savepoint exposes the abort: the
+// store rolls back to the savepoint, discarding only the handler's partial
+// writes and healing the transaction, and the 4xx outcome is recorded and
+// committed like any other. A 2xx answer over an aborted transaction is a lie
+// (its writes are gone), so the unit of work fails (500, nothing cached) and
+// the same key retries the real work.
 func (s *Server) runKeyed(ctx context.Context, next http.HandlerFunc, rec *recorder, r *http.Request, key, fingerprint string) (bool, error) {
 	stored, err := s.Idempotency.Lock(ctx, key)
 	if err != nil {
@@ -78,9 +93,19 @@ func (s *Server) runKeyed(ctx context.Context, next http.HandlerFunc, rec *recor
 		rec.load(stored)
 		return true, nil
 	}
+	if err := s.Idempotency.Savepoint(ctx); err != nil {
+		return false, err
+	}
 	next(rec, r.WithContext(ctx))
 	if rec.status >= http.StatusInternalServerError {
 		return false, errServerAnswer
+	}
+	aborted, err := s.Idempotency.ReleaseSavepoint(ctx)
+	if err != nil {
+		return false, err
+	}
+	if aborted && rec.status < http.StatusBadRequest {
+		return false, errAbortedSuccess
 	}
 	return false, s.Idempotency.Save(ctx, rec.record(key, fingerprint))
 }
