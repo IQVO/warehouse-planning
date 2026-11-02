@@ -2,6 +2,7 @@ package kafka_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -25,7 +26,7 @@ func TestStorageConsumer_Run_TransientFailureExhaustsAttemptsThenDeadLetters(t *
 	h.consumer.Reader = reader
 
 	err := runUntilCommits(t, reader, 1, h.consumer.Run)
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run = %v, want context.Canceled", err)
 	}
 
@@ -72,7 +73,7 @@ func TestStorageConsumer_Run_DeadLettersPromptly(t *testing.T) {
 	h.consumer.Reader = reader
 
 	start := time.Now()
-	if err := runUntilCommits(t, reader, 1, h.consumer.Run); err != context.Canceled {
+	if err := runUntilCommits(t, reader, 1, h.consumer.Run); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run = %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {

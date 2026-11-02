@@ -72,7 +72,7 @@ func (s *Server) handleListStationStandards(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleGetStorageCapacity(w http.ResponseWriter, r *http.Request) {
 	location := r.URL.Query().Get("location")
 	if location == "" {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"missing-location", "location is required"}, "the location (site code) query parameter must be provided", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMissingLocation, "the location (site code) query parameter must be provided", r.URL.Path)
 		return
 	}
 	capacity, err := s.GetStorageCapacity.Handle(r.Context(), location)

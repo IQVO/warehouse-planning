@@ -163,7 +163,7 @@ func corsAllowedOrigins() []string {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 // handleRegisterProcessCapacityConstraint backs POST /process-capacities.
@@ -175,12 +175,12 @@ func (s *Server) handleRegisterProcessCapacityConstraint(w http.ResponseWriter, 
 
 	windowStart, err := time.Parse(time.RFC3339, req.WindowStart)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-start", "window_start must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowStart, err.Error(), r.URL.Path)
 		return
 	}
 	windowEnd, err := time.Parse(time.RFC3339, req.WindowEnd)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-end", "window_end must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowEnd, err.Error(), r.URL.Path)
 		return
 	}
 	if req.PeriodSeconds <= 0 {
@@ -219,12 +219,12 @@ func (s *Server) handleGetEffectiveProcessCapacity(w http.ResponseWriter, r *htt
 
 	windowStart, err := time.Parse(time.RFC3339, q.Get("window_start"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-start", "window_start must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowStart, err.Error(), r.URL.Path)
 		return
 	}
 	windowEnd, err := time.Parse(time.RFC3339, q.Get("window_end"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-end", "window_end must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowEnd, err.Error(), r.URL.Path)
 		return
 	}
 

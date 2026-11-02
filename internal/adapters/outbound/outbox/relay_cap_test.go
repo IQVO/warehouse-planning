@@ -158,7 +158,7 @@ func TestRelay_SendFailureCarriesTheRow(t *testing.T) {
 	store, sink := memory.NewOutboxRepo(), &poisonSink{failOn: "Poison"}
 	seedTyped(t, store, "Poison", "PLAN-9")
 	_, err := relay.NewRelay(store, sink, quiet(), relay.WithMaxAttempts(5)).RelayOnce(context.Background())
-	var sf *outbox.SendFailure
+	var sf *outbox.SendFailureError
 	if !errors.As(err, &sf) || sf.Attempts != 1 || sf.Message.EventType != "Poison" || string(sf.Message.Key) != "PLAN-9" {
 		t.Fatalf("err = %v (%+v), want a SendFailure for the poison row with attempts 1", err, sf)
 	}

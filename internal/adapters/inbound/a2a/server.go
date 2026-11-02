@@ -30,6 +30,9 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
 
+// contentTypeJSON is the structured content mode this agent accepts and emits.
+const contentTypeJSON = "application/json"
+
 // Config carries the deployment-specific identity of this agent: the absolute
 // URL clients use to reach its JSON-RPC endpoint (advertised on the Agent
 // Card) and the card version. It is supplied by the composition root from
@@ -78,8 +81,8 @@ func Card(cfg Config) *a2a.AgentCard {
 		SupportedInterfaces: []*a2a.AgentInterface{
 			a2a.NewAgentInterface(cfg.AgentURL, a2a.TransportProtocolJSONRPC),
 		},
-		DefaultInputModes:  []string{"application/json", "text/plain"},
-		DefaultOutputModes: []string{"application/json", "text/plain"},
+		DefaultInputModes:  []string{contentTypeJSON, "text/plain"},
+		DefaultOutputModes: []string{contentTypeJSON, "text/plain"},
 		Capabilities:       a2a.AgentCapabilities{Streaming: false},
 		Skills: []a2a.AgentSkill{
 			{
@@ -87,7 +90,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Capacity of a process path in a window",
 				Description: "Read: the end-to-end capacity of one registered process path at one location for [windowStart, windowEnd) in ORDER per HOUR, the bottleneck step and the constraint binding it, each step's own rate and the composition warnings. A registered capacity window applies when it COVERS the requested window, not only when equal. unitsPerOrder / packagesPerOrder are the workload conversion factors and are required when a step is measured in UNIT / PACKAGE. Windows are RFC3339 timestamps. Persists nothing.",
 				Tags:        []string{"planning", "capacity", "read"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"path_capacity","arguments":{"pathId":"tote-path","location":"FC01","windowStart":"2026-10-05T08:00:00Z","windowEnd":"2026-10-05T16:00:00Z","unitsPerOrder":2.5,"packagesPerOrder":1}}`,
 				},
@@ -97,7 +100,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Evaluate assigned demand against a path's capacity",
 				Description: "Write: evaluates the demand assigned to a window against a process path's capacity and records a DRAFT capacity plan (capacity over the window, shortage, bottleneck), exactly as the REST and MCP create-plan operation does, and stores its CapacityPlanCreated CloudEvents in the transactional outbox. assignedDemand (ORDERS, 0 is a real figure) is optional: when omitted the demand is the number of orders order-management has promised at the location in the window, and the call is rejected (nothing written) when there are none. siteId is the REQUIRED canonical site code. The plan is NOT published by this skill. NOT idempotent: every accepted call records a new plan, so a caller must not blindly retry an ambiguous failure.",
 				Tags:        []string{"planning", "capacity-plan", "write"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"evaluate_capacity_plan","arguments":{"warehouseId":"WH-1","siteId":"SIM1","location":"FC01","pathId":"tote-path","windowStart":"2026-10-05T08:00:00Z","windowEnd":"2026-10-05T16:00:00Z","assignedDemand":12000,"unitsPerOrder":2.5,"packagesPerOrder":1}}`,
 				},

@@ -5,6 +5,9 @@ import (
 	"net/http"
 )
 
+// statusKey is the JSON key of the minimal {"status": "..."} health payloads.
+const statusKey = "status"
+
 // writeJSON encodes v as the response body with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

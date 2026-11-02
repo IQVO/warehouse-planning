@@ -12,7 +12,7 @@ import (
 // stays reachable through errors.Is (gap fix D12, ADR 0013).
 func TestSendFailure_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("message too large")
-	f := &outbox.SendFailure{RowID: 7, Message: outbox.Message{EventType: "com.example.Poison"}, Attempts: 3, Err: cause}
+	f := &outbox.SendFailureError{RowID: 7, Message: outbox.Message{EventType: "com.example.Poison"}, Attempts: 3, Err: cause}
 	if got, want := f.Error(), "outbox row 7 (com.example.Poison): message too large"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
