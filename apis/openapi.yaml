@@ -13,6 +13,18 @@ info:
     operator-declared StationStandard (throughput per station) is composed
     with LABOR and the other constraints AT READ TIME (docs/adr/0002), and
     the storage positions / station counts of a site are a read model.
+
+    Cross-cutting behaviour of the service on port 8080: errors are RFC 7807
+    application/problem+json. A NUL character (U+0000) in the path is 404
+    resource-not-found, in the query 400 malformed-request-query and in a request
+    body 400 malformed-request-body. A collection GET answers 400
+    unknown-query-parameter for a query parameter it does not declare; the other
+    GETs ignore unknown parameters. A request body is parsed as JSON whatever its
+    Content-Type, and unknown body fields are ignored. Every POST is keyed by
+    Idempotency-Key; the PUT declarations are naturally idempotent and take no
+    key. A request to an unrouted path or method is answered by the router with a
+    plain-text 404 / 405 outside this contract. GET /healthz and GET /readyz exist
+    but are operational probes, not part of this contract.
   version: "0.1.0"
   contact:
     name: warehouse-planning maintainers
@@ -77,7 +89,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/EffectiveCapacityResponse"
         "400":
-          description: Malformed request body or window, or the Idempotency-Key header is missing (idempotency-key-required) or malformed (idempotency-key-invalid).
+          description: >
+            Malformed JSON body (malformed-json), window_start/window_end not RFC 3339 (malformed-window-start /
+            malformed-window-end), a window whose end is not after its start (invalid-capacity-window), a NUL
+            character in the body (malformed-request-body), or the Idempotency-Key header is missing
+            (idempotency-key-required) or malformed (idempotency-key-invalid).
           content:
             application/problem+json:
               schema:
@@ -89,11 +105,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
         "422":
-          description: Negative quantity or non-positive period.
+          description: Negative quantity (negative-quantity) or a non-positive period_seconds (non-positive-period).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       operationId: getEffectiveProcessCapacity
       x-pagination-exempt: view
@@ -141,7 +159,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/EffectiveCapacityResponse"
         "400":
-          description: Malformed window_start/window_end.
+          description: Malformed window_start/window_end (malformed-window-start / malformed-window-end), or a NUL character in the query (malformed-request-query).
           content:
             application/problem+json:
               schema:
@@ -152,6 +170,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /process-paths:
     get:
       operationId: listProcessPaths
@@ -175,6 +195,8 @@ paths:
                 $ref: "#/components/schemas/ProcessPathPage"
         "400":
           $ref: "#/components/responses/PageBadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
     post:
       operationId: registerProcessPath
       summary: Register (seed) a ProcessPath read model
@@ -212,6 +234,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /process-paths/{id}/capacity:
     get:
       operationId: getProcessPathCapacity
@@ -316,6 +340,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /capacity-plans:
     get:
       operationId: listCapacityPlans
@@ -347,6 +373,8 @@ paths:
                 $ref: "#/components/schemas/CapacityPlanPage"
         "400":
           $ref: "#/components/responses/PageBadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
     post:
       operationId: createCapacityPlan
       summary: Create a DRAFT CapacityPlan and compute its shortage
@@ -429,6 +457,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /capacity-plans/{id}:
     get:
       operationId: getCapacityPlan
@@ -458,6 +488,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /capacity-plans/{id}/publications:
     post:
       operationId: publishCapacityPlan
@@ -502,6 +534,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /station-standards/{location}/{process_type}:
     put:
       operationId: declareStationStandard
@@ -563,6 +597,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /station-standards:
     get:
       operationId: listStationStandards
@@ -587,6 +623,8 @@ paths:
                 $ref: "#/components/schemas/StationStandardPage"
         "400":
           $ref: "#/components/responses/PageBadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /storage-capacity:
     get:
       operationId: getStorageCapacity
@@ -620,6 +658,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /demand:
     get:
       operationId: getExpectedDemand
@@ -679,6 +719,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /inbound-labour-standards/{location}/{path_id}:
     put:
       operationId: declareInboundLabourStandard
@@ -738,6 +780,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /inbound-labour-standards:
     get:
       operationId: listInboundLabourStandards
@@ -762,6 +806,8 @@ paths:
                 $ref: "#/components/schemas/InboundLabourStandardPage"
         "400":
           $ref: "#/components/responses/PageBadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /inbound-demand:
     get:
       operationId: getInboundDemand
@@ -823,6 +869,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /capacity-plans/{id}/variance:
     get:
       operationId: getCapacityPlanVariance
@@ -877,6 +925,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /reports/bottleneck-frequency:
     servers:
       - url: http://localhost:8092
@@ -1085,6 +1135,15 @@ components:
             $ref: "#/components/schemas/ProblemDetail"
     KeyReused:
       description: The Idempotency-Key was already used with a different request (idempotency-key-reused).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    InternalError:
+      description: >
+        An unexpected failure (a store or outbox error). Answered as problem+json (internal-error).
+        A 5xx answer is never stored under an Idempotency-Key and rolls back the aggregate change
+        and its outbox rows, so the retry re-executes.
       content:
         application/problem+json:
           schema:
@@ -1320,6 +1379,7 @@ components:
           example: 3600
     StationStandardResponse:
       type: object
+      required: [location, process_type, quantity, unit, period_seconds]
       properties:
         location:
           type: string
@@ -1352,6 +1412,7 @@ components:
           description: Opaque cursor for the next page; absent on the last page.
     StorageCapacityResponse:
       type: object
+      required: [location, storage_positions, stations]
       properties:
         location:
           type: string
@@ -1360,6 +1421,7 @@ components:
           type: array
           items:
             type: object
+            required: [zone_id, location_type, positions]
             properties:
               zone_id:
                 type: string
@@ -1374,6 +1436,7 @@ components:
           type: array
           items:
             type: object
+            required: [zone_id, activity, stations]
             properties:
               zone_id:
                 type: string
@@ -1415,6 +1478,7 @@ components:
         constraint_type:
           type: string
           enum: [LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT]
+          description: The documented constraint types. The service does not validate the value; any string is stored and echoed back.
         quantity:
           type: number
           format: double
@@ -1423,6 +1487,10 @@ components:
         unit:
           type: string
           enum: [UNIT, LINE, ORDER, PACKAGE]
+          description: >
+            The documented capacity units. The service does not validate the value on registration: the first
+            constraint fixes the aggregate's native unit (whatever string it is) and a later constraint in another
+            unit is 409 unit-mismatch.
         period_seconds:
           type: number
           format: double
@@ -1431,6 +1499,7 @@ components:
           example: 3600
     EffectiveCapacityResponse:
       type: object
+      required: [effective_rate, effective_unit, binding_constraint]
       properties:
         effective_rate:
           type: number
@@ -1448,6 +1517,7 @@ components:
             $ref: "#/components/schemas/ConstraintEntry"
     ConstraintEntry:
       type: object
+      required: [constraint_type, quantity, unit, period_seconds]
       properties:
         constraint_type:
           type: string
@@ -1461,6 +1531,7 @@ components:
           format: double
     ProblemDetail:
       type: object
+      required: [type, title, status, detail, instance]
       description: RFC 7807 problem detail.
       properties:
         type:
@@ -1495,6 +1566,7 @@ components:
           example: ["PICK", "REBIN", "PACK"]
     ProcessPathResponse:
       type: object
+      required: [id, name, steps]
       properties:
         id:
           type: string
@@ -1530,6 +1602,7 @@ components:
           description: Opaque cursor for the next page; absent on the last page.
     ProcessPathCapacityResponse:
       type: object
+      required: [normalized_rate, normalized_unit, bottleneck_step, step_breakdown, warnings]
       properties:
         normalized_rate:
           type: number
@@ -1546,6 +1619,7 @@ components:
           description: Additive. Each step's composed capacity in path order.
           items:
             type: object
+            required: [step, normalized_rate, binding_constraint]
             properties:
               step:
                 type: string
@@ -1627,6 +1701,7 @@ components:
           example: 1
     CapacityPlanResponse:
       type: object
+      required: [id, warehouse_id, site_id, location, window_start, window_end, path_id, assigned_demand, demand_source, status, path_capacity, bottleneck_step, capacity_over_window, shortage, created_at, bottleneck_constraint, warnings, inbound_appointments, inbound_labour_minutes, inbound_average_heads, inbound_standard_missing]
       properties:
         id:
           type: string
@@ -1747,6 +1822,7 @@ components:
           example: 5
     InboundLabourStandardResponse:
       type: object
+      required: [location, path_id, minutes_per_appointment, minutes_per_asn]
       properties:
         location:
           type: string
