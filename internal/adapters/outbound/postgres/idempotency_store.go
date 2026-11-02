@@ -63,3 +63,26 @@ func (s *IdempotencyStore) Save(ctx context.Context, rec idempotency.Record) err
 	}
 	return nil
 }
+
+// Savepoint implements ports.IdempotencyStore.
+func (s *IdempotencyStore) Savepoint(ctx context.Context) error {
+	if _, err := queryFor(ctx, s.pool).Exec(ctx, "SAVEPOINT handler_run"); err != nil {
+		return fmt.Errorf("open handler savepoint: %w", err)
+	}
+	return nil
+}
+
+// ReleaseSavepoint implements ports.IdempotencyStore. If RELEASE fails the
+// handler aborted the transaction (a mapped unique violation, say):
+// ROLLBACK TO SAVEPOINT discards only the handler's partial writes and heals
+// the transaction so the outcome can still be recorded.
+func (s *IdempotencyStore) ReleaseSavepoint(ctx context.Context) (bool, error) {
+	q := queryFor(ctx, s.pool)
+	if _, err := q.Exec(ctx, "RELEASE SAVEPOINT handler_run"); err == nil {
+		return false, nil
+	}
+	if _, err := q.Exec(ctx, "ROLLBACK TO SAVEPOINT handler_run"); err != nil {
+		return true, fmt.Errorf("heal aborted transaction: %w", err)
+	}
+	return true, nil
+}
