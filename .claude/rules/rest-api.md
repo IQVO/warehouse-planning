@@ -28,7 +28,7 @@ Phase 2 (current):
 Phase 4 (current):
 
 - `POST /capacity-plans`             -> `CreateCapacityPlan`
-- `POST /capacity-plans/{id}/publish`-> `PublishCapacityPlan`
+- `POST /capacity-plans/{id}/publications`-> `PublishCapacityPlan`
 - `GET  /capacity-plans/{id}`        -> direct repository read
 
 Station capacity (current, docs/adr/0002):
@@ -212,7 +212,7 @@ step, e.g. `LABOR` or `STATION`) can be `STATION`, and `warnings` (additive,
 never null) carries the composition warnings. Both are stored with the plan
 (migration `0005`; empty for plans created before it) and returned by GET and
 publish too. The published CloudEvents payloads do not carry them. `GET /capacity-plans/{id}` returns the same body (200 / 404);
-`POST /capacity-plans/{id}/publish` returns it with `status: "PUBLISHED"` and
+`POST /capacity-plans/{id}/publications` returns it with `status: "PUBLISHED"` and
 `published_at` (200).
 
 Errors (`application/problem+json`):
