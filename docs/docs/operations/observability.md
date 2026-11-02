@@ -62,7 +62,7 @@ database and the broker (see [Suggested alerts](#suggested-alerts)).
 
 ## Traces
 
-- **Server spans**: `otelchi.Middleware` on the same three routers creates one span per request. With `WithChiRoutes`, the span name is the chi route pattern without the method, for example `/capacity-plans/{id}/publish` or `/reports/shortage-trend`. Spans carry `http.route` and the response `http.status_code`.
+- **Server spans**: `otelchi.Middleware` on the same three routers creates one span per request. With `WithChiRoutes`, the span name is the chi route pattern without the method, for example `/capacity-plans/{id}/publications` or `/reports/shortage-trend`. Spans carry `http.route` and the response `http.status_code`.
 - **Trace context crosses the outbox** ([ADR 0014](/docs/adr/0014-trace-context-crosses-the-outbox)). `postgres.OutboxRepo.Insert` injects the request span's W3C context (`traceparent`, plus `tracestate` / `baggage` when present) into each row's `outbox_events.headers`, and the relay copies the stored headers onto the Kafka message. A consumer that extracts them continues the request's trace. Rows written without an active span (or before this change) carry only `content-type`. The in-memory outbox double used by unit tests does not inject; no shipped binary uses it.
 - **Nothing else is traced.** The Kafka consumers, the outbox relay, the use cases and the Postgres calls create no spans of their own; this service's consumers do not extract incoming trace headers because they open no span.
 

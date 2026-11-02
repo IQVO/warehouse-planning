@@ -34,7 +34,7 @@ sequenceDiagram
   Planner->>WP: cmd: POST /capacity-plans with assigned_demand
   Note over WP: path capacity composed at read time, plan saved as DRAFT
   WP-->>OM: evt: CapacityPlanCreated on warehouse.warehouse-planning.events
-  Planner->>WP: cmd: POST /capacity-plans/{id}/publish
+  Planner->>WP: cmd: POST /capacity-plans/{id}/publications
   WP-->>OM: evt: CapacityPlanPublished
   WP-->>OM: evt: CapacityShortageDetected, only because shortage is above 0
   WP-->>OM: evt: BottleneckDetected, ignored by order-management today

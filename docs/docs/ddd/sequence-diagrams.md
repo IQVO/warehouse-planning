@@ -275,7 +275,7 @@ sequenceDiagram
   participant CP as CapacityPlan
   participant E as FanoutEncoder
   participant OB as OutboxRepository
-  Client->>H: POST /capacity-plans/{id}/publish or publish_capacity_plan
+  Client->>H: POST /capacity-plans/{id}/publications or publish_capacity_plan
   H->>UC: Handle(id)
   UC->>U: Do
   U->>R: FindByID locks the row FOR UPDATE

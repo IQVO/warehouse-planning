@@ -115,8 +115,8 @@ curl -s -X POST localhost:8080/capacity-plans -H 'Content-Type: application/json
 #      "capacity_over_window":8000,"shortage":4000,"demand_source":"request","bottleneck_constraint":"LABOR",...}
 
 # 5. Publish it (once), then try again
-curl -s -X POST localhost:8080/capacity-plans/<id>/publish   # 200, "status":"PUBLISHED"
-curl -s -X POST localhost:8080/capacity-plans/<id>/publish   # 409
+curl -s -X POST localhost:8080/capacity-plans/<id>/publications   # 200, "status":"PUBLISHED"
+curl -s -X POST localhost:8080/capacity-plans/<id>/publications   # 409
 # {"type":"https://errors.warehouse-planning.warehouse-systems.dev/capacity-plan-already-published",
 #  "title":"This CapacityPlan has already been published","status":409,...}
 ```

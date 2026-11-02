@@ -295,7 +295,7 @@ Write side:
 | `POST` | `/process-capacities` | RegisterProcessCapacityConstraint | `201` + `Location` |
 | `POST` | `/process-paths` | RegisterProcessPath | `201` + `Location` |
 | `POST` | `/capacity-plans` | CreateCapacityPlan (DRAFT; shortage + bottleneck) | `201` + `Location` |
-| `POST` | `/capacity-plans/{id}/publish` | PublishCapacityPlan | `200` |
+| `POST` | `/capacity-plans/{id}/publications` | PublishCapacityPlan | `200` |
 | `PUT` | `/station-standards/{location}/{process_type}` | DeclareStationStandard | `200` |
 | `PUT` | `/inbound-labour-standards/{location}/{path_id}` | DeclareInboundLabourStandard | `200` |
 
