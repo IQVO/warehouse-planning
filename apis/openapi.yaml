@@ -47,6 +47,8 @@ paths:
       operationId: registerProcessCapacityConstraint
       summary: Register (or upsert) one capacity constraint
       tags: [process-capacities]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       description: >
         Upserts one named constraint (LABOR, LOCATION, EQUIPMENT, STATION,
         CONVEYOR, BUFFER or REPLENISHMENT) on the ProcessCapacity identified
@@ -67,18 +69,21 @@ paths:
       responses:
         "201":
           description: Constraint registered; effective capacity recomputed.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/EffectiveCapacityResponse"
         "400":
-          description: Malformed request body or window.
+          description: Malformed request body or window, or the Idempotency-Key header is missing (idempotency-key-required) or malformed (idempotency-key-invalid).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
         "409":
-          description: Constraint rate unit does not match the aggregate's established native unit.
+          description: Constraint rate unit does not match the aggregate's established native unit (unit-mismatch), or the Idempotency-Key was already used with a different request (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
@@ -91,6 +96,7 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
     get:
       operationId: getEffectiveProcessCapacity
+      x-pagination-exempt: view
       summary: Get the effective capacity for a process, location and window
       tags: [process-capacities]
       description: >
@@ -152,20 +158,29 @@ paths:
       summary: List the registered ProcessPaths
       tags: [process-paths]
       description: >
-        Every ProcessPath registered with POST /process-paths, ordered by id,
-        each with its ordered steps. 200 with an empty list when none is
-        registered. Read-only; there is no MCP tool for it.
+        The ProcessPaths registered with POST /process-paths, ordered by id,
+        each with its ordered steps, one keyset page at a time (limit +
+        cursor; follow nextCursor until it is absent). 200 with an empty
+        items list when none is registered. Read-only; there is no MCP tool
+        for it.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: The registered paths (possibly empty).
+          description: One page of registered paths (possibly empty).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProcessPathsResponse"
+                $ref: "#/components/schemas/ProcessPathPage"
+        "400":
+          $ref: "#/components/responses/PageBadRequest"
     post:
       operationId: registerProcessPath
       summary: Register (seed) a ProcessPath read model
       tags: [process-paths]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       description: >
         Seeds a ProcessPath read model (id, name, an ordered non-empty list
         of step process types) directly, since there is no event-driven
@@ -180,16 +195,17 @@ paths:
       responses:
         "201":
           description: ProcessPath registered.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessPathResponse"
         "400":
-          description: Malformed request body.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/KeyReused"
         "422":
           description: Empty step list.
           content:
@@ -199,6 +215,7 @@ paths:
   /process-paths/{id}/capacity:
     get:
       operationId: getProcessPathCapacity
+      x-pagination-exempt: view
       summary: Get a ProcessPath's normalized, end-to-end capacity
       tags: [process-paths]
       description: >
@@ -306,13 +323,12 @@ paths:
       tags: [capacity-plans]
       description: >
         The most recently created plans, newest first (ties broken by id,
-        descending), each in exactly the shape of GET /capacity-plans/{id}.
-        `location` restricts the list to one location; omitted means every
-        location (and the response then carries no `location`). `limit`
-        defaults to 20 and is capped at 100: a larger value is served as 100,
-        a value that is not a positive integer is rejected with 400
-        malformed-limit. 200 with an empty list when nothing matches.
-        Read-only; there is no MCP tool for it.
+        descending), each in exactly the shape of GET /capacity-plans/{id},
+        one keyset page at a time (limit + cursor; follow nextCursor until it
+        is absent). `location` restricts the list to one location (repeat it
+        on every page request); omitted means every location. 200 with an
+        empty items list when nothing matches. Read-only; there is no MCP tool
+        for it.
       parameters:
         - name: location
           in: query
@@ -320,32 +336,23 @@ paths:
           schema:
             type: string
           example: SIM1
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-          example: 20
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: The plans, newest first (possibly empty).
+          description: One page of plans, newest first (possibly empty).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CapacityPlansResponse"
+                $ref: "#/components/schemas/CapacityPlanPage"
         "400":
-          description: limit is not a positive integer (malformed-limit).
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
+          $ref: "#/components/responses/PageBadRequest"
     post:
       operationId: createCapacityPlan
       summary: Create a DRAFT CapacityPlan and compute its shortage
       tags: [capacity-plans]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       description: >
         Evaluates the ProcessPath path_id against assigned_demand (orders)
         for the warehouse's location over [window_start, window_end):
@@ -388,12 +395,15 @@ paths:
       responses:
         "201":
           description: Plan created (status DRAFT).
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CapacityPlanResponse"
         "400":
-          description: Malformed JSON body, malformed window_start/window_end, or a window whose end is not after its start.
+          description: Malformed JSON body, malformed window_start/window_end, a window whose end is not after its start, or a missing/malformed Idempotency-Key (idempotency-key-required / idempotency-key-invalid).
           content:
             application/problem+json:
               schema:
@@ -404,6 +414,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          $ref: "#/components/responses/KeyReused"
         "422":
           description: >
             A path step has no ProcessCapacity registered for this
@@ -446,7 +458,7 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
-  /capacity-plans/{id}/publish:
+  /capacity-plans/{id}/publications:
     post:
       operationId: publishCapacityPlan
       summary: Publish a DRAFT CapacityPlan
@@ -459,6 +471,7 @@ paths:
         them to Kafka as CloudEvents (see asyncapi.yaml). Publishing twice
         is never silent: the second call is a 409 and queues nothing.
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - name: id
           in: path
           required: true
@@ -468,10 +481,15 @@ paths:
       responses:
         "200":
           description: Plan published.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CapacityPlanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: No CapacityPlan exists under id.
           content:
@@ -479,7 +497,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
         "409":
-          description: The plan is already PUBLISHED.
+          description: The plan is already PUBLISHED (capacity-plan-already-published), or the Idempotency-Key was already used with a different request (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
@@ -550,7 +568,7 @@ paths:
       operationId: listStationStandards
       summary: List the declared station standards
       tags: [station-capacity]
-      description: The standards of one site, or every standard when `location` is omitted, ordered by location then process type.
+      description: The standards of one site, or every standard when `location` is omitted, ordered by location then process type, one keyset page at a time (limit + cursor; follow nextCursor until it is absent).
       parameters:
         - name: location
           in: query
@@ -558,16 +576,21 @@ paths:
           schema:
             type: string
           example: SIM1
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: The declared standards (possibly empty).
+          description: One page of declared standards (possibly empty).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StationStandardsResponse"
+                $ref: "#/components/schemas/StationStandardPage"
+        "400":
+          $ref: "#/components/responses/PageBadRequest"
   /storage-capacity:
     get:
       operationId: getStorageCapacity
+      x-pagination-exempt: view
       summary: Storage positions and stations of a site (read model)
       tags: [station-capacity]
       description: >
@@ -720,7 +743,7 @@ paths:
       operationId: listInboundLabourStandards
       summary: List the declared inbound labour standards
       tags: [inbound-demand]
-      description: The standards of one site, or every standard when `location` is omitted, ordered by location then path id.
+      description: The standards of one site, or every standard when `location` is omitted, ordered by location then path id, one keyset page at a time (limit + cursor; follow nextCursor until it is absent).
       parameters:
         - name: location
           in: query
@@ -728,13 +751,17 @@ paths:
           schema:
             type: string
           example: SIM1
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: The declared standards (possibly empty).
+          description: One page of declared standards (possibly empty).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InboundLabourStandardsResponse"
+                $ref: "#/components/schemas/InboundLabourStandardPage"
+        "400":
+          $ref: "#/components/responses/PageBadRequest"
   /inbound-demand:
     get:
       operationId: getInboundDemand
@@ -993,6 +1020,39 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
 components:
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        Client-generated key (1-128 printable ASCII characters, normally a UUID) per LOGICAL submit.
+        A retry reuses it; a new user action mints a new one. The service always requires it on
+        POST/PATCH when it runs against Postgres; in the in-memory dev mode it is accepted too.
+        Clients must always send it. A missing key is 400 idempotency-key-required, a malformed one
+        400 idempotency-key-invalid; the same key with a different method, path or body is 409
+        idempotency-key-reused; the same key with the same request replays the stored answer with
+        Idempotency-Replayed: true.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size (1-500, default 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque keyset cursor from the previous page's nextCursor. Repeat the filters on every page request.
+      schema:
+        type: string
     ReportFrom:
       name: from
       in: query
@@ -1011,6 +1071,31 @@ components:
         type: string
         format: date-time
       example: "2026-10-07T00:00:00Z"
+  headers:
+    IdempotencyReplayed:
+      description: Present, with the value "true", only when the answer is a replay of an earlier request with the same Idempotency-Key.
+      schema:
+        type: string
+        enum: ["true"]
+  responses:
+    BadRequest:
+      description: Malformed request, or the Idempotency-Key header is missing (idempotency-key-required) or malformed (idempotency-key-invalid).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    KeyReused:
+      description: The Idempotency-Key was already used with a different request (idempotency-key-reused).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    PageBadRequest:
+      description: invalid-limit, invalid-cursor, or unknown-query-parameter (a retired paging parameter such as after, from, offset or nextToken).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
   schemas:
     ReportsFreshness:
       type: object
@@ -1254,16 +1339,18 @@ components:
           type: number
           format: double
           example: 3600
-    StationStandardsResponse:
+    StationStandardPage:
       type: object
+      description: One keyset page of station standards, ordered by location then process type.
+      required: [items]
       properties:
-        location:
-          type: string
-          description: The location filter, when one was given.
-        standards:
+        items:
           type: array
           items:
             $ref: "#/components/schemas/StationStandardResponse"
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
     StorageCapacityResponse:
       type: object
       properties:
@@ -1418,25 +1505,30 @@ components:
           type: array
           items:
             type: string
-    ProcessPathsResponse:
+    ProcessPathPage:
       type: object
+      description: One keyset page of registered paths, ordered by id.
+      required: [items]
       properties:
-        process_paths:
+        items:
           type: array
-          description: Every registered path, ordered by id.
           items:
             $ref: "#/components/schemas/ProcessPathResponse"
-    CapacityPlansResponse:
-      type: object
-      properties:
-        location:
+        nextCursor:
           type: string
-          description: The location filter, when one was given.
-        capacity_plans:
+          description: Opaque cursor for the next page; absent on the last page.
+    CapacityPlanPage:
+      type: object
+      description: One keyset page of plans, newest first.
+      required: [items]
+      properties:
+        items:
           type: array
-          description: Most recently created first.
           items:
             $ref: "#/components/schemas/CapacityPlanResponse"
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
     ProcessPathCapacityResponse:
       type: object
       properties:
@@ -1671,16 +1763,18 @@ components:
           type: number
           format: double
           example: 5
-    InboundLabourStandardsResponse:
+    InboundLabourStandardPage:
       type: object
+      description: One keyset page of inbound labour standards, ordered by location then path id.
+      required: [items]
       properties:
-        location:
-          type: string
-          description: The location filter, when one was given.
-        standards:
+        items:
           type: array
           items:
             $ref: "#/components/schemas/InboundLabourStandardResponse"
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
     InboundDemandResponse:
       type: object
       required:
