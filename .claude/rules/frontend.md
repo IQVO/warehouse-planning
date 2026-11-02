@@ -74,7 +74,7 @@ any other bounded context, and nothing in `internal/` knows `web/` exists.
 |---|---|---|
 | Capacity overview (`/`) | `GET /storage-capacity`, `GET /station-standards`, `GET /demand` | `PUT /station-standards/{location}/{process_type}` |
 | Path capacity (`/paths`) | `GET /process-paths`, `GET /process-paths/{id}/capacity` | none |
-| Capacity plans (`/plans`) | `GET /capacity-plans`, `GET /process-paths` | `POST /capacity-plans`, `POST /capacity-plans/{id}/publish` |
+| Capacity plans (`/plans`) | `GET /capacity-plans`, `GET /process-paths` | `POST /capacity-plans`, `POST /capacity-plans/{id}/publications` |
 
 Behaviours that are contract, not taste: no site is ever assumed (the site field
 starts empty); a `GET /demand` answer with `as_of: null` is rendered as **no

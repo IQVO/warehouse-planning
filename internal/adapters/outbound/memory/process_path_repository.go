@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
@@ -44,7 +46,7 @@ func (r *ProcessPathRepo) FindByID(_ context.Context, id string) (*processpath.P
 
 // List returns every stored ProcessPath ordered by id (empty, non-nil when
 // none is stored).
-func (r *ProcessPathRepo) List(_ context.Context) ([]processpath.ProcessPath, error) {
+func (r *ProcessPathRepo) ListPage(_ context.Context, after *pagecursor.Cursor, limit int) ([]processpath.ProcessPath, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]processpath.ProcessPath, 0, len(r.store))
@@ -52,5 +54,12 @@ func (r *ProcessPathRepo) List(_ context.Context) ([]processpath.ProcessPath, er
 		out = append(out, path)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID() < out[j].ID() })
+	if after != nil {
+		i := sort.Search(len(out), func(i int) bool { return out[i].ID() > after.ID })
+		out = out[i:]
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }

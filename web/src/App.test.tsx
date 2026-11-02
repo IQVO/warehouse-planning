@@ -38,10 +38,10 @@ function subNavHrefs(): string[] {
 function routes() {
   return mockApi({
     "GET /storage-capacity": json(STORAGE),
-    "GET /station-standards": json({ standards: [] }),
+    "GET /station-standards": json({ items: [] }),
     "GET /demand": json({ location: "SIM1", window_start: "a", window_end: "b", orders: 3, released_lines: 6, source: "order-management", as_of: "2026-10-04T09:15:30Z" }),
-    "GET /process-paths": json({ process_paths: PATHS }),
-    "GET /capacity-plans": json({ capacity_plans: [] }),
+    "GET /process-paths": json({ items: PATHS }),
+    "GET /capacity-plans": json({ items: [] }),
   });
 }
 

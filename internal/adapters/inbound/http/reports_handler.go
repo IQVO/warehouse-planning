@@ -99,7 +99,7 @@ func NewReportsRouter(s *ReportsServer) http.Handler {
 	r.Use(otelchi.Middleware(reportsServiceName, otelchi.WithChiRoutes(r)))
 	r.Use(otelchimetric.NewServerRequestDuration(otelchimetric.NewBaseConfig(reportsServiceName)))
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 	})
 	r.Get("/readyz", ReadyzHandler(s.Readiness))
 	r.Get("/reports/bottleneck-frequency", s.handleBottleneckFrequency)

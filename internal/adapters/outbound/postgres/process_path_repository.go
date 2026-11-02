@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -65,8 +67,16 @@ func (r *ProcessPathRepo) FindByID(ctx context.Context, id string) (*processpath
 
 // List returns every stored ProcessPath ordered by id. Steps come back in
 // their declared order (text[]), exactly as FindByID returns them.
-func (r *ProcessPathRepo) List(ctx context.Context) ([]processpath.ProcessPath, error) {
-	rows, err := queryFor(ctx, r.pool).Query(ctx, `SELECT id, name, steps FROM process_paths ORDER BY id`)
+func (r *ProcessPathRepo) ListPage(ctx context.Context, after *pagecursor.Cursor, limit int) ([]processpath.ProcessPath, error) {
+	afterID := ""
+	if after != nil {
+		afterID = after.ID
+	}
+	rows, err := queryFor(ctx, r.pool).Query(ctx, `
+		SELECT id, name, steps FROM process_paths
+		WHERE $1::text = '' OR id > $1::text
+		ORDER BY id
+		LIMIT $2`, afterID, limit)
 	if err != nil {
 		return nil, err
 	}

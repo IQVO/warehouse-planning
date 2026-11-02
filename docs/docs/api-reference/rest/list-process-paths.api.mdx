@@ -1,11 +1,11 @@
 ---
 id: list-process-paths
 title: "List the registered ProcessPaths"
-description: "Every ProcessPath registered with POST /process-paths, ordered by id, each with its ordered steps. 200 with an empty list when none is registered. Read-only; there is no MCP tool for it."
+description: "The ProcessPaths registered with POST /process-paths, ordered by id, each with its ordered steps, one keyset page at a time (limit + cursor; follow nextCursor until it is absent). 200 with an empty items list when none is registered. Read-only; there is no MCP tool for it."
 sidebar_label: "List the registered ProcessPaths"
 hide_title: true
 hide_table_of_contents: true
-api: eJzVVcFu4zYQ/ZUBTwmg2N6gh4VyKNJsUATIbtwk20saFGNqbHGX4nA5Iydaw/9eULIdO3DRc08SyJl5j48zjyvDkRKq43BTmdJ4JzpNbElkilqLKYziQkz5ZOKwfBb79efCVCQ2uZhzTWmul5Q62MuFRAsnSokqeHFaw/Tu4RHGB2UK4FT1EbMOXFUAoa2HaKey2xSlKCM4n0yGPQxATdQOMl14qSlA4EDgZA90BPeE1RkH312A1pT6/cDw+WoKyuxhzgmcjv4KpjCJJHIQElOuzPlkkj+HB3ysaf9IPX84iSziZr4bCJ2OTGEsB6WguQLG6J3t5R1/k1xmZcTW1GD+0y6SKQ3PvpFVU2SFIyV1A4mNUH8Per+FY0rYmePyv+P3Tt5Mzik18t/grtqLEU0uLMy6MAEbOrrR39ARku/hthnrdWHUqc9rez1zv7mFfw2Q/Ygc05DWnDt3Qf0pUGtTmsMuM4URSktKuY9Xpk3elKZWjeV47Nmir1m0/Dj5ODHr58K4MOee8gb+BRPV3AqdRY8hZP7v1b/CAFo7gV0sbBjkzoOKGgwVoIhbBKpAGZwWsHBLCn2j2zYlCgoeZ5wKyKRy5QLoR+tiQ0ELEN2sWQ5L6jhBrjlr53NKeU00oQsqv8K0RiH4APQaWUggoLolbWfzCiNap9tmGYa/r5WpWm5iq1QBzedk+7yESheboud9UODUoHc/qToYeLupvA3+BbZYU49B4GQnwEaQpYz6Pt1lFiA1J8UFFTBjVU+B7PdTeKlZCLybk+2sJ6AlBRXwhEsCrRO3ixoQNGEQtPlA6IFbnfErnAgRoHTBYnSjDht/OoKHQcwdcLmVV0DRe0cVzBM3MEfrvNPuzGPHrUKdAQNvMWOrwPOsiUvAL+EiW9PgqJzOKrIe8/Rt0B4UQ4WpgpO99Ehpi32aDSpfAMvWM28vf7u7310OZxvbv2u4fIT768tP8Hjz+RpOKrYyxiqNJ5PJ+WmxyxPlhAuCyOKGQ463mGC5zYV4DgjilAATAUIirKDhivzgj3l6hl6fjD6MJhubQ9vb3GALRwYFmkwTXcizV+xNnpTj8cJp3c5GlpvxzR9/3o2PzNm6MN5ZyvP+BvP1y+3N1fWXh+tPJjtAZNEGw17AbX4V9NCu3z1qB+O7erPs//sztrFZpVcdR48uZAl72VcbbzzykGf7yxur1QyFvia/XuflHy2lzpRPz4VZYnI4y2749LwuTE1YUerN9Dt1pjSX1lLM/rtE3/b+//7hy8a68+rfrx/Nev0PfIr/Kg==
+api: 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
 sidebar_class_name: "get api-method"
 info_path: docs/api-reference/rest/warehouse-planning
 custom_edit_url: null
@@ -38,10 +38,20 @@ import Translate from "@docusaurus/Translate";
 
 
 
-Every ProcessPath registered with POST /process-paths, ordered by id, each with its ordered steps. 200 with an empty list when none is registered. Read-only; there is no MCP tool for it.
+The ProcessPaths registered with POST /process-paths, ordered by id, each with its ordered steps, one keyset page at a time (limit + cursor; follow nextCursor until it is absent). 200 with an empty items list when none is registered. Read-only; there is no MCP tool for it.
 
 
-<ParamsDetails>
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./list-process-paths.ParamsDetails.json")}
+>
   
 </ParamsDetails>
 

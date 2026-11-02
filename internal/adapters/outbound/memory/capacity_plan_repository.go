@@ -4,6 +4,9 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
+
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
 
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 )
@@ -69,7 +72,7 @@ func (r *CapacityPlanRepo) FindByID(_ context.Context, id string) (*capacityplan
 // ListRecent returns up to limit plans, newest first (created_at, then id,
 // both descending), optionally restricted to one location. Like FindByID it
 // returns fresh copies.
-func (r *CapacityPlanRepo) ListRecent(_ context.Context, location string, limit int) ([]*capacityplan.CapacityPlan, error) {
+func (r *CapacityPlanRepo) ListRecent(_ context.Context, location string, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	matching := make([]capacityplan.RehydrateParams, 0, len(r.store))
@@ -84,6 +87,19 @@ func (r *CapacityPlanRepo) ListRecent(_ context.Context, location string, limit 
 		}
 		return matching[i].ID > matching[j].ID
 	})
+	if after != nil {
+		at, err := time.Parse(time.RFC3339Nano, after.Sort)
+		if err != nil {
+			return nil, err
+		}
+		i := sort.Search(len(matching), func(i int) bool {
+			if !matching[i].CreatedAt.Equal(at) {
+				return matching[i].CreatedAt.Before(at)
+			}
+			return matching[i].ID < after.ID
+		})
+		matching = matching[i:]
+	}
 	if limit >= 0 && len(matching) > limit {
 		matching = matching[:limit]
 	}

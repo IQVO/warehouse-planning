@@ -182,6 +182,10 @@ channels:
     description: |
       workforce-management's integration topic (`LaborTopic`). This service
       consumes it with its own consumer group (env `LABOR_CAPACITY_CONSUMER_GROUP`).
+      Only `ShiftPlanCommitted` is acted on; every other `type`, a message that is not
+      CloudEvents 1.0, or an unusable payload is skipped (WARN) and its offset committed. A
+      transient failure is retried up to 5 attempts, then the message is published to
+      `warehouse.workforce.events.dlq` (raw bytes plus `x-dlq-*` headers).
     publish:
       operationId: consumeShiftPlanCommitted
       summary: Consume workforce-management's ShiftPlanCommitted.
@@ -198,6 +202,10 @@ channels:
     description: |
       facility-layout's integration topic (`FacilityTopic`). This service
       consumes it with its own consumer group (env `STORAGE_CAPACITY_CONSUMER_GROUP`).
+      Only `LocationSlotRegistered` and `LocationSlotDecommissioned` are acted on; every other
+      `type`, a message that is not CloudEvents 1.0, or an unusable payload is skipped (WARN)
+      and its offset committed. A transient failure is retried up to 5 attempts, then the
+      message is published to `warehouse.facility.events.dlq` (raw bytes plus `x-dlq-*` headers).
     publish:
       operationId: consumeLocationSlotEvents
       summary: Consume facility-layout's location slot events.
@@ -350,7 +358,7 @@ components:
       title: Capacity plan published
       summary: A DRAFT CapacityPlan was published.
       description: |
-        Raised by `CapacityPlan.Publish` on `POST /capacity-plans/{id}/publish`.
+        Raised by `CapacityPlan.Publish` on `POST /capacity-plans/{id}/publications`.
         Always accompanied by `CapacityShortageDetected` and `BottleneckDetected`
         when the plan has a shortage. A plan is published at most once. `type` =
         `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished`.
@@ -1528,8 +1536,13 @@ components:
               $ref: "#/components/schemas/BottleneckDetectedData"
     ShiftPlanCommittedData:
       type: object
-      description: Fields this service reads from one fanned-out ShiftPlanCommitted message (one per PathPlan line).
-      required: [path_id, planned_heads, planned_rate, planned_hours]
+      description: >-
+        Fields this service reads from one fanned-out ShiftPlanCommitted message (one per PathPlan line).
+        A message with a blank building_id or path_id is skipped (WARN). The LABOR constraint is
+        planned_heads x planned_rate UNIT per HOUR at location building_id for the window
+        [CloudEvents time, time + planned_hours); heads, rate and hours are not range-checked here (a
+        value the domain rejects is skipped). shift_id is not read.
+      required: [building_id, path_id]
       properties:
         building_id:
           type: string
@@ -1554,8 +1567,11 @@ components:
           example: 8
     LocationSlotRegisteredData:
       type: object
-      description: Fields this service reads from LocationSlotRegistered.
-      required: [locationCode, zoneId, locationType]
+      description: >-
+        Fields this service reads from LocationSlotRegistered. A message with a blank locationCode or
+        zoneId, an unrecognized role, a Storage slot with a blank locationType or a WorkCenter slot with no
+        activities is skipped (WARN); an already-tallied locationCode is a no-op.
+      required: [locationCode, zoneId]
       properties:
         locationCode:
           type: string
@@ -1565,14 +1581,16 @@ components:
           example: "ZONE-A"
         locationType:
           type: string
+          description: Required (non-blank) when role is Storage or absent; not read for WorkCenter.
           example: "BULK"
         role:
           type: string
-          description: Storage (default) tallies storage positions per locationType; WorkCenter tallies stations per activity.
+          enum: [Storage, WorkCenter]
+          description: Storage (default when absent or empty) tallies storage positions per locationType; WorkCenter tallies stations per activity. Any other value is skipped.
           example: "Storage"
         activities:
           type: array
-          description: Present only when role is WorkCenter.
+          description: Required (at least one) when role is WorkCenter; each is upper-cased to form the station tally key.
           items:
             type: string
     LocationSlotDecommissionedData:
@@ -1733,6 +1751,7 @@ components:
       properties:
         task_id:
           type: string
+          description: Must equal the CloudEvents `subject`; a mismatch or a blank value is dead-lettered.
         task_type:
           type: string
           description: The process step (PICK, PACK, ...); upper-cased to form the read model's process_type.

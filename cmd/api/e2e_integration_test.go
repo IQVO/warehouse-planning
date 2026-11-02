@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -311,6 +312,9 @@ func (s *service) expectExit() error {
 	}
 }
 
+// e2eKeySeq mints a fresh Idempotency-Key per request.
+var e2eKeySeq int64
+
 // try performs a request and returns -1 when the connection fails.
 func (s *service) try(method, path, body string) (int, string) {
 	req, err := http.NewRequestWithContext(context.Background(), method, s.base+path, strings.NewReader(body))
@@ -319,6 +323,9 @@ func (s *service) try(method, path, body string) (int, string) {
 	}
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if method == http.MethodPost || method == http.MethodPatch {
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("e2e-%d", atomic.AddInt64(&e2eKeySeq, 1)))
 	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -652,7 +659,7 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 		t.Fatalf("created plan inbound = %+v, want 1 appointment, 40 labour minutes and the standard present", plan)
 	}
 	w.planID = plan.ID
-	s.call(http.MethodPost, "/capacity-plans/"+plan.ID+"/publish", "", http.StatusOK)
+	s.call(http.MethodPost, "/capacity-plans/"+plan.ID+"/publications", "", http.StatusOK)
 	var got struct {
 		Status string `json:"status"`
 	}

@@ -160,7 +160,7 @@ recording events, and the absence of any delete or un-publish.
 | Command | Use case | Inbound |
 | --- | --- | --- |
 | `CreateCapacityPlanCommand` | `CreateCapacityPlan.Handle` | `POST /capacity-plans`, MCP `create_capacity_plan` |
-| publish by id | `PublishCapacityPlan.Handle` | `POST /capacity-plans/{id}/publish`, MCP `publish_capacity_plan` |
+| publish by id | `PublishCapacityPlan.Handle` | `POST /capacity-plans/{id}/publications`, MCP `publish_capacity_plan` |
 
 ### 7. Created Events
 

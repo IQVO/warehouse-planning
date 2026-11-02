@@ -15,7 +15,7 @@ Worked examples in this repo, read them next to this guide:
 - `PUT /station-standards/{location}/{process_type}` (ADR 0002): a plain
   upsert. `internal/application/usecases/declare_station_standard.go` +
   `handleDeclareStationStandard` in `internal/adapters/inbound/http/station_handler.go`.
-- `POST /capacity-plans/{id}/publish`: a write that also emits events through
+- `POST /capacity-plans/{id}/publications`: a write that also emits events through
   the transactional outbox. `internal/application/usecases/publish_capacity_plan.go` +
   `handlePublishCapacityPlan` in `internal/adapters/inbound/http/capacity_plan_handler.go`.
 

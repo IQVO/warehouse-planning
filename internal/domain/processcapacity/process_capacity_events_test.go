@@ -1,6 +1,7 @@
 package processcapacity
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -208,7 +209,7 @@ func TestRehydrateRejectsMixedUnits(t *testing.T) {
 		{Type: ConstraintLabor, Rate: evRate(t, 4000)},
 		{Type: ConstraintEquipment, Rate: pkg},
 	})
-	if err != ErrUnitMismatch {
+	if !errors.Is(err, ErrUnitMismatch) {
 		t.Fatalf("want ErrUnitMismatch, got %v", err)
 	}
 }

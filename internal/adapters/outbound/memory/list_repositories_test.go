@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
@@ -31,7 +33,7 @@ func TestProcessPathRepo_ListOrderedByIDAndNonNilWhenEmpty(t *testing.T) {
 	ctx := context.Background()
 	repo := memory.NewProcessPathRepo()
 
-	got, err := repo.List(ctx)
+	got, err := repo.ListPage(ctx, nil, 100)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("List on empty = %#v, %v; want empty non-nil slice, nil", got, err)
 	}
@@ -45,7 +47,7 @@ func TestProcessPathRepo_ListOrderedByIDAndNonNilWhenEmpty(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err = repo.List(ctx)
+	got, err = repo.ListPage(ctx, nil, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +97,7 @@ func TestCapacityPlanRepo_ListRecentNewestFirstFilteredAndLimited(t *testing.T) 
 	repo := memory.NewCapacityPlanRepo()
 	base := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 
-	got, err := repo.ListRecent(ctx, "", 10)
+	got, err := repo.ListRecent(ctx, "", nil, 10)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("ListRecent on empty = %#v, %v; want empty non-nil slice, nil", got, err)
 	}
@@ -108,23 +110,23 @@ func TestCapacityPlanRepo_ListRecentNewestFirstFilteredAndLimited(t *testing.T) 
 		}
 	}
 
-	all, _ := repo.ListRecent(ctx, "", 10)
+	all, _ := repo.ListRecent(ctx, "", nil, 10)
 	if listedIDs(all) != "[p-newest p-middle p-other-site p-oldest]" {
 		t.Errorf("all locations = %s, want newest first", listedIDs(all))
 	}
-	sim1, _ := repo.ListRecent(ctx, "SIM1", 10)
+	sim1, _ := repo.ListRecent(ctx, "SIM1", nil, 10)
 	if listedIDs(sim1) != "[p-newest p-middle p-oldest]" {
 		t.Errorf("SIM1 = %s, want only SIM1, newest first", listedIDs(sim1))
 	}
-	limited, _ := repo.ListRecent(ctx, "SIM1", 2)
+	limited, _ := repo.ListRecent(ctx, "SIM1", nil, 2)
 	if listedIDs(limited) != "[p-newest p-middle]" {
 		t.Errorf("limit 2 = %s, want the 2 newest", listedIDs(limited))
 	}
-	exact, _ := repo.ListRecent(ctx, "SIM1", 3)
+	exact, _ := repo.ListRecent(ctx, "SIM1", nil, 3)
 	if len(exact) != 3 {
 		t.Errorf("limit == matches returned %d, want 3", len(exact))
 	}
-	none, err := repo.ListRecent(ctx, "NOWHERE", 10)
+	none, err := repo.ListRecent(ctx, "NOWHERE", nil, 10)
 	if err != nil || none == nil || len(none) != 0 {
 		t.Errorf("unknown location = %#v, %v; want empty non-nil slice", none, err)
 	}
@@ -139,7 +141,7 @@ func TestCapacityPlanRepo_ListRecentTiesBrokenByIDDescendingAndReturnsCopies(t *
 			t.Fatal(err)
 		}
 	}
-	got, _ := repo.ListRecent(ctx, "SIM1", 10)
+	got, _ := repo.ListRecent(ctx, "SIM1", nil, 10)
 	if listedIDs(got) != "[plan-c plan-b plan-a]" {
 		t.Fatalf("tie order = %s, want id descending", listedIDs(got))
 	}
@@ -151,5 +153,70 @@ func TestCapacityPlanRepo_ListRecentTiesBrokenByIDDescendingAndReturnsCopies(t *
 	stored, _ := repo.FindByID(ctx, "plan-c")
 	if stored.Status() != capacityplan.StatusDraft {
 		t.Errorf("stored status = %s after mutating a listed copy, want DRAFT", stored.Status())
+	}
+}
+
+func TestProcessPathRepo_ListPageWalksEveryPageOnce(t *testing.T) {
+	ctx := context.Background()
+	repo := memory.NewProcessPathRepo()
+	for i := 0; i < 7; i++ {
+		if err := repo.Save(ctx, listPath(t, fmt.Sprintf("path-%02d", i), "PICK")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var seen []string
+	var after *pagecursor.Cursor
+	for {
+		rows, err := repo.ListPage(ctx, after, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for _, p := range rows {
+			seen = append(seen, p.ID())
+		}
+		after = &pagecursor.Cursor{Sort: rows[len(rows)-1].ID(), ID: rows[len(rows)-1].ID()}
+	}
+	if len(seen) != 7 || seen[0] != "path-00" || seen[6] != "path-06" {
+		t.Fatalf("walk = %v", seen)
+	}
+}
+
+func TestCapacityPlanRepo_ListRecentWalksTiesWithoutDuplicatesOrSkips(t *testing.T) {
+	ctx := context.Background()
+	repo := memory.NewCapacityPlanRepo()
+	at := time.Date(2026, 10, 4, 9, 0, 0, 123456789, time.UTC)
+	for i := 0; i < 7; i++ { // five of the seven share one created_at
+		when := at
+		if i >= 5 {
+			when = at.Add(time.Duration(i) * time.Minute)
+		}
+		if err := repo.Save(ctx, listPlan(t, fmt.Sprintf("plan-%d", i), "SIM1", when)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	var after *pagecursor.Cursor
+	for {
+		rows, err := repo.ListRecent(ctx, "SIM1", after, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for _, p := range rows {
+			if seen[p.ID()] {
+				t.Fatalf("duplicate %s", p.ID())
+			}
+			seen[p.ID()] = true
+		}
+		last := rows[len(rows)-1]
+		after = &pagecursor.Cursor{Sort: last.CreatedAt().UTC().Format(time.RFC3339Nano), ID: last.ID()}
+	}
+	if len(seen) != 7 {
+		t.Fatalf("skipped rows: saw %d of 7", len(seen))
 	}
 }

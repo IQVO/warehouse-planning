@@ -30,7 +30,7 @@ describe("API client URLs and verbs", () => {
   });
 
   it("GET /station-standards returns the standards array (and [] if the service omits it)", async () => {
-    mockApi({ "GET /station-standards": json({ location: "S1", standards: [{ location: "S1", process_type: "PACK", quantity: 180, unit: "PACKAGE", period_seconds: 3600 }] }) });
+    mockApi({ "GET /station-standards": json({ items: [{ location: "S1", process_type: "PACK", quantity: 180, unit: "PACKAGE", period_seconds: 3600 }] }) });
     expect(await getStationStandards("S1")).toHaveLength(1);
     mockApi({ "GET /station-standards": json({}) });
     expect(await getStationStandards("S1")).toEqual([]);
@@ -65,7 +65,7 @@ describe("API client URLs and verbs", () => {
   });
 
   it("GET /process-paths returns the paths", async () => {
-    const api = mockApi({ "GET /process-paths": json({ process_paths: [{ id: "p", name: "P", steps: ["PICK"] }] }) });
+    const api = mockApi({ "GET /process-paths": json({ items: [{ id: "p", name: "P", steps: ["PICK"] }] }) });
     expect(await listProcessPaths()).toEqual([{ id: "p", name: "P", steps: ["PICK"] }]);
     expect(api.calls[0].url).toBe(`${PLANNING_API_BASE}/process-paths`);
   });
@@ -90,7 +90,7 @@ describe("API client URLs and verbs", () => {
   });
 
   it("GET /capacity-plans filters by location, and omits an empty one", async () => {
-    const api = mockApi({ "GET /capacity-plans": json({ capacity_plans: [] }) });
+    const api = mockApi({ "GET /capacity-plans": json({ items: [] }) });
     expect(await listCapacityPlans("S1")).toEqual([]);
     expect(await listCapacityPlans("")).toEqual([]);
     expect(api.calls[0].query.get("location")).toBe("S1");
@@ -112,11 +112,39 @@ describe("API client URLs and verbs", () => {
     expect(api.calls[0].body).not.toHaveProperty("assigned_demand");
   });
 
-  it("POST /capacity-plans/{id}/publish sends no body", async () => {
-    const api = mockApi({ "POST /capacity-plans/abc/publish": json({ id: "abc", status: "PUBLISHED" }) });
+  it("POST /capacity-plans/{id}/publications sends no body", async () => {
+    const api = mockApi({ "POST /capacity-plans/abc/publications": json({ id: "abc", status: "PUBLISHED" }) });
     expect((await publishCapacityPlan("abc")).status).toBe("PUBLISHED");
     expect(api.calls[0].method).toBe("POST");
     expect(api.calls[0].body).toBeUndefined();
+  });
+});
+
+describe("REST guideline", () => {
+  it("sends a fresh Idempotency-Key on every POST and none on GET", async () => {
+    const api = mockApi({
+      "POST /capacity-plans/abc/publications": json({ id: "abc", status: "PUBLISHED" }),
+      "GET /process-paths": json({ items: [] }),
+    });
+    await publishCapacityPlan("abc");
+    await publishCapacityPlan("abc");
+    await listProcessPaths();
+    const keys = api.calls.filter((c) => c.method === "POST").map((c) => c.headers["Idempotency-Key"]);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(api.calls[2].headers["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("follows nextCursor until it is absent", async () => {
+    const api = mockApi({
+      "GET /process-paths": (call) =>
+        call.query.get("cursor") === "c2"
+          ? json({ items: [{ id: "b", name: "B", steps: ["PACK"] }] })
+          : json({ items: [{ id: "a", name: "A", steps: ["PICK"] }], nextCursor: "c2" }),
+    });
+    const paths = await listProcessPaths();
+    expect(paths.map((p) => p.id)).toEqual(["a", "b"]);
+    expect(api.calls).toHaveLength(2);
   });
 });
 

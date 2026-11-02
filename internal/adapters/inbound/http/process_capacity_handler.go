@@ -73,6 +73,14 @@ type Server struct {
 	ListProcessPaths  *usecases.ListProcessPaths
 	ListCapacityPlans *usecases.ListCapacityPlans
 
+	// UnitOfWork and Idempotency back the Idempotency-Key middleware on every
+	// POST/PATCH route (fleet REST API guideline, docs/adr/0019): the key row
+	// commits in the same transaction as the aggregate and its outbox rows.
+	// Both nil (unit-test servers) runs the handlers unwrapped; cmd/api
+	// always wires both.
+	UnitOfWork  ports.UnitOfWork
+	Idempotency ports.IdempotencyStore
+
 	// Readiness backs GET /readyz, separate from the liveness-only
 	// /healthz above (graceful-shutdown fix: this service previously had
 	// no readiness signal at all). A nil Readiness (the zero value, and
@@ -110,7 +118,8 @@ func NewRouter(s *Server) http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsAllowedOrigins(),
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut},
-		AllowedHeaders:   []string{"Accept", "Content-Type"},
+		AllowedHeaders:   []string{"Accept", "Content-Type", IdempotencyKeyHeader},
+		ExposedHeaders:   []string{IdempotencyReplayedHeader, "Location"},
 		AllowCredentials: false,
 	}))
 	// A NUL (U+0000) in the path, the query or a body is a uniform client
@@ -119,12 +128,12 @@ func NewRouter(s *Server) http.Handler {
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
-	r.Post("/process-capacities", s.handleRegisterProcessCapacityConstraint)
+	r.Post("/process-capacities", s.idempotent(s.handleRegisterProcessCapacityConstraint))
 	r.Get("/process-capacities", s.handleGetEffectiveProcessCapacity)
-	r.Post("/process-paths", s.handleRegisterProcessPath)
+	r.Post("/process-paths", s.idempotent(s.handleRegisterProcessPath))
 	r.Get("/process-paths/{id}/capacity", s.handleGetProcessPathCapacity)
-	r.Post("/capacity-plans", s.handleCreateCapacityPlan)
-	r.Post("/capacity-plans/{id}/publish", s.handlePublishCapacityPlan)
+	r.Post("/capacity-plans", s.idempotent(s.handleCreateCapacityPlan))
+	r.Post("/capacity-plans/{id}/publications", s.idempotent(s.handlePublishCapacityPlan))
 	r.Get("/capacity-plans/{id}", s.handleGetCapacityPlan)
 	r.Put("/station-standards/{location}/{process_type}", s.handleDeclareStationStandard)
 	r.Get("/station-standards", s.handleListStationStandards)
@@ -154,7 +163,7 @@ func corsAllowedOrigins() []string {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 // handleRegisterProcessCapacityConstraint backs POST /process-capacities.
@@ -166,12 +175,12 @@ func (s *Server) handleRegisterProcessCapacityConstraint(w http.ResponseWriter, 
 
 	windowStart, err := time.Parse(time.RFC3339, req.WindowStart)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-start", "window_start must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowStart, err.Error(), r.URL.Path)
 		return
 	}
 	windowEnd, err := time.Parse(time.RFC3339, req.WindowEnd)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-end", "window_end must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowEnd, err.Error(), r.URL.Path)
 		return
 	}
 	if req.PeriodSeconds <= 0 {
@@ -210,12 +219,12 @@ func (s *Server) handleGetEffectiveProcessCapacity(w http.ResponseWriter, r *htt
 
 	windowStart, err := time.Parse(time.RFC3339, q.Get("window_start"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-start", "window_start must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowStart, err.Error(), r.URL.Path)
 		return
 	}
 	windowEnd, err := time.Parse(time.RFC3339, q.Get("window_end"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-end", "window_end must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowEnd, err.Error(), r.URL.Path)
 		return
 	}
 

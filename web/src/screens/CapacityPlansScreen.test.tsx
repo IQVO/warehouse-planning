@@ -26,8 +26,8 @@ function WARNING_TEXT() {
 
 function baseRoutes(over: Record<string, Parameters<typeof mockApi>[0][string]> = {}) {
   return mockApi({
-    "GET /capacity-plans": json({ capacity_plans: [DRAFT, PUBLISHED] }),
-    "GET /process-paths": json({ process_paths: PATHS }),
+    "GET /capacity-plans": json({ items: [DRAFT, PUBLISHED] }),
+    "GET /process-paths": json({ items: PATHS }),
     ...over,
   });
 }
@@ -100,7 +100,7 @@ describe("CapacityPlansScreen list", () => {
   });
 
   it("shows an empty state", async () => {
-    baseRoutes({ "GET /capacity-plans": json({ capacity_plans: [] }) });
+    baseRoutes({ "GET /capacity-plans": json({ items: [] }) });
     render(<CapacityPlansScreen />);
     expect(await screen.findByText("No capacity plans yet for this selection.")).toBeInTheDocument();
   });
@@ -114,12 +114,12 @@ describe("CapacityPlansScreen list", () => {
 });
 
 describe("publish", () => {
-  const route = `POST /capacity-plans/${DRAFT.id}/publish`;
+  const route = `POST /capacity-plans/${DRAFT.id}/publications`;
 
   it("publishes a DRAFT plan and refreshes the list", async () => {
     let published = false;
     const api = baseRoutes({
-      "GET /capacity-plans": () => json({ capacity_plans: [published ? { ...DRAFT, status: "PUBLISHED", published_at: "2026-10-04T18:00:00Z" } : DRAFT] }),
+      "GET /capacity-plans": () => json({ items: [published ? { ...DRAFT, status: "PUBLISHED", published_at: "2026-10-04T18:00:00Z" } : DRAFT] }),
       [route]: () => {
         published = true;
         return json({ ...DRAFT, status: "PUBLISHED" });
@@ -265,7 +265,7 @@ describe("create form", () => {
   });
 
   it("explains an empty path catalogue instead of offering a form", async () => {
-    baseRoutes({ "GET /process-paths": json({ process_paths: [] }) });
+    baseRoutes({ "GET /process-paths": json({ items: [] }) });
     render(<CapacityPlansScreen />);
     expect(await screen.findByText(/so a plan cannot be created/)).toBeInTheDocument();
     expect(screen.queryByRole("form", { name: "Create capacity plan" })).not.toBeInTheDocument();

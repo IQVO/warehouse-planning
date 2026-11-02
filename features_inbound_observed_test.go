@@ -223,9 +223,9 @@ func (w *world) theInboundStandardsListed(n int) error {
 	if err != nil {
 		return err
 	}
-	list, _ := got["standards"].([]any)
+	list, _ := got["items"].([]any)
 	if len(list) != n {
-		return fmt.Errorf("standards = %v, want %d", got["standards"], n)
+		return fmt.Errorf("standards = %v, want %d", got["items"], n)
 	}
 	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/adapters/inbound/http/page"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
@@ -43,12 +45,6 @@ type inboundLabourStandardResponse struct {
 	PathID                string  `json:"path_id"`
 	MinutesPerAppointment float64 `json:"minutes_per_appointment"`
 	MinutesPerASN         float64 `json:"minutes_per_asn"`
-}
-
-// inboundLabourStandardsResponse is GET /inbound-labour-standards' body.
-type inboundLabourStandardsResponse struct {
-	Location  string                          `json:"location,omitempty"`
-	Standards []inboundLabourStandardResponse `json:"standards"`
 }
 
 // inboundDemandSourceInboundReceiving labels where GET /inbound-demand's
@@ -136,10 +132,13 @@ func (s *Server) handleDeclareInboundLabourStandard(w http.ResponseWriter, r *ht
 
 // handleListInboundLabourStandards backs GET /inbound-labour-standards?
 // location=: the declared standards of one site, or every standard when
-// location is absent.
+// location is absent, ordered by (location, path id), one keyset page at a time.
 func (s *Server) handleListInboundLabourStandards(w http.ResponseWriter, r *http.Request) {
-	location := r.URL.Query().Get("location")
-	standards, err := s.InboundStandards.List(r.Context(), location)
+	limit, after, ok := pageParams(w, r, "location")
+	if !ok {
+		return
+	}
+	standards, err := s.InboundStandards.ListPage(r.Context(), r.URL.Query().Get("location"), after, page.FetchSize(limit))
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -148,7 +147,9 @@ func (s *Server) handleListInboundLabourStandards(w http.ResponseWriter, r *http
 	for _, standard := range standards {
 		out = append(out, toInboundLabourStandardResponse(standard))
 	}
-	writeJSON(w, http.StatusOK, inboundLabourStandardsResponse{Location: location, Standards: out})
+	writeJSON(w, http.StatusOK, page.Of(out, limit, func(st inboundLabourStandardResponse) page.Position {
+		return page.Position{Sort: st.Location, ID: st.PathID}
+	}))
 }
 
 // handleGetInboundDemand backs GET /inbound-demand?location=&path_id=&
@@ -160,7 +161,7 @@ func (s *Server) handleGetInboundDemand(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	location, pathID := q.Get("location"), q.Get("path_id")
 	if location == "" {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"missing-location", "location is required"}, "the location (site code) query parameter must be provided", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMissingLocation, "the location (site code) query parameter must be provided", r.URL.Path)
 		return
 	}
 	if pathID == "" {
@@ -169,12 +170,12 @@ func (s *Server) handleGetInboundDemand(w http.ResponseWriter, r *http.Request) 
 	}
 	start, err := time.Parse(time.RFC3339, q.Get("window_start"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-start", "window_start must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowStart, err.Error(), r.URL.Path)
 		return
 	}
 	end, err := time.Parse(time.RFC3339, q.Get("window_end"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-end", "window_end must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowEnd, err.Error(), r.URL.Path)
 		return
 	}
 	result, err := s.GetInboundDemand.Handle(r.Context(), location, pathID, start, end)

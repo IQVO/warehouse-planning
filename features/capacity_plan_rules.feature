@@ -1,4 +1,4 @@
-# Derived from: apis/openapi.yaml (POST /capacity-plans, POST /capacity-plans/{id}/publish,
+# Derived from: apis/openapi.yaml (POST /capacity-plans, POST /capacity-plans/{id}/publications,
 # GET /capacity-plans/{id}), docs/adr/0012-canonical-site-id-on-capacity-plans.md,
 # docs/adr/0007-outbox-and-resilient-consumers.md, .claude/rules/domain-model.md
 # (CapacityPlan, Domain events), .claude/rules/integration-events.md.

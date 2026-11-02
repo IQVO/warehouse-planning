@@ -18,6 +18,14 @@ import (
 // convention, e.g. inventory-storage's problemBaseURI).
 const problemBaseURI = "https://errors.warehouse-planning.warehouse-systems.dev/"
 
+// Problem categories shared by several handlers; one definition keeps every
+// endpoint's problem+json response identical.
+var (
+	problemMalformedWindowStart = problemInfo{slug: "malformed-window-start", title: "window_start must be an RFC3339 timestamp"}
+	problemMalformedWindowEnd   = problemInfo{slug: "malformed-window-end", title: "window_end must be an RFC3339 timestamp"}
+	problemMissingLocation      = problemInfo{slug: "missing-location", title: "location is required"}
+)
+
 // problemInfo is the fixed, category-level (type, title) pair for an RFC
 // 7807 problem response. slug becomes the last path segment of "type";
 // the dynamic detail comes from err.Error() at write time, not this table.

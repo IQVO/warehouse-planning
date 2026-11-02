@@ -94,8 +94,12 @@ func analyticsPayloadFor(ev capacityplan.Event) (any, error) {
 		return nil, err
 	}
 	if e, ok := ev.(capacityplan.CapacityPlanPublished); ok {
+		pd, ok := data.(planPublishedData)
+		if !ok {
+			return nil, fmt.Errorf("payload for CapacityPlanPublished has unexpected type %T", data)
+		}
 		return analyticsPublishedData{
-			planPublishedData: data.(planPublishedData),
+			planPublishedData: pd,
 			BindingConstraint: string(e.BottleneckConstraint),
 		}, nil
 	}

@@ -163,7 +163,7 @@ eligibility authoring (ADR 0001, Consequences).
 | `warehouse-console` remote | List process paths | Query | REST `GET /process-paths` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get process path capacity | Query | REST `GET /process-paths/{id}/capacity`; MCP `get_process_path_capacity` | OHS (the agent is a Customer of the MCP tool) |
 | Operator / remote | Create capacity plan | Command | REST `POST /capacity-plans`; MCP `create_capacity_plan` | OHS |
-| Operator / remote | Publish capacity plan | Command | REST `POST /capacity-plans/{id}/publish`; MCP `publish_capacity_plan` | OHS |
+| Operator / remote | Publish capacity plan | Command | REST `POST /capacity-plans/{id}/publications`; MCP `publish_capacity_plan` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get capacity plan | Query | REST `GET /capacity-plans/{id}`; MCP `get_capacity_plan` | OHS |
 | `warehouse-console` remote | List capacity plans | Query | REST `GET /capacity-plans` | OHS |
 | Operator / remote | Declare station standard | Command | REST `PUT /station-standards/{location}/{process_type}`; MCP `declare_station_standard` | OHS |

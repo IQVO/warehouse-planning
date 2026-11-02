@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/claudioed/warehouse-planning/internal/domain/inbound"
 )
 
@@ -42,4 +44,8 @@ type InboundStandardRepository interface {
 	// path id, or every standard (ordered by location, then path id) when
 	// location is empty.
 	List(ctx context.Context, location string) ([]inbound.LabourStandard, error)
+	// ListPage is List as a keyset page: at most limit standards ordered by
+	// (location, path id), strictly after the cursor (Sort = location, ID =
+	// process path id) when after is not nil.
+	ListPage(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]inbound.LabourStandard, error)
 }

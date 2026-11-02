@@ -9,11 +9,12 @@ paths:
 
 Routes are wired in `NewRouter` (`internal/adapters/inbound/http/process_capacity_handler.go`);
 the worked recipe for adding one is `.claude/skills/how-to-add-a-rest-endpoint/SKILL.md`.
-This service does NOT implement the fleet `Idempotency-Key` middleware
-(`.claude/rules/fleet/idempotency-and-outbox.md` says resource-creating POSTs
-require it, but no POST here does, in code, `apis/openapi.yaml` or tests).
-Do not add it as a drive-by change: it alters the contract for every client.
-Raise it with the user first.
+The fleet `Idempotency-Key` middleware is implemented (REST guideline
+cutover): EVERY POST is keyed — the key is GLOBAL (looked up alone,
+fingerprint = method + path + body hash), a missing key is 400
+`idempotency-key-required`, an invalid key 400 `idempotency-key-invalid`,
+key reuse with another request 409 `idempotency-key-reused`, and replays
+carry `Idempotency-Replayed: true`.
 
 Phase 1 (current):
 
@@ -28,7 +29,7 @@ Phase 2 (current):
 Phase 4 (current):
 
 - `POST /capacity-plans`             -> `CreateCapacityPlan`
-- `POST /capacity-plans/{id}/publish`-> `PublishCapacityPlan`
+- `POST /capacity-plans/{id}/publications`-> `PublishCapacityPlan` (keyed)
 - `GET  /capacity-plans/{id}`        -> direct repository read
 
 Station capacity (current, docs/adr/0002):
@@ -212,7 +213,7 @@ step, e.g. `LABOR` or `STATION`) can be `STATION`, and `warnings` (additive,
 never null) carries the composition warnings. Both are stored with the plan
 (migration `0005`; empty for plans created before it) and returned by GET and
 publish too. The published CloudEvents payloads do not carry them. `GET /capacity-plans/{id}` returns the same body (200 / 404);
-`POST /capacity-plans/{id}/publish` returns it with `status: "PUBLISHED"` and
+`POST /capacity-plans/{id}/publications` returns it with `status: "PUBLISHED"` and
 `published_at` (200).
 
 Errors (`application/problem+json`):

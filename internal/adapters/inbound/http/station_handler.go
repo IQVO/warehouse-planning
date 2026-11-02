@@ -3,6 +3,8 @@ package http
 import (
 	"net/http"
 
+	"github.com/claudioed/warehouse-planning/internal/adapters/inbound/http/page"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
@@ -41,10 +43,14 @@ func (s *Server) handleDeclareStationStandard(w http.ResponseWriter, r *http.Req
 }
 
 // handleListStationStandards backs GET /station-standards?location=: the
-// declared standards of one site, or every standard when location is absent.
+// declared standards of one site, or every standard when location is absent,
+// ordered by (location, process type), one keyset page at a time.
 func (s *Server) handleListStationStandards(w http.ResponseWriter, r *http.Request) {
-	location := r.URL.Query().Get("location")
-	standards, err := s.StationStandards.List(r.Context(), location)
+	limit, after, ok := pageParams(w, r, "location")
+	if !ok {
+		return
+	}
+	standards, err := s.StationStandards.ListPage(r.Context(), r.URL.Query().Get("location"), after, page.FetchSize(limit))
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -53,7 +59,9 @@ func (s *Server) handleListStationStandards(w http.ResponseWriter, r *http.Reque
 	for _, standard := range standards {
 		out = append(out, toStationStandardResponse(standard))
 	}
-	writeJSON(w, http.StatusOK, stationStandardsResponse{Location: location, Standards: out})
+	writeJSON(w, http.StatusOK, page.Of(out, limit, func(st stationStandardResponse) page.Position {
+		return page.Position{Sort: st.Location, ID: st.ProcessType}
+	}))
 }
 
 // handleGetStorageCapacity backs GET /storage-capacity?location=: the READ
@@ -64,7 +72,7 @@ func (s *Server) handleListStationStandards(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleGetStorageCapacity(w http.ResponseWriter, r *http.Request) {
 	location := r.URL.Query().Get("location")
 	if location == "" {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"missing-location", "location is required"}, "the location (site code) query parameter must be provided", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMissingLocation, "the location (site code) query parameter must be provided", r.URL.Path)
 		return
 	}
 	capacity, err := s.GetStorageCapacity.Handle(r.Context(), location)

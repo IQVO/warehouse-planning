@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	ce "github.com/cloudevents/sdk-go/v2/event"
@@ -80,6 +81,9 @@ func (w *world) recordRaw(ctx context.Context, method, path, body string) error 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPost || method == http.MethodPatch {
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("bdd-%d", atomic.AddInt64(&keySeq, 1)))
+	}
 	resp, err := w.server.Client().Do(req)
 	if err != nil {
 		return err
@@ -281,7 +285,7 @@ func (w *world) theResponseFieldIsPresent(field string, want bool) error {
 
 func (w *world) theCapacityPlanListHasPlans(n int) error {
 	var body struct {
-		CapacityPlans []json.RawMessage `json:"capacity_plans"`
+		CapacityPlans []json.RawMessage `json:"items"`
 	}
 	if err := w.decode(&body); err != nil {
 		return err
@@ -301,7 +305,7 @@ func (w *world) theStationStandardsListIs(raw string) error {
 			ProcessType string  `json:"process_type"`
 			Quantity    float64 `json:"quantity"`
 			Unit        string  `json:"unit"`
-		} `json:"standards"`
+		} `json:"items"`
 	}
 	if err := w.decode(&body); err != nil {
 		return err
