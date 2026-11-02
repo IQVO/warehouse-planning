@@ -9,11 +9,12 @@ paths:
 
 Routes are wired in `NewRouter` (`internal/adapters/inbound/http/process_capacity_handler.go`);
 the worked recipe for adding one is `.claude/skills/how-to-add-a-rest-endpoint/SKILL.md`.
-This service does NOT implement the fleet `Idempotency-Key` middleware
-(`.claude/rules/fleet/idempotency-and-outbox.md` says resource-creating POSTs
-require it, but no POST here does, in code, `apis/openapi.yaml` or tests).
-Do not add it as a drive-by change: it alters the contract for every client.
-Raise it with the user first.
+The fleet `Idempotency-Key` middleware is implemented (REST guideline
+cutover): EVERY POST is keyed — the key is GLOBAL (looked up alone,
+fingerprint = method + path + body hash), a missing key is 400
+`idempotency-key-required`, an invalid key 400 `idempotency-key-invalid`,
+key reuse with another request 409 `idempotency-key-reused`, and replays
+carry `Idempotency-Replayed: true`.
 
 Phase 1 (current):
 
@@ -28,7 +29,7 @@ Phase 2 (current):
 Phase 4 (current):
 
 - `POST /capacity-plans`             -> `CreateCapacityPlan`
-- `POST /capacity-plans/{id}/publications`-> `PublishCapacityPlan`
+- `POST /capacity-plans/{id}/publications`-> `PublishCapacityPlan` (keyed)
 - `GET  /capacity-plans/{id}`        -> direct repository read
 
 Station capacity (current, docs/adr/0002):
