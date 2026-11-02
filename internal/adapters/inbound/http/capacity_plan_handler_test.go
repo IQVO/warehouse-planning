@@ -151,7 +151,7 @@ func TestHandler_CapacityPlan_WorkedExample(t *testing.T) {
 	}
 
 	// Publish -> 200 PUBLISHED with published_at; the outbox then holds all four events.
-	status, _, body = postJSON(t, srv.Server, "/capacity-plans/"+plan.ID+"/publish", nil)
+	status, _, body = postJSON(t, srv.Server, "/capacity-plans/"+plan.ID+"/publications", nil)
 	if status != http.StatusOK {
 		t.Fatalf("publish = %d: %s", status, body)
 	}
@@ -163,7 +163,7 @@ func TestHandler_CapacityPlan_WorkedExample(t *testing.T) {
 	assertOutboxTypes(t, srv.outbox, "CapacityPlanCreated", "CapacityPlanPublished", "CapacityShortageDetected", "BottleneckDetected")
 
 	// Second publish -> 409 and nothing new queued.
-	status, headers, body = postJSON(t, srv.Server, "/capacity-plans/"+plan.ID+"/publish", nil)
+	status, headers, body = postJSON(t, srv.Server, "/capacity-plans/"+plan.ID+"/publications", nil)
 	if status != http.StatusConflict || headers.Get("Content-Type") != "application/problem+json" || problemType(t, body) != "capacity-plan-already-published" {
 		t.Errorf("second publish = %d %s %s", status, headers.Get("Content-Type"), body)
 	}
@@ -281,7 +281,7 @@ func TestHandler_CapacityPlan_UnknownIDIs404(t *testing.T) {
 	}{
 		{"get", func() (int, []byte) { s, _, b := getPath(t, srv.Server, "/capacity-plans/ghost"); return s, b }},
 		{"publish", func() (int, []byte) {
-			s, _, b := postJSON(t, srv.Server, "/capacity-plans/ghost/publish", nil)
+			s, _, b := postJSON(t, srv.Server, "/capacity-plans/ghost/publications", nil)
 			return s, b
 		}},
 	} {
@@ -315,7 +315,7 @@ func TestHandler_CapacityPlan_StorageFailureIs500(t *testing.T) {
 	if status != http.StatusInternalServerError || headers.Get("Content-Type") != "application/problem+json" || problemType(t, body) != "internal-error" {
 		t.Errorf("get = %d %s", status, body)
 	}
-	status, _, body = postJSON(t, srv, "/capacity-plans/x/publish", nil)
+	status, _, body = postJSON(t, srv, "/capacity-plans/x/publications", nil)
 	if status != http.StatusInternalServerError || problemType(t, body) != "internal-error" {
 		t.Errorf("publish = %d %s", status, body)
 	}

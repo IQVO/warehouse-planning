@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -201,4 +203,35 @@ func scanInboundStandard(row pgx.Row) (inbound.LabourStandard, error) {
 		return inbound.LabourStandard{}, err
 	}
 	return inbound.NewLabourStandard(location, processPathID, perAppointment, perASN)
+}
+
+// ListPage implements ports.InboundStandardRepository: List as a keyset page
+// ordered by (location, process_path_id).
+func (r *InboundStandardRepo) ListPage(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]inbound.LabourStandard, error) {
+	hasAfter, afterLoc, afterPath := false, "", ""
+	if after != nil {
+		hasAfter, afterLoc, afterPath = true, after.Sort, after.ID
+	}
+	rows, err := queryFor(ctx, r.pool).Query(ctx, `
+		SELECT location, process_path_id, minutes_per_appointment, minutes_per_asn
+		FROM inbound_labour_standards
+		WHERE ($1 = '' OR location = $1)
+		  AND (NOT $2::boolean OR (location, process_path_id) > ($3::text, $4::text))
+		ORDER BY location, process_path_id
+		LIMIT $5
+	`, location, hasAfter, afterLoc, afterPath, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []inbound.LabourStandard{}
+	for rows.Next() {
+		standard, err := scanInboundStandard(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, standard)
+	}
+	return out, rows.Err()
 }

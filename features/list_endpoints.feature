@@ -48,7 +48,7 @@ Feature: Listing process paths and capacity plans
   Scenario: A limit that is not a positive integer is rejected
     When I list the capacity plans for location "LIST-ZONE-A" with limit "0"
     Then the response status is 400
-    And the problem detail type is "malformed-limit"
+    And the problem detail type is "invalid-limit"
     When I list the capacity plans for location "LIST-ZONE-A" with limit "many"
     Then the response status is 400
-    And the problem detail type is "malformed-limit"
+    And the problem detail type is "invalid-limit"

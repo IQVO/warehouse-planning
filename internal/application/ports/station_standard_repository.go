@@ -3,6 +3,8 @@ package ports
 import (
 	"context"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
@@ -19,4 +21,8 @@ type StationStandardRepository interface {
 	// type, or every standard (ordered by location, then process type) when
 	// location is empty.
 	List(ctx context.Context, location string) ([]processcapacity.StationStandard, error)
+	// ListPage is List as a keyset page: at most limit standards ordered by
+	// (location, process type), strictly after the cursor (Sort = location,
+	// ID = process type) when after is not nil.
+	ListPage(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]processcapacity.StationStandard, error)
 }

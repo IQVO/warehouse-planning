@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/claudioed/warehouse-planning/internal/domain/inbound"
 )
 
@@ -131,4 +133,25 @@ func (r *InboundStandardRepo) List(_ context.Context, location string) ([]inboun
 		return out[i].ProcessPathID() < out[j].ProcessPathID()
 	})
 	return out, nil
+}
+
+// ListPage implements ports.InboundStandardRepository.
+func (r *InboundStandardRepo) ListPage(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]inbound.LabourStandard, error) {
+	all, err := r.List(ctx, location)
+	if err != nil {
+		return nil, err
+	}
+	if after != nil {
+		i := sort.Search(len(all), func(i int) bool {
+			if all[i].Location() != after.Sort {
+				return all[i].Location() > after.Sort
+			}
+			return all[i].ProcessPathID() > after.ID
+		})
+		all = all[i:]
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }

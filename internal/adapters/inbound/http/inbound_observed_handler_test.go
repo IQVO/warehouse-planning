@@ -44,7 +44,7 @@ func TestInboundLabourStandard_DeclareCreatesThenReplaces(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("first declare = %d %s, want 201", status, body)
 	}
-	if got := decodeMap(t, body); got["minutes_per_appointment"] != 45.0 || got["minutes_per_asn"] != 5.0 || got["location"] != "SIM1" || got["path_id"] != "receive" {
+	if got := decodeMap(t, body); got["minutes_per_appointment"] != 45.0 || got["minutes_per_asn"] != 5.0 || got["path_id"] != "receive" {
 		t.Fatalf("declared body = %v", got)
 	}
 
@@ -61,8 +61,8 @@ func TestInboundLabourStandard_DeclareCreatesThenReplaces(t *testing.T) {
 		t.Fatalf("list = %d %s", status, body)
 	}
 	list := decodeMap(t, body)
-	standards, isList := list["standards"].([]any)
-	if !isList || len(standards) != 1 || list["location"] != "SIM1" {
+	standards, isList := list["items"].([]any)
+	if !isList || len(standards) != 1 {
 		t.Fatalf("list body = %v, want exactly the one replaced standard", list)
 	}
 }

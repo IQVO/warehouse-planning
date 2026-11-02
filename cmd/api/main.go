@@ -204,6 +204,9 @@ func buildServer(
 
 		// Readiness backs GET /readyz (graceful-shutdown fix): flipped to
 		// not-ready as the FIRST step of shutdown (serveUntilSignal).
+		UnitOfWork:  ad.uow,
+		Idempotency: ad.idempotency,
+
 		Readiness: readiness,
 	}
 }
@@ -222,6 +225,8 @@ type adapters struct {
 	// consumer's claim + constraint upsert) one atomic transaction; the
 	// repositories above join it via ctx.
 	uow ports.UnitOfWork
+	// idempotency stores the Idempotency-Key answers (REST middleware).
+	idempotency ports.IdempotencyStore
 
 	// Phase 4: the CapacityPlan repository, the outbox write port and the
 	// same outbox as the relay's drain source.
@@ -291,6 +296,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		tallyReader:       tallyRepo,
 		stationStandards:  postgres.NewStationStandardRepo(pool),
 		uow:               postgres.NewUnitOfWork(pool),
+		idempotency:       postgres.NewIdempotencyStore(pool),
 		capacityPlans:     planRepo,
 		outbox:            outboxRepo,
 		outboxStore:       outboxRepo,

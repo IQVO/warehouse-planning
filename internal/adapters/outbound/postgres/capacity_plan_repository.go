@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -77,12 +79,22 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 // ListRecent returns up to limit plans, newest first (created_at DESC, id
 // DESC so the order is total), optionally restricted to one location. It
 // never locks a row: a list is a plain read, in or out of a UnitOfWork.
-func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, limit int) ([]*capacityplan.CapacityPlan, error) {
+func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
+	var afterAt *time.Time
+	afterID := ""
+	if after != nil {
+		at, err := time.Parse(time.RFC3339Nano, after.Sort)
+		if err != nil {
+			return nil, err
+		}
+		afterAt, afterID = &at, after.ID
+	}
 	rows, err := queryFor(ctx, r.pool).Query(ctx, `
 		SELECT `+planColumns+` FROM capacity_plans
 		WHERE ($1::text = '' OR location = $1::text)
+		  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2::timestamptz, $3::text))
 		ORDER BY created_at DESC, id DESC
-		LIMIT $2`, location, limit)
+		LIMIT $4`, location, afterAt, afterID, limit)
 	if err != nil {
 		return nil, err
 	}

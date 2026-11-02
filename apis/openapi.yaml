@@ -1023,12 +1023,11 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: false
+      required: true
       description: >
         Client-generated key (1-128 printable ASCII characters, normally a UUID) per LOGICAL submit.
-        A retry reuses it; a new user action mints a new one. The service always requires it on
-        POST/PATCH when it runs against Postgres; in the in-memory dev mode it is accepted too.
-        Clients must always send it. A missing key is 400 idempotency-key-required, a malformed one
+        A retry reuses it; a new user action mints a new one. The service always runs against
+        Postgres (ADR 0016), so the key is required on every POST/PATCH. A missing key is 400 idempotency-key-required, a malformed one
         400 idempotency-key-invalid; the same key with a different method, path or body is 409
         idempotency-key-reused; the same key with the same request replays the stored answer with
         Idempotency-Replayed: true.

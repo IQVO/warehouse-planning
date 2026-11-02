@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
@@ -62,4 +64,25 @@ func (r *StationStandardRepo) List(_ context.Context, location string) ([]proces
 		return out[i].ProcessType() < out[j].ProcessType()
 	})
 	return out, nil
+}
+
+// ListPage implements ports.StationStandardRepository.
+func (r *StationStandardRepo) ListPage(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]processcapacity.StationStandard, error) {
+	all, err := r.List(ctx, location)
+	if err != nil {
+		return nil, err
+	}
+	if after != nil {
+		i := sort.Search(len(all), func(i int) bool {
+			if all[i].Location() != after.Sort {
+				return all[i].Location() > after.Sort
+			}
+			return string(all[i].ProcessType()) > after.ID
+		})
+		all = all[i:]
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }

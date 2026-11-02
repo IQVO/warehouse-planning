@@ -173,6 +173,9 @@ func newPostgresRouter(t *testing.T) *httptest.Server {
 		GetExpectedDemand:      expectedDemand,
 		ListProcessPaths:       &usecases.ListProcessPaths{Paths: paths},
 		ListCapacityPlans:      &usecases.ListCapacityPlans{Plans: plans},
+
+		UnitOfWork:  uow,
+		Idempotency: postgres.NewIdempotencyStore(pool),
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
@@ -186,7 +189,7 @@ func itPost(t *testing.T, srv *httptest.Server, path string, payload map[string]
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := http.Post(srv.URL+path, "application/json", strings.NewReader(string(body)))
+	resp, err := keyedHTTPPost(srv.URL+path, string(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +334,7 @@ func TestHTTP_Postgres_ResourceLifecycleRoundTrip(t *testing.T) {
 		t.Fatalf("created plan = %+v", plan)
 	}
 
-	status, body = itPost(t, srv, "/capacity-plans/"+plan.ID+"/publish", nil)
+	status, body = itPost(t, srv, "/capacity-plans/"+plan.ID+"/publications", nil)
 	if status != http.StatusOK {
 		t.Fatalf("publish plan: %d %s", status, body)
 	}
@@ -359,7 +362,7 @@ func TestHTTP_Postgres_ValidationRejectionsUseProblemSlugs(t *testing.T) {
 		slug   string
 	}{
 		{"malformed json", func() (int, []byte) {
-			resp, err := http.Post(srv.URL+"/process-paths", "application/json", strings.NewReader("{not json"))
+			resp, err := keyedHTTPPost(srv.URL+"/process-paths", "{not json")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -391,4 +394,17 @@ func TestHTTP_Postgres_ValidationRejectionsUseProblemSlugs(t *testing.T) {
 			}
 		})
 	}
+}
+
+var itKeySeq int64
+
+// keyedHTTPPost posts a JSON body with a fresh Idempotency-Key.
+func keyedHTTPPost(url, body string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", fmt.Sprintf("it-%d", atomic.AddInt64(&itKeySeq, 1)))
+	return http.DefaultClient.Do(req)
 }

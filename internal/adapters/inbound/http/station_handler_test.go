@@ -130,7 +130,7 @@ func TestHandler_PutStationStandard_Rejections(t *testing.T) {
 	if status != http.StatusBadRequest || problemType(t, body) != "malformed-json" {
 		t.Fatalf("malformed JSON = %d %s, want 400 malformed-json", status, body)
 	}
-	if status, _, body := getPath(t, srv.Server, "/station-standards"); status != http.StatusOK || len(decodeMap(t, body)["standards"].([]any)) != 0 {
+	if status, _, body := getPath(t, srv.Server, "/station-standards"); status != http.StatusOK || len(decodeMap(t, body)["items"].([]any)) != 0 {
 		t.Fatalf("a rejected declaration was stored: %d %s", status, body)
 	}
 }
@@ -149,19 +149,19 @@ func TestHandler_ListStationStandards(t *testing.T) {
 
 	status, _, body := getPath(t, srv.Server, "/station-standards?location=SIM1")
 	got := decodeMap(t, body)
-	standards := got["standards"].([]any)
-	if status != http.StatusOK || got["location"] != "SIM1" || len(standards) != 2 ||
+	standards := got["items"].([]any)
+	if status != http.StatusOK || len(standards) != 2 ||
 		standards[0].(map[string]any)["process_type"] != "PACK" || standards[1].(map[string]any)["process_type"] != "SORT" {
 		t.Fatalf("GET ?location=SIM1 = %d %s, want PACK then SORT", status, body)
 	}
 
 	_, _, body = getPath(t, srv.Server, "/station-standards")
-	if got := decodeMap(t, body); len(got["standards"].([]any)) != 3 || got["location"] != nil {
-		t.Fatalf("GET all = %s, want 3 standards and no location", body)
+	if got := decodeMap(t, body); len(got["items"].([]any)) != 3 {
+		t.Fatalf("GET all = %s, want 3 standards", body)
 	}
 	_, _, body = getPath(t, srv.Server, "/station-standards?location=NOWHERE")
-	if got := decodeMap(t, body); !reflect.DeepEqual(got["standards"], []any{}) {
-		t.Fatalf("GET NOWHERE = %s, want standards: []", body)
+	if got := decodeMap(t, body); !reflect.DeepEqual(got["items"], []any{}) {
+		t.Fatalf("GET NOWHERE = %s, want items: []", body)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestHandler_GetStorageCapacity(t *testing.T) {
 
 	status, _, body := getPath(t, srv.Server, "/storage-capacity?location=SIM1")
 	got := decodeMap(t, body)
-	if status != http.StatusOK || got["location"] != "SIM1" || !reflect.DeepEqual(got["storage_positions"], []any{}) || !reflect.DeepEqual(got["stations"], []any{}) {
+	if status != http.StatusOK || !reflect.DeepEqual(got["storage_positions"], []any{}) || !reflect.DeepEqual(got["stations"], []any{}) {
 		t.Fatalf("empty site = %d %s, want 200 with empty lists", status, body)
 	}
 
