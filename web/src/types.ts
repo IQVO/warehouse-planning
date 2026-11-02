@@ -35,8 +35,8 @@ export interface StationStandard {
 
 /** GET /station-standards?location= (`location` is omitted when unfiltered). */
 export interface StationStandardsResponse {
-  location?: string;
-  standards: StationStandard[];
+  items: StationStandard[];
+  nextCursor?: string;
 }
 
 /** PUT /station-standards/{location}/{process_type} body. */
@@ -67,7 +67,8 @@ export interface ProcessPath {
 
 /** GET /process-paths */
 export interface ProcessPathsResponse {
-  process_paths: ProcessPath[];
+  items: ProcessPath[];
+  nextCursor?: string;
 }
 
 export interface StepBreakdownItem {
@@ -99,7 +100,7 @@ export type PlanStatus = "DRAFT" | "PUBLISHED";
 export type DemandSource = "request" | "orders";
 
 /** One CapacityPlan: GET /capacity-plans items, GET/POST /capacity-plans and
- *  POST /capacity-plans/{id}/publish all return this shape. */
+ *  POST /capacity-plans/{id}/publications all return this shape. */
 export interface CapacityPlan {
   id: string;
   warehouse_id: string;
@@ -123,10 +124,10 @@ export interface CapacityPlan {
   warnings: string[];
 }
 
-/** GET /capacity-plans?location=&limit= (`location` omitted when unfiltered). */
+/** GET /capacity-plans?location=&limit=&cursor= (one keyset page). */
 export interface CapacityPlansResponse {
-  location?: string;
-  capacity_plans: CapacityPlan[];
+  items: CapacityPlan[];
+  nextCursor?: string;
 }
 
 /** POST /capacity-plans body. `assigned_demand` is OPTIONAL: when omitted the

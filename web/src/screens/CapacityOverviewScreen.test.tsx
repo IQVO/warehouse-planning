@@ -8,7 +8,7 @@ import { DEMAND, EMPTY_STORAGE, NO_DEMAND_DATA, PACK_STANDARD, STORAGE } from ".
 function routes(over: Record<string, Parameters<typeof mockApi>[0][string]> = {}) {
   return mockApi({
     "GET /storage-capacity": json(STORAGE),
-    "GET /station-standards": json({ location: "SIM1", standards: [PACK_STANDARD] }),
+    "GET /station-standards": json({ items: [PACK_STANDARD] }),
     "GET /demand": json(DEMAND),
     ...over,
   });
@@ -88,7 +88,7 @@ describe("CapacityOverviewScreen", () => {
   it("shows empty states for a site with nothing tallied or declared", async () => {
     routes({
       "GET /storage-capacity": json(EMPTY_STORAGE),
-      "GET /station-standards": json({ location: "NEW1", standards: [] }),
+      "GET /station-standards": json({ items: [] }),
     });
     await loadSite("NEW1");
     expect(await screen.findByText("No storage positions are tallied for this site.")).toBeInTheDocument();
@@ -175,7 +175,7 @@ describe("station standard form", () => {
   it("declares a standard (201), sends the exact body and refreshes the table", async () => {
     let declared = false;
     const api = routes({
-      "GET /station-standards": () => json({ location: "SIM1", standards: declared ? [PACK_STANDARD] : [] }),
+      "GET /station-standards": () => json({ items: declared ? [PACK_STANDARD] : [] }),
       "PUT /station-standards/SIM1/PACK": () => {
         declared = true;
         return json(PACK_STANDARD, 201);

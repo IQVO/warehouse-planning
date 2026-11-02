@@ -30,7 +30,7 @@ describe("PathCapacityScreen", () => {
   });
 
   it("explains an empty path catalogue instead of showing a dead form", async () => {
-    mockApi({ "GET /process-paths": json({ process_paths: [] }) });
+    mockApi({ "GET /process-paths": json({ items: [] }) });
     render(<PathCapacityScreen />);
     expect(await screen.findByText(/No process paths are registered yet/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Calculate capacity" })).not.toBeInTheDocument();
@@ -44,7 +44,7 @@ describe("PathCapacityScreen", () => {
   });
 
   it("lists the registered paths and shows the chosen path's steps", async () => {
-    mockApi({ "GET /process-paths": json({ process_paths: PATHS }) });
+    mockApi({ "GET /process-paths": json({ items: PATHS }) });
     const user = userEvent.setup();
     render(<PathCapacityScreen />);
     const select = await screen.findByLabelText(/Process path/);
@@ -56,7 +56,7 @@ describe("PathCapacityScreen", () => {
 
   it("shows the normalized rate, the bottleneck step and the per-step breakdown", async () => {
     const api = mockApi({
-      "GET /process-paths": json({ process_paths: PATHS }),
+      "GET /process-paths": json({ items: PATHS }),
       [CAPACITY_ROUTE]: json(PATH_CAPACITY),
     });
     await fillAndCalculate({ units: "2.5", packages: "1" });
@@ -92,7 +92,7 @@ describe("PathCapacityScreen", () => {
   it("shows every warning string visibly", async () => {
     const second = "REBIN has 4 stations tallied but no station standard is declared";
     mockApi({
-      "GET /process-paths": json({ process_paths: PATHS }),
+      "GET /process-paths": json({ items: PATHS }),
       [CAPACITY_ROUTE]: json({ ...PATH_CAPACITY, warnings: [WARNING, second] }),
     });
     await fillAndCalculate();
@@ -104,7 +104,7 @@ describe("PathCapacityScreen", () => {
 
   it("omits the optional factors from the request when left empty", async () => {
     const api = mockApi({
-      "GET /process-paths": json({ process_paths: PATHS }),
+      "GET /process-paths": json({ items: PATHS }),
       [CAPACITY_ROUTE]: json(PATH_CAPACITY),
     });
     await fillAndCalculate();
@@ -115,14 +115,14 @@ describe("PathCapacityScreen", () => {
   });
 
   it("shows a loading state while the capacity is computed", async () => {
-    mockApi({ "GET /process-paths": json({ process_paths: PATHS }), [CAPACITY_ROUTE]: pending() });
+    mockApi({ "GET /process-paths": json({ items: PATHS }), [CAPACITY_ROUTE]: pending() });
     await fillAndCalculate();
     expect(await screen.findByText("Loading path capacity…")).toBeInTheDocument();
   });
 
   it("surfaces a 422 problem's title and detail (a step with no capacity)", async () => {
     mockApi({
-      "GET /process-paths": json({ process_paths: PATHS }),
+      "GET /process-paths": json({ items: PATHS }),
       [CAPACITY_ROUTE]: problem(
         422,
         "missing-step-capacity",
@@ -149,7 +149,7 @@ describe("PathCapacityScreen", () => {
       await u.type(screen.getByLabelText(/Site code/), "SIM1");
     }, "Pick a window start and end (UTC)."],
   ])("validates before calling the service (%s)", async (_name, setup, message) => {
-    const api = mockApi({ "GET /process-paths": json({ process_paths: PATHS }) });
+    const api = mockApi({ "GET /process-paths": json({ items: PATHS }) });
     const user = userEvent.setup();
     render(<PathCapacityScreen />);
     await screen.findByLabelText(/Process path/);
@@ -160,7 +160,7 @@ describe("PathCapacityScreen", () => {
   });
 
   it("rejects a non-positive conversion factor client-side", async () => {
-    const api = mockApi({ "GET /process-paths": json({ process_paths: PATHS }), [CAPACITY_ROUTE]: json(PATH_CAPACITY) });
+    const api = mockApi({ "GET /process-paths": json({ items: PATHS }), [CAPACITY_ROUTE]: json(PATH_CAPACITY) });
     await fillAndCalculate({ units: "0" });
     expect(await screen.findByText("Units per order must be a number above zero.")).toBeInTheDocument();
     expect(api.to(CAPACITY_ROUTE)).toHaveLength(0);
