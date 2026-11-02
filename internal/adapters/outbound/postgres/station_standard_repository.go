@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -93,4 +95,35 @@ func scanStationStandard(row pgx.Row) (processcapacity.StationStandard, error) {
 		return processcapacity.StationStandard{}, err
 	}
 	return processcapacity.NewStationStandard(location, processcapacity.ProcessType(processType), rate)
+}
+
+// ListPage implements ports.StationStandardRepository: List as a keyset page
+// ordered by (location, process_type).
+func (r *StationStandardRepo) ListPage(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]processcapacity.StationStandard, error) {
+	hasAfter, afterLoc, afterType := false, "", ""
+	if after != nil {
+		hasAfter, afterLoc, afterType = true, after.Sort, after.ID
+	}
+	rows, err := queryFor(ctx, r.pool).Query(ctx, `
+		SELECT location, process_type, quantity, unit, period_seconds
+		FROM station_standards
+		WHERE ($1 = '' OR location = $1)
+		  AND (NOT $2::boolean OR (location, process_type) > ($3::text, $4::text))
+		ORDER BY location, process_type
+		LIMIT $5
+	`, location, hasAfter, afterLoc, afterType, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []processcapacity.StationStandard{}
+	for rows.Next() {
+		standard, err := scanStationStandard(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, standard)
+	}
+	return out, rows.Err()
 }

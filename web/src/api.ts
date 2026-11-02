@@ -1,16 +1,13 @@
 import { PLANNING_API_BASE } from "./config";
 import type {
   CapacityPlan,
-  CapacityPlansResponse,
   CreateCapacityPlanInput,
   ExpectedDemand,
   PathCapacityQuery,
   ProcessPath,
   ProcessPathCapacity,
-  ProcessPathsResponse,
   StationStandard,
   StationStandardInput,
-  StationStandardsResponse,
   StorageCapacity,
 } from "./types";
 
@@ -79,14 +76,17 @@ async function request<T>(
   method: "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
+  idempotencyKey?: string,
 ): Promise<ApiResult<T>> {
   let res: Response;
   try {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (method === "POST") headers["Idempotency-Key"] = idempotencyKey ?? crypto.randomUUID();
     res = await fetch(`${PLANNING_API_BASE}${path}`, {
       method,
-      ...(body === undefined
-        ? {}
-        : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch (err) {
     throw toApiError(err);
@@ -105,6 +105,23 @@ async function request<T>(
 
 const seg = encodeURIComponent;
 
+interface Page<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
+/** Reads every page of a keyset collection: follows `nextCursor` until absent. */
+async function listAll<T>(path: string, query: Query = {}): Promise<T[]> {
+  const all: T[] = [];
+  let cursor: string | undefined;
+  do {
+    const res = await request<Page<T>>("GET", withQuery(path, { ...query, cursor }));
+    all.push(...(res.data.items ?? []));
+    cursor = res.data.nextCursor || undefined;
+  } while (cursor);
+  return all;
+}
+
 /** GET /storage-capacity?location= */
 export async function getStorageCapacity(location: string): Promise<StorageCapacity> {
   return (await request<StorageCapacity>("GET", withQuery("/storage-capacity", { location }))).data;
@@ -112,11 +129,7 @@ export async function getStorageCapacity(location: string): Promise<StorageCapac
 
 /** GET /station-standards?location= */
 export async function getStationStandards(location: string): Promise<StationStandard[]> {
-  const res = await request<StationStandardsResponse>(
-    "GET",
-    withQuery("/station-standards", { location }),
-  );
-  return res.data.standards ?? [];
+  return listAll<StationStandard>("/station-standards", { location });
 }
 
 /** PUT /station-standards/{location}/{process_type}; status is 201 (declared) or 200 (replaced). */
@@ -144,7 +157,7 @@ export async function getDemand(
 
 /** GET /process-paths */
 export async function listProcessPaths(): Promise<ProcessPath[]> {
-  return (await request<ProcessPathsResponse>("GET", "/process-paths")).data.process_paths ?? [];
+  return listAll<ProcessPath>("/process-paths");
 }
 
 /** GET /process-paths/{id}/capacity?... */
@@ -163,10 +176,9 @@ export async function getPathCapacity(q: PathCapacityQuery): Promise<ProcessPath
   ).data;
 }
 
-/** GET /capacity-plans?location= (the service's own default limit of 20 applies). */
+/** GET /capacity-plans?location= (every keyset page, newest first). */
 export async function listCapacityPlans(location: string): Promise<CapacityPlan[]> {
-  const res = await request<CapacityPlansResponse>("GET", withQuery("/capacity-plans", { location }));
-  return res.data.capacity_plans ?? [];
+  return listAll<CapacityPlan>("/capacity-plans", { location });
 }
 
 /** POST /capacity-plans (201 -> the new DRAFT plan). */
@@ -174,7 +186,7 @@ export async function createCapacityPlan(input: CreateCapacityPlanInput): Promis
   return (await request<CapacityPlan>("POST", "/capacity-plans", input)).data;
 }
 
-/** POST /capacity-plans/{id}/publish (200 -> the PUBLISHED plan). */
+/** POST /capacity-plans/{id}/publications (200 -> the PUBLISHED plan). */
 export async function publishCapacityPlan(id: string): Promise<CapacityPlan> {
-  return (await request<CapacityPlan>("POST", `/capacity-plans/${seg(id)}/publish`)).data;
+  return (await request<CapacityPlan>("POST", `/capacity-plans/${seg(id)}/publications`)).data;
 }

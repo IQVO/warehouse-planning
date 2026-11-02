@@ -40,7 +40,7 @@ func (w *world) theProcessPathListIs(raw string) error {
 		ProcessPaths []struct {
 			ID    string   `json:"id"`
 			Steps []string `json:"steps"`
-		} `json:"process_paths"`
+		} `json:"items"`
 	}
 	if err := w.decode(&body); err != nil {
 		return err
@@ -73,7 +73,7 @@ func (w *world) theProcessPathListIsEmpty() error {
 // key fields.
 func (w *world) theCapacityPlanListHasDemands(raw string) error {
 	var body struct {
-		CapacityPlans []map[string]any `json:"capacity_plans"`
+		CapacityPlans []map[string]any `json:"items"`
 	}
 	if err := w.decode(&body); err != nil {
 		return err
@@ -110,7 +110,7 @@ func (w *world) theListedPlanIs(index int, status string) error {
 		CapacityPlans []struct {
 			Status      string  `json:"status"`
 			PublishedAt *string `json:"published_at"`
-		} `json:"capacity_plans"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal(w.body, &body); err != nil {
 		return err

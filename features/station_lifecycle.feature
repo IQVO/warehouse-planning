@@ -19,8 +19,7 @@ Feature: Station standards and the facility tally lifecycle
     Then the response status is 200
     And the station standards list is "SIM1/PACK=180 PACKAGE, SIM1/PICK=90 UNIT, SIM2/PACK=200 PACKAGE"
     When I list the station standards of "SIM1"
-    Then the response field "location" is "SIM1"
-    And the station standards list is "SIM1/PACK=180 PACKAGE, SIM1/PICK=90 UNIT"
+    Then the station standards list is "SIM1/PACK=180 PACKAGE, SIM1/PICK=90 UNIT"
 
   Scenario: Invalid station standard declarations are rejected and nothing is stored
     When I declare a station standard of 180 PACKAGE per 0 seconds for PACK at SIM1

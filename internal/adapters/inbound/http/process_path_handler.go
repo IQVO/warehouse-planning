@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/adapters/inbound/http/page"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
@@ -38,12 +40,16 @@ func (s *Server) handleRegisterProcessPath(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, toProcessPathResponse(path))
 }
 
-// handleListProcessPaths backs GET /process-paths: every registered
-// ProcessPath ordered by id. 200 with an empty list when none is registered
-// (never an error). The route exists only when the ListProcessPaths use case
-// is wired.
+// handleListProcessPaths backs GET /process-paths: the registered
+// ProcessPaths ordered by id, one keyset page at a time ({items,nextCursor}).
+// 200 with an empty items list when none follows (never an error). The route
+// exists only when the ListProcessPaths use case is wired.
 func (s *Server) handleListProcessPaths(w http.ResponseWriter, r *http.Request) {
-	paths, err := s.ListProcessPaths.Handle(r.Context())
+	limit, after, ok := pageParams(w, r)
+	if !ok {
+		return
+	}
+	paths, err := s.ListProcessPaths.Handle(r.Context(), after, page.FetchSize(limit))
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -52,7 +58,9 @@ func (s *Server) handleListProcessPaths(w http.ResponseWriter, r *http.Request) 
 	for _, path := range paths {
 		out = append(out, toProcessPathResponse(path))
 	}
-	writeJSON(w, http.StatusOK, processPathsResponse{ProcessPaths: out})
+	writeJSON(w, http.StatusOK, page.Of(out, limit, func(p processPathResponse) page.Position {
+		return page.Position{Sort: p.ID, ID: p.ID}
+	}))
 }
 
 func toProcessPathResponse(path processpath.ProcessPath) processPathResponse {

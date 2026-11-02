@@ -21,7 +21,7 @@ Feature: Demand request validation and capacity plan list limits
     Then the response status is 400
     And the problem detail type is "invalid-capacity-window"
 
-  Scenario: Plan lists default to 20 plans, cap a stated limit at 100 and echo the location filter
+  Scenario: Plan lists default to 100 plans and reject a limit above 500
     Given I register a LABOR constraint of 4000 UNIT per HOUR for PICK at LIM-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
     And I register a LABOR constraint of 2500 UNIT per HOUR for REBIN at LIM-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
     And I register a LABOR constraint of 1800 PACKAGE per HOUR for PACK at LIM-ZONE for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
@@ -29,11 +29,10 @@ Feature: Demand request validation and capacity plan list limits
     And I create 105 capacity plans with assigned demand 1000 at "LIM-ZONE" on path "pick-rebin-pack"
     When I list the capacity plans of every location
     Then the response status is 200
-    And the capacity plan list has 20 plans
-    And the response field "location" is absent
+    And the capacity plan list has 100 plans
     When I list the capacity plans for location "LIM-ZONE" with limit "1000"
-    Then the capacity plan list has 100 plans
-    And the response field "location" is "LIM-ZONE"
+    Then the response status is 400
+    And the problem detail type is "invalid-limit"
     When I list the capacity plans for location "LIM-ZONE" with limit "7"
     Then the capacity plan list has 7 plans
     When I list the capacity plans for location "LIM-OTHER"

@@ -3,6 +3,8 @@ package ports
 import (
 	"context"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
@@ -11,7 +13,8 @@ import (
 // interface the write and capacity use cases depend on; the memory and
 // Postgres repositories implement both.
 type ProcessPathLister interface {
-	// List returns every registered ProcessPath ordered by id (an empty,
-	// non-nil slice when none is registered).
-	List(ctx context.Context) ([]processpath.ProcessPath, error)
+	// ListPage returns at most limit ProcessPaths ordered by id, strictly
+	// after the cursor's ID when after is not nil (an empty, non-nil slice
+	// when nothing follows).
+	ListPage(ctx context.Context, after *pagecursor.Cursor, limit int) ([]processpath.ProcessPath, error)
 }

@@ -350,7 +350,7 @@ components:
       title: Capacity plan published
       summary: A DRAFT CapacityPlan was published.
       description: |
-        Raised by `CapacityPlan.Publish` on `POST /capacity-plans/{id}/publish`.
+        Raised by `CapacityPlan.Publish` on `POST /capacity-plans/{id}/publications`.
         Always accompanied by `CapacityShortageDetected` and `BottleneckDetected`
         when the plan has a shortage. A plan is published at most once. `type` =
         `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished`.

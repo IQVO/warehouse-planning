@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,6 +150,9 @@ func (w *world) start() {
 		InboundStandards:             w.io.standards,
 		GetInboundDemand:             w.io.getInboundDemand,
 		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: planRepo, Observed: w.io.observedRepo},
+
+		// Every POST/PATCH sits behind the Idempotency-Key middleware.
+		UnitOfWork: uow, Idempotency: memory.NewIdempotencyStore(),
 	}
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
@@ -166,6 +170,9 @@ func (w *world) stop() {
 
 // record issues a request and remembers the response the Then steps assert
 // against.
+// keySeq mints a fresh Idempotency-Key per request.
+var keySeq int64
+
 func (w *world) record(ctx context.Context, method, path string, payload any) error {
 	var reader io.Reader = http.NoBody
 	if payload != nil {
@@ -182,6 +189,9 @@ func (w *world) record(ctx context.Context, method, path string, payload any) er
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if method == http.MethodPost || method == http.MethodPatch {
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("bdd-%d", atomic.AddInt64(&keySeq, 1)))
 	}
 
 	resp, err := w.server.Client().Do(req)
@@ -279,11 +289,11 @@ func (w *world) iCreateACapacityPlan(ctx context.Context, warehouse, site, locat
 }
 
 func (w *world) iPublishTheCapacityPlan(ctx context.Context) error {
-	return w.record(ctx, http.MethodPost, "/capacity-plans/"+w.planID+"/publish", nil)
+	return w.record(ctx, http.MethodPost, "/capacity-plans/"+w.planID+"/publications", nil)
 }
 
 func (w *world) iPublishTheCapacityPlanWithID(ctx context.Context, id string) error {
-	return w.record(ctx, http.MethodPost, "/capacity-plans/"+id+"/publish", nil)
+	return w.record(ctx, http.MethodPost, "/capacity-plans/"+id+"/publications", nil)
 }
 
 // ----------------------------------------------------------------- Then ----

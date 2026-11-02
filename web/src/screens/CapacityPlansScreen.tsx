@@ -19,7 +19,7 @@ const PLAN_PROBLEM_LEADS: Record<string, string> = {
 /**
  * Capacity plans: the most recent plans (GET /capacity-plans), a form to
  * create one (POST /capacity-plans) and a Publish action on DRAFT plans
- * (POST /capacity-plans/{id}/publish).
+ * (POST /capacity-plans/{id}/publications).
  *
  * `assigned_demand` is optional on create: left empty, the service defaults it
  * from the order-management read model and the plan says so via demand_source.

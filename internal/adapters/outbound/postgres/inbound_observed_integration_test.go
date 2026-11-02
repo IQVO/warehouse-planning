@@ -460,6 +460,9 @@ func TestMigrations0009And0010_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 		t.Fatal("the up migrations did not create the 0009/0010 objects")
 	}
 	if err := m.Steps(-1); err != nil {
+		t.Fatalf("down 0011: %v", err)
+	}
+	if err := m.Steps(-1); err != nil {
 		t.Fatalf("down 0010: %v", err)
 	}
 	if tables("observed_capacity") != 0 || tables("inbound_appointments") != 1 {

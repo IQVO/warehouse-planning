@@ -2,8 +2,9 @@ package http
 
 import (
 	"net/http"
-	"strconv"
 	"time"
+
+	"github.com/claudioed/warehouse-planning/internal/adapters/inbound/http/page"
 
 	"github.com/go-chi/chi/v5"
 
@@ -63,7 +64,7 @@ func (s *Server) handleCreateCapacityPlan(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, toCapacityPlanResponse(plan))
 }
 
-// handlePublishCapacityPlan backs POST /capacity-plans/{id}/publish: 200
+// handlePublishCapacityPlan backs POST /capacity-plans/{id}/publications: 200
 // with the PUBLISHED plan, 404 for an unknown id, 409 if it was already
 // published.
 func (s *Server) handlePublishCapacityPlan(w http.ResponseWriter, r *http.Request) {
@@ -90,37 +91,44 @@ func (s *Server) handleGetCapacityPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toCapacityPlanResponse(plan))
 }
 
-// handleListCapacityPlans backs GET /capacity-plans?location=&limit=: the most
+// handleListCapacityPlans backs GET /capacity-plans?location=: the most
 // recently created plans, newest first, each in GET /capacity-plans/{id}'s
-// shape. location is optional (omitted = every location, and the location
-// field of the body is omitted too). limit defaults to 20 and is capped at
-// 100; a limit that is not a positive integer is a 400 malformed-limit. 200
-// with an empty list when nothing matches. The route exists only when the
-// ListCapacityPlans use case is wired.
+// shape, one keyset page at a time ({items,nextCursor}; ordered by created_at
+// then id, both descending). location is optional (omitted = every location)
+// and is repeated on every page request. 200 with an empty items list when
+// nothing matches. The route exists only when the ListCapacityPlans use case
+// is wired.
 func (s *Server) handleListCapacityPlans(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	location := q.Get("location")
-
-	limit := 0 // 0 = the use case's default
-	if raw := q.Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
-			writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-limit", "limit must be a positive integer"}, "limit must be a positive integer (at most "+strconv.Itoa(usecases.MaxCapacityPlanListLimit)+")", r.URL.Path)
-			return
-		}
-		limit = parsed
+	limit, after, ok := pageParams(w, r, "location")
+	if !ok {
+		return
 	}
-
-	plans, err := s.ListCapacityPlans.Handle(r.Context(), location, limit)
+	plans, err := s.ListCapacityPlans.Handle(r.Context(), r.URL.Query().Get("location"), after, page.FetchSize(limit))
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	out := make([]capacityPlanResponse, 0, len(plans))
+	// Plans are rows of the page; the cursor needs the creation instant at full
+	// precision, so it is built from the aggregate, not the response string.
+	out := make([]capacityPlanItem, 0, len(plans))
 	for _, p := range plans {
-		out = append(out, toCapacityPlanResponse(p))
+		out = append(out, capacityPlanItem{resp: toCapacityPlanResponse(p), createdAt: p.CreatedAt().UTC().Format(time.RFC3339Nano)})
 	}
-	writeJSON(w, http.StatusOK, capacityPlansResponse{Location: location, CapacityPlans: out})
+	pg := page.Of(out, limit, func(i capacityPlanItem) page.Position {
+		return page.Position{Sort: i.createdAt, ID: i.resp.ID}
+	})
+	items := make([]capacityPlanResponse, 0, len(pg.Items))
+	for _, i := range pg.Items {
+		items = append(items, i.resp)
+	}
+	writeJSON(w, http.StatusOK, page.Page[capacityPlanResponse]{Items: items, NextCursor: pg.NextCursor})
+}
+
+// capacityPlanItem carries a plan response with its full-precision creation
+// instant, the sort key of the list cursor.
+type capacityPlanItem struct {
+	resp      capacityPlanResponse
+	createdAt string
 }
 
 func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
+
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
@@ -40,6 +42,7 @@ func newListServer(t *testing.T) *httptest.Server {
 		CapacityPlans:       plans,
 		ListProcessPaths:    &usecases.ListProcessPaths{Paths: paths},
 		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: plans},
+		StationStandards:    memory.NewStationStandardRepo(),
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
@@ -47,9 +50,9 @@ func newListServer(t *testing.T) *httptest.Server {
 }
 
 type plansListJSON struct {
-	Location      string                     `json:"location"`
-	CapacityPlans []map[string]any           `json:"capacity_plans"`
-	Raw           map[string]json.RawMessage `json:"-"`
+	Items      []map[string]any           `json:"items"`
+	NextCursor string                     `json:"nextCursor"`
+	Raw        map[string]json.RawMessage `json:"-"`
 }
 
 func decodePlansList(t *testing.T, body []byte) plansListJSON {
@@ -82,7 +85,7 @@ func TestHandler_ListProcessPaths(t *testing.T) {
 	if ct := headers.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q", ct)
 	}
-	if string(body) != "{\"process_paths\":[]}\n" {
+	if string(body) != "{\"items\":[]}\n" {
 		t.Errorf("empty body = %q, want an empty array (never null)", body)
 	}
 
@@ -98,7 +101,7 @@ func TestHandler_ListProcessPaths(t *testing.T) {
 			ID    string   `json:"id"`
 			Name  string   `json:"name"`
 			Steps []string `json:"steps"`
-		} `json:"process_paths"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)
@@ -139,7 +142,7 @@ func seedThreePlans(t *testing.T, srv *httptest.Server) []string {
 		}
 		ids = append(ids, decodePlan(t, body).ID)
 	}
-	if status, _, body := postJSON(t, srv, "/capacity-plans/"+ids[0]+"/publish", nil); status != http.StatusOK {
+	if status, _, body := postJSON(t, srv, "/capacity-plans/"+ids[0]+"/publications", nil); status != http.StatusOK {
 		t.Fatalf("publish = %d: %s", status, body)
 	}
 	return ids
@@ -157,20 +160,17 @@ func TestHandler_ListCapacityPlans_NewestFirstInTheSingleGetShape(t *testing.T) 
 		t.Errorf("Content-Type = %q", ct)
 	}
 	list := decodePlansList(t, body)
-	if list.Location != "PATH-ZONE-A" {
-		t.Errorf("location echo = %q", list.Location)
-	}
-	if got := planIDs(list.CapacityPlans); fmt.Sprint(got) != fmt.Sprint([]string{ids[2], ids[1], ids[0]}) {
+	if got := planIDs(list.Items); fmt.Sprint(got) != fmt.Sprint([]string{ids[2], ids[1], ids[0]}) {
 		t.Fatalf("ids = %v, want newest first %v", got, []string{ids[2], ids[1], ids[0]})
 	}
 
 	// Each item is byte-for-byte what GET /capacity-plans/{id} returns.
-	assertListItemsMatchSingleGets(t, srv, list.CapacityPlans)
-	oldest := list.CapacityPlans[2]
+	assertListItemsMatchSingleGets(t, srv, list.Items)
+	oldest := list.Items[2]
 	if oldest["status"] != "PUBLISHED" || oldest["published_at"] == nil {
 		t.Errorf("oldest = %v, want PUBLISHED with published_at", oldest)
 	}
-	if newest := list.CapacityPlans[0]; newest["status"] != "DRAFT" || newest["warnings"] == nil || newest["demand_source"] != "request" {
+	if newest := list.Items[0]; newest["status"] != "DRAFT" || newest["warnings"] == nil || newest["demand_source"] != "request" {
 		t.Errorf("newest = %v, want DRAFT, warnings array, demand_source", newest)
 	}
 }
@@ -180,28 +180,25 @@ func TestHandler_ListCapacityPlans_LimitAndLocationFilters(t *testing.T) {
 	ids := seedThreePlans(t, srv)
 
 	_, _, body := getPath(t, srv, "/capacity-plans?location=PATH-ZONE-A&limit=2")
-	if got := planIDs(decodePlansList(t, body).CapacityPlans); fmt.Sprint(got) != fmt.Sprint([]string{ids[2], ids[1]}) {
+	if got := planIDs(decodePlansList(t, body).Items); fmt.Sprint(got) != fmt.Sprint([]string{ids[2], ids[1]}) {
 		t.Errorf("limit=2 ids = %v", got)
 	}
 
-	// No location filter: every site, and the location field is omitted.
+	// No location filter: every site.
 	_, _, body = getPath(t, srv, "/capacity-plans")
 	all := decodePlansList(t, body)
-	if len(all.CapacityPlans) != 3 {
-		t.Errorf("no filter = %d plans, want 3", len(all.CapacityPlans))
-	}
-	if _, present := all.Raw["location"]; present {
-		t.Errorf("location must be omitted when no filter was given: %s", body)
+	if len(all.Items) != 3 {
+		t.Errorf("no filter = %d plans, want 3", len(all.Items))
 	}
 
 	// An unknown location is an empty list, not an error.
 	status, _, body := getPath(t, srv, "/capacity-plans?location=NOWHERE")
-	if status != http.StatusOK || string(body) != "{\"location\":\"NOWHERE\",\"capacity_plans\":[]}\n" {
+	if status != http.StatusOK || string(body) != "{\"items\":[]}\n" {
 		t.Errorf("unknown location = %d %q", status, body)
 	}
 }
 
-func TestHandler_ListCapacityPlans_DefaultLimitIs20AndCapIs100(t *testing.T) {
+func TestHandler_ListCapacityPlans_DefaultLimitIs100AndCapIs500(t *testing.T) {
 	srv := newListServer(t)
 	seedPlanFixture(t, srv)
 	for i := 0; i < 105; i++ {
@@ -209,45 +206,94 @@ func TestHandler_ListCapacityPlans_DefaultLimitIs20AndCapIs100(t *testing.T) {
 			t.Fatalf("create %d = %d: %s", i, status, body)
 		}
 	}
-	count := func(query string) int {
+	list := func(query string) (int, plansListJSON) {
 		t.Helper()
 		status, _, body := getPath(t, srv, "/capacity-plans"+query)
 		if status != http.StatusOK {
 			t.Fatalf("GET %s = %d: %s", query, status, body)
 		}
-		return len(decodePlansList(t, body).CapacityPlans)
+		return status, decodePlansList(t, body)
 	}
-	if got := count(""); got != 20 {
-		t.Errorf("default limit returned %d, want 20", got)
+	if _, l := list(""); len(l.Items) != 100 || l.NextCursor == "" {
+		t.Errorf("default limit returned %d (nextCursor %q), want 100 with a next page", len(l.Items), l.NextCursor)
 	}
-	if got := count("?limit=100"); got != 100 {
-		t.Errorf("limit=100 returned %d, want 100", got)
+	if _, l := list("?limit=500"); len(l.Items) != 105 || l.NextCursor != "" {
+		t.Errorf("limit=500 returned %d (nextCursor %q), want all 105 and no next page", len(l.Items), l.NextCursor)
 	}
-	if got := count("?limit=5000"); got != 100 {
-		t.Errorf("limit=5000 returned %d, want the cap of 100", got)
-	}
-	if got := count("?limit=1"); got != 1 {
-		t.Errorf("limit=1 returned %d, want 1", got)
+	if _, l := list("?limit=1"); len(l.Items) != 1 || l.NextCursor == "" {
+		t.Errorf("limit=1 returned %d", len(l.Items))
 	}
 }
 
-func TestHandler_ListCapacityPlans_MalformedLimitIs400Problem(t *testing.T) {
+// TestHandler_ListCapacityPlans_WalksEveryPage follows nextCursor over more
+// plans than the page size, including plans sharing created_at, and asserts
+// no duplicate and no skipped row.
+func TestHandler_ListCapacityPlans_WalksEveryPage(t *testing.T) {
 	srv := newListServer(t)
-	for _, limit := range []string{"abc", "0", "-5", "1.5", "10x"} {
-		status, headers, body := getPath(t, srv, "/capacity-plans?limit="+limit)
-		if status != http.StatusBadRequest {
-			t.Errorf("limit=%s => %d, want 400", limit, status)
-			continue
+	seedPlanFixture(t, srv)
+	const total = 11
+	want := map[string]bool{}
+	for i := 0; i < total; i++ {
+		status, _, body := postJSON(t, srv, "/capacity-plans", planBody(10))
+		if status != http.StatusCreated {
+			t.Fatalf("create %d = %d: %s", i, status, body)
 		}
-		if ct := headers.Get("Content-Type"); ct != "application/problem+json" {
-			t.Errorf("limit=%s Content-Type = %q", limit, ct)
+		want[decodePlan(t, body).ID] = true
+	}
+	seen := map[string]bool{}
+	cursor := ""
+	for pages := 0; pages < 10; pages++ {
+		url := "/capacity-plans?limit=4"
+		if cursor != "" {
+			url += "&cursor=" + cursor
 		}
-		if got := problemType(t, body); got != "malformed-limit" {
-			t.Errorf("limit=%s problem type = %q", limit, got)
+		status, _, body := getPath(t, srv, url)
+		if status != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", url, status, body)
 		}
-		var p struct{ Title, Detail string }
-		if err := json.Unmarshal(body, &p); err != nil || p.Title == "" || p.Detail == "" {
-			t.Errorf("limit=%s problem lacks title/detail: %s", limit, body)
+		l := decodePlansList(t, body)
+		for _, id := range planIDs(l.Items) {
+			if seen[id] {
+				t.Fatalf("duplicate %s", id)
+			}
+			seen[id] = true
+		}
+		if cursor = l.NextCursor; cursor == "" {
+			break
+		}
+	}
+	if len(seen) != total {
+		t.Fatalf("walked %d of %d plans", len(seen), total)
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Errorf("skipped %s", id)
+		}
+	}
+}
+
+func TestHandler_ListCapacityPlans_BadPagingParametersAre400(t *testing.T) {
+	srv := newListServer(t)
+	cases := map[string]string{
+		"limit=abc": "invalid-limit", "limit=0": "invalid-limit", "limit=-5": "invalid-limit", "limit=501": "invalid-limit",
+		"limit=": "invalid-limit", "limit=1&limit=2": "invalid-limit",
+		"cursor=!!not-a-cursor": "invalid-cursor", "cursor=a&cursor=b": "invalid-cursor",
+		"after=x": "unknown-query-parameter", "offset=1": "unknown-query-parameter", "nextToken=x": "unknown-query-parameter",
+		"from=x": "unknown-query-parameter",
+	}
+	for query, slug := range cases {
+		for _, path := range []string{"/capacity-plans?", "/process-paths?", "/station-standards?"} {
+			status, headers, body := getPath(t, srv, path+query)
+			if status != http.StatusBadRequest {
+				t.Errorf("GET %s%s => %d, want 400", path, query, status)
+				continue
+			}
+			if ct := headers.Get("Content-Type"); ct != "application/problem+json" {
+				t.Errorf("%s%s Content-Type = %q", path, query, ct)
+			}
+			if got := problemType(t, body); got != slug {
+				t.Errorf("%s%s problem type = %q, want %q", path, query, got, slug)
+			}
 		}
 	}
 }
@@ -267,13 +313,13 @@ func TestHandler_ListRoutesAbsentWhenUseCasesNotWired(t *testing.T) {
 
 type failingPathLister struct{}
 
-func (failingPathLister) List(context.Context) ([]processpath.ProcessPath, error) {
+func (failingPathLister) ListPage(context.Context, *pagecursor.Cursor, int) ([]processpath.ProcessPath, error) {
 	return nil, errors.New("database unavailable")
 }
 
 type failingPlanLister struct{}
 
-func (failingPlanLister) ListRecent(context.Context, string, int) ([]*capacityplan.CapacityPlan, error) {
+func (failingPlanLister) ListRecent(context.Context, string, *pagecursor.Cursor, int) ([]*capacityplan.CapacityPlan, error) {
 	return nil, errors.New("database unavailable")
 }
 
