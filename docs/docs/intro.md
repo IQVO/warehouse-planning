@@ -82,3 +82,7 @@ Reference:
 - [API reference](/docs/api-reference): REST (generated from `apis/openapi.yaml`) and the event catalogue.
 - [MCP tools](/docs/mcp/tools): every tool of `cmd/mcp`.
 - [Architecture decision records](/docs/adr): the index of all twelve ADRs.
+
+:::note[Disclaimer]
+This project is a domain-driven design study. It is not associated with, endorsed by or affiliated with any company, and it uses no company's code, data, logos or trademarks. All names, figures and examples are illustrative or synthetic.
+:::
