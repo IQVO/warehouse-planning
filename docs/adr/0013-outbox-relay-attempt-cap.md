@@ -57,7 +57,7 @@ an excluded row stays in the outbox table for inspection.
    `outbox relay: row reached the attempt cap and is excluded from future claims; ...`
    and the fields `outbox_id`, `topic`, `event_type`, `key`, `attempts`,
    `max_attempts` and `error`. A failed `Drain` returns an
-   `*outbox.SendFailure` (row id, message, attempts after the failure, cause)
+   `*outbox.SendFailureError` (row id, message, attempts after the failure, cause)
    so the relay can do that without another query. Every failed pass still
    logs `outbox relay pass failed`, as before.
 5. **Re-arming is an operator action.** After fixing the cause,

@@ -161,7 +161,7 @@ func (s *Server) handleGetInboundDemand(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	location, pathID := q.Get("location"), q.Get("path_id")
 	if location == "" {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"missing-location", "location is required"}, "the location (site code) query parameter must be provided", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMissingLocation, "the location (site code) query parameter must be provided", r.URL.Path)
 		return
 	}
 	if pathID == "" {
@@ -170,12 +170,12 @@ func (s *Server) handleGetInboundDemand(w http.ResponseWriter, r *http.Request) 
 	}
 	start, err := time.Parse(time.RFC3339, q.Get("window_start"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-start", "window_start must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowStart, err.Error(), r.URL.Path)
 		return
 	}
 	end, err := time.Parse(time.RFC3339, q.Get("window_end"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-window-end", "window_end must be an RFC3339 timestamp"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedWindowEnd, err.Error(), r.URL.Path)
 		return
 	}
 	result, err := s.GetInboundDemand.Handle(r.Context(), location, pathID, start, end)

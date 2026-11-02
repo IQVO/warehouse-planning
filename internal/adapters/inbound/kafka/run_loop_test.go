@@ -2,6 +2,7 @@ package kafka_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestStorageConsumer_Run_TransientFailuresRetriedThenCommittedOnce(t *testin
 	h.consumer.Reader = reader
 
 	err := runUntilCommits(t, reader, 1, h.consumer.Run)
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run = %v, want context.Canceled", err)
 	}
 
@@ -68,7 +69,7 @@ func TestLaborConsumer_Run_TransientFailuresRetriedThenCommittedOnce(t *testing.
 	reader := newFakeReader(shiftPlanCommittedEvent(t, "evt-1", at, defaultShiftPlanData()))
 	h.consumer.Reader = reader
 
-	if err := runUntilCommits(t, reader, 1, h.consumer.Run); err != context.Canceled {
+	if err := runUntilCommits(t, reader, 1, h.consumer.Run); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run = %v", err)
 	}
 	if got, want := reader.log(), []string{"fetch:0", "commit:0"}; !reflect.DeepEqual(got, want) {
@@ -92,7 +93,7 @@ func TestStorageConsumer_Run_DeterministicBadMessageCommittedOnceNotRetried(t *t
 	)
 	h.consumer.Reader = reader
 
-	if err := runUntilCommits(t, reader, 2, h.consumer.Run); err != context.Canceled {
+	if err := runUntilCommits(t, reader, 2, h.consumer.Run); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run = %v", err)
 	}
 	want := []string{"fetch:0", "commit:0", "fetch:1", "commit:1"}
@@ -128,7 +129,7 @@ func TestStorageConsumer_Run_CancelledWhileFailing_DoesNotCommit(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	cancel()
-	if err := <-done; err != context.Canceled {
+	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run = %v", err)
 	}
 	for _, e := range reader.log() {

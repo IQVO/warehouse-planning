@@ -130,12 +130,12 @@ func ReadyzHandler(g *Readiness) http.HandlerFunc {
 
 func serveReadyz(g *Readiness, w http.ResponseWriter, r *http.Request) {
 	if !g.Ready() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{statusKey: "not_ready"})
 		return
 	}
 	if failing := g.Failing(r.Context()); len(failing) > 0 {
 		writeProblem(w, http.StatusServiceUnavailable, dependencyUnavailable, "not ready: "+strings.Join(failing, ", "), r.URL.Path)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ready"})
 }
