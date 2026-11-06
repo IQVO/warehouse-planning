@@ -157,7 +157,7 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api-reference/rest/get-inbound-demand",
-          label: "Inbound demand of a site over a window (inbound-receiving read model)",
+          label: "Inbound demand of a site over a window (dock-scheduling read model)",
           className: "api-method get",
         },
       ],

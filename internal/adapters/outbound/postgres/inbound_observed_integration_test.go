@@ -26,18 +26,51 @@ var (
 	ibAsOf  = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 )
 
-func ibBooked(t *testing.T, id, location string, start time.Time, asns int, asOf time.Time) inbound.Appointment {
+func ibBooked(t *testing.T, id, location string, start time.Time, asns int, version int64, asOf time.Time) inbound.Appointment {
 	t.Helper()
-	a, err := inbound.NewBooked(inbound.BookedParams{AppointmentID: id, Location: location, WindowStart: start, WindowEnd: start.Add(2 * time.Hour), ASNCount: asns, AsOf: asOf})
+	a, err := inbound.NewBooked(inbound.BookedParams{
+		AppointmentID: id, Location: location, Direction: inbound.DirectionInbound,
+		WindowStart: start, WindowEnd: start.Add(2 * time.Hour), ASNCount: asns, Version: version, AsOf: asOf,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return a
 }
 
-func ibCancelled(t *testing.T, id, location string, asOf time.Time) inbound.Appointment {
+func ibOutbound(t *testing.T, id, location string, start time.Time, version int64, asOf time.Time) inbound.Appointment {
 	t.Helper()
-	a, err := inbound.NewCancelled(id, location, asOf)
+	a, err := inbound.NewBooked(inbound.BookedParams{
+		AppointmentID: id, Location: location, Direction: inbound.DirectionOutbound,
+		WindowStart: start, WindowEnd: start.Add(2 * time.Hour), Version: version, AsOf: asOf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func ibRescheduled(t *testing.T, id, location string, start time.Time, version int64, asOf time.Time) inbound.Appointment {
+	t.Helper()
+	a, err := inbound.NewRescheduled(id, location, start, start.Add(2*time.Hour), version, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func ibCancelled(t *testing.T, id, location string, version int64, asOf time.Time) inbound.Appointment {
+	t.Helper()
+	a, err := inbound.NewCancelled(id, location, version, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func ibNoShow(t *testing.T, id, location string, version int64, asOf time.Time) inbound.Appointment {
+	t.Helper()
+	a, err := inbound.NewNoShow(id, location, inbound.DirectionInbound, version, asOf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +79,8 @@ func ibCancelled(t *testing.T, id, location string, asOf time.Time) inbound.Appo
 
 // The SQL window predicate must agree with inbound.Appointment.CountsIn at every
 // boundary: a door window starting at `start` counts, one starting at `end` does
-// not, a cancelled appointment and a tombstone never count.
+// not, and a cancelled appointment, a no-show, a tombstone, an OUTBOUND
+// appointment and a partial row (direction unknown) never count.
 func TestInboundAppointmentRepo_DemandWindowBoundariesMatchTheDomainRule(t *testing.T) {
 	pool := newMigratedPool(t)
 	repo := postgres.NewInboundAppointmentRepo(pool)
@@ -54,14 +88,21 @@ func TestInboundAppointmentRepo_DemandWindowBoundariesMatchTheDomainRule(t *test
 	ctx := context.Background()
 
 	events := []inbound.Appointment{
-		ibBooked(t, "before", "SIM1", ibStart.Add(-time.Second), 1, ibAsOf),
-		ibBooked(t, "at-start", "SIM1", ibStart, 2, ibAsOf.Add(time.Minute)),
-		ibBooked(t, "last-second", "SIM1", ibEnd.Add(-time.Second), 3, ibAsOf.Add(2*time.Minute)),
-		ibBooked(t, "at-end", "SIM1", ibEnd, 5, ibAsOf.Add(time.Hour)),
-		ibBooked(t, "other-site", "SIM2", ibStart.Add(time.Hour), 7, ibAsOf.Add(2*time.Hour)),
-		ibBooked(t, "cancelled", "SIM1", ibStart.Add(time.Hour), 11, ibAsOf),
-		ibCancelled(t, "cancelled", "SIM1", ibAsOf.Add(3*time.Minute)),
-		ibCancelled(t, "tombstone", "SIM1", ibAsOf.Add(4*time.Minute)),
+		ibBooked(t, "before", "SIM1", ibStart.Add(-time.Second), 1, 1, ibAsOf),
+		ibBooked(t, "at-start", "SIM1", ibStart, 2, 1, ibAsOf.Add(time.Minute)),
+		ibBooked(t, "last-second", "SIM1", ibEnd.Add(-time.Second), 3, 1, ibAsOf.Add(2*time.Minute)),
+		ibBooked(t, "at-end", "SIM1", ibEnd, 5, 1, ibAsOf.Add(time.Hour)),
+		ibBooked(t, "other-site", "SIM2", ibStart.Add(time.Hour), 7, 1, ibAsOf.Add(2*time.Hour)),
+		ibBooked(t, "cancelled", "SIM1", ibStart.Add(time.Hour), 11, 1, ibAsOf),
+		ibCancelled(t, "cancelled", "SIM1", 2, ibAsOf.Add(3*time.Minute)),
+		ibCancelled(t, "tombstone", "SIM1", 2, ibAsOf.Add(4*time.Minute)),
+		ibBooked(t, "no-show", "SIM1", ibStart.Add(time.Hour), 13, 1, ibAsOf),
+		ibNoShow(t, "no-show", "SIM1", 2, ibAsOf.Add(5*time.Minute)),
+		ibOutbound(t, "outbound", "SIM1", ibStart.Add(time.Hour), 1, ibAsOf.Add(6*time.Minute)),
+		ibRescheduled(t, "partial", "SIM1", ibStart.Add(time.Hour), 2, ibAsOf.Add(7*time.Minute)),
+		// Rescheduled moves an inbound booking into the window.
+		ibBooked(t, "moved-in", "SIM1", ibEnd.Add(24*time.Hour), 17, 1, ibAsOf),
+		ibRescheduled(t, "moved-in", "SIM1", ibStart.Add(2*time.Hour), 2, ibAsOf.Add(8*time.Minute)),
 	}
 	for _, e := range events {
 		pg, err := repo.Apply(ctx, e)
@@ -78,8 +119,8 @@ func TestInboundAppointmentRepo_DemandWindowBoundariesMatchTheDomainRule(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Appointments != 2 || got.ASNs != 2+3 {
-		t.Fatalf("demand = %+v, want the appointments at start and one second before end", got)
+	if got.Appointments != 3 || got.ASNs != 2+3+17 {
+		t.Fatalf("demand = %+v, want at-start, last-second and the rescheduled-in appointment", got)
 	}
 	if !got.AsOf.Equal(ibAsOf.Add(time.Hour)) {
 		t.Fatalf("AsOf = %v, want the site's newest event, not the other site's", got.AsOf)
@@ -93,9 +134,9 @@ func TestInboundAppointmentRepo_DemandWindowBoundariesMatchTheDomainRule(t *test
 	}
 }
 
-// The ordering guard must be the same function in both adapters, in EVERY
-// arrival order of a Booked and its Cancelled.
-func TestInboundAppointmentRepo_OrderingGuardLikeTheInMemoryAdapter(t *testing.T) {
+// The version guard must be the same function in both adapters, in EVERY
+// arrival order of a Booked and its Rescheduled / Cancelled / NoShow.
+func TestInboundAppointmentRepo_VersionGuardLikeTheInMemoryAdapter(t *testing.T) {
 	pool := newMigratedPool(t)
 	pg := postgres.NewInboundAppointmentRepo(pool)
 	mem := memory.NewInboundAppointmentRepo()
@@ -106,15 +147,18 @@ func TestInboundAppointmentRepo_OrderingGuardLikeTheInMemoryAdapter(t *testing.T
 		event       inbound.Appointment
 		wantChanged bool
 	}{
-		{"cancelled arrives before its booked: tombstone", ibCancelled(t, "a1", "SIM1", ibAsOf.Add(time.Hour)), true},
-		{"the older booked is stale", ibBooked(t, "a1", "SIM1", ibStart, 2, ibAsOf), false},
-		{"a redelivered cancel changes nothing", ibCancelled(t, "a1", "SIM1", ibAsOf.Add(time.Hour)), false},
-		{"normal order: booked", ibBooked(t, "a2", "SIM1", ibStart, 2, ibAsOf), true},
-		{"normal order: cancelled later wins", ibCancelled(t, "a2", "SIM1", ibAsOf.Add(time.Minute)), true},
-		{"same-time cancel wins the tie", ibCancelled(t, "a3", "SIM1", ibAsOf), true},
-		{"same-time booked does not undo a cancel", ibBooked(t, "a3", "SIM1", ibStart, 1, ibAsOf), false},
-		{"booked then same-time cancel", ibBooked(t, "a4", "SIM1", ibStart, 1, ibAsOf), true},
-		{"the tie goes to the cancel", ibCancelled(t, "a4", "SIM1", ibAsOf), true},
+		{"cancelled arrives before its booked: tombstone", ibCancelled(t, "a1", "SIM1", 2, ibAsOf.Add(time.Hour)), true},
+		{"the older booked completes the facts only", ibBooked(t, "a1", "SIM1", ibStart, 2, 1, ibAsOf), true},
+		{"the same booked again changes nothing", ibBooked(t, "a1", "SIM1", ibStart, 2, 1, ibAsOf), false},
+		{"a redelivered cancel changes nothing", ibCancelled(t, "a1", "SIM1", 2, ibAsOf.Add(time.Hour)), false},
+		{"normal order: booked", ibBooked(t, "a2", "SIM1", ibStart, 2, 1, ibAsOf), true},
+		{"normal order: rescheduled moves it", ibRescheduled(t, "a2", "SIM1", ibStart.Add(time.Hour), 2, ibAsOf.Add(time.Minute)), true},
+		{"an older reschedule is stale", ibRescheduled(t, "a2", "SIM1", ibStart.Add(2*time.Hour), 2, ibAsOf.Add(time.Minute)), false},
+		{"normal order: no-show wins", ibNoShow(t, "a2", "SIM1", 3, ibAsOf.Add(2*time.Minute)), true},
+		{"a no-show before its booked: tombstone", ibNoShow(t, "a3", "SIM1", 2, ibAsOf), true},
+		{"the booked after it does not resurrect it", ibBooked(t, "a3", "SIM1", ibStart, 1, 1, ibAsOf), true},
+		{"a reschedule before its booked: partial", ibRescheduled(t, "a4", "SIM1", ibStart.Add(time.Hour), 2, ibAsOf), true},
+		{"the booked completes it but keeps the newer window", ibBooked(t, "a4", "SIM1", ibStart, 3, 1, ibAsOf), true},
 	}
 	for _, s := range steps {
 		gotPg, err := pg.Apply(ctx, s.event)
@@ -130,14 +174,26 @@ func TestInboundAppointmentRepo_OrderingGuardLikeTheInMemoryAdapter(t *testing.T
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM inbound_appointments").Scan(&rows); err != nil || rows != 4 {
 		t.Fatalf("rows = %d, %v; one appointment id must stay one row", rows, err)
 	}
-	var status string
-	if err := pool.QueryRow(ctx, "SELECT status FROM inbound_appointments WHERE appointment_id = 'a1'").Scan(&status); err != nil || status != "CANCELLED" {
-		t.Fatalf("a1 status = %q, %v; a Cancelled before its Booked must win", status, err)
+	for id, want := range map[string]string{"a1": "CANCELLED", "a2": "NO_SHOW", "a3": "NO_SHOW", "a4": "BOOKED"} {
+		var status string
+		if err := pool.QueryRow(ctx, "SELECT status FROM inbound_appointments WHERE appointment_id = $1", id).Scan(&status); err != nil || status != want {
+			t.Fatalf("%s status = %q, %v; want %s", id, status, err, want)
+		}
 	}
-	// A cancellation keeps the booking's window and ASN count.
+	// A removal keeps the booking's ASN count; a partial row completed by its
+	// Booked has direction, ASN count and the NEWER window.
 	var asns int
 	if err := pool.QueryRow(ctx, "SELECT asn_count FROM inbound_appointments WHERE appointment_id = 'a2'").Scan(&asns); err != nil || asns != 2 {
-		t.Fatalf("a2 asn_count = %d, %v; the cancelled row must keep what was cancelled", asns, err)
+		t.Fatalf("a2 asn_count = %d, %v; the removed row must keep what was removed", asns, err)
+	}
+	var (
+		direction string
+		start     time.Time
+		version   int64
+	)
+	if err := pool.QueryRow(ctx, "SELECT direction, window_start, asn_count, version FROM inbound_appointments WHERE appointment_id = 'a4'").Scan(&direction, &start, &asns, &version); err != nil ||
+		direction != "INBOUND" || !start.Equal(ibStart.Add(time.Hour)) || asns != 3 || version != 2 {
+		t.Fatalf("a4 = %s %v %d v%d, %v; want INBOUND at the rescheduled window with 3 ASNs at v2", direction, start, asns, version, err)
 	}
 	for _, w := range [][2]time.Time{{ibStart, ibEnd}, {ibEnd, ibEnd.Add(8 * time.Hour)}} {
 		a, _ := pg.Demand(ctx, "SIM1", w[0], w[1])
@@ -156,10 +212,11 @@ func TestInboundAppointmentRepo_ConcurrentFirstWritesConvergeOnCancelled(t *test
 	ctx := context.Background()
 	for i := 0; i < 20; i++ {
 		id := fmt.Sprintf("race-%d", i)
-		book := ibBooked(t, id, "SIM1", ibStart, 1, ibAsOf)
-		cancel := ibCancelled(t, id, "SIM1", ibAsOf.Add(time.Minute))
+		book := ibBooked(t, id, "SIM1", ibStart, 1, 1, ibAsOf)
+		resched := ibRescheduled(t, id, "SIM1", ibStart.Add(time.Hour), 2, ibAsOf.Add(30*time.Second))
+		cancel := ibCancelled(t, id, "SIM1", 3, ibAsOf.Add(time.Minute))
 		var wg sync.WaitGroup
-		for _, e := range []inbound.Appointment{book, cancel} {
+		for _, e := range []inbound.Appointment{book, resched, cancel} {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -169,9 +226,14 @@ func TestInboundAppointmentRepo_ConcurrentFirstWritesConvergeOnCancelled(t *test
 			}()
 		}
 		wg.Wait()
-		var status string
-		if err := pool.QueryRow(ctx, "SELECT status FROM inbound_appointments WHERE appointment_id = $1", id).Scan(&status); err != nil || status != "CANCELLED" {
-			t.Fatalf("%s: status = %q, %v; the later Cancelled must win whatever the arrival order", id, status, err)
+		var (
+			status, direction string
+			version           int64
+			asns              int
+		)
+		if err := pool.QueryRow(ctx, "SELECT status, direction, version, asn_count FROM inbound_appointments WHERE appointment_id = $1", id).Scan(&status, &direction, &version, &asns); err != nil ||
+			status != "CANCELLED" || version != 3 || direction != "INBOUND" || asns != 1 {
+			t.Fatalf("%s: row = %s %s v%d %d ASN, %v; the highest version must win whatever the arrival order, with the facts completed", id, status, direction, version, asns, err)
 		}
 	}
 }
@@ -183,11 +245,11 @@ func TestInboundAppointmentRepo_ClaimAndApplyCommitOrRollBackTogether(t *testing
 	repo := postgres.NewInboundAppointmentRepo(pool)
 	processed := postgres.NewProcessedEventRepo(pool)
 	ctx := context.Background()
-	a := ibBooked(t, "a1", "SIM1", ibStart, 1, ibAsOf)
+	a := ibBooked(t, "a1", "SIM1", ibStart, 1, 1, ibAsOf)
 	boom := errors.New("injected failure after the write")
 
 	err := uow.Do(ctx, func(ctx context.Context) error {
-		if claimed, err := processed.Claim(ctx, "inbound-demand-consumer", "evt-1"); err != nil || !claimed {
+		if claimed, err := processed.Claim(ctx, "dock-appointment-consumer", "evt-1"); err != nil || !claimed {
 			return fmt.Errorf("claim = %v, %v", claimed, err)
 		}
 		if _, err := repo.Apply(ctx, a); err != nil {
@@ -205,11 +267,11 @@ func TestInboundAppointmentRepo_ClaimAndApplyCommitOrRollBackTogether(t *testing
 		}
 		return n
 	}
-	if count("SELECT count(*) FROM inbound_appointments") != 0 || count("SELECT count(*) FROM processed_events WHERE consumer='inbound-demand-consumer'") != 0 {
+	if count("SELECT count(*) FROM inbound_appointments") != 0 || count("SELECT count(*) FROM processed_events WHERE consumer='dock-appointment-consumer'") != 0 {
 		t.Fatal("a failed unit of work left an appointment or a claim behind")
 	}
 	if err := uow.Do(ctx, func(ctx context.Context) error {
-		if _, err := processed.Claim(ctx, "inbound-demand-consumer", "evt-1"); err != nil {
+		if _, err := processed.Claim(ctx, "dock-appointment-consumer", "evt-1"); err != nil {
 			return err
 		}
 		_, err := repo.Apply(ctx, a)
@@ -217,7 +279,7 @@ func TestInboundAppointmentRepo_ClaimAndApplyCommitOrRollBackTogether(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if count("SELECT count(*) FROM inbound_appointments") != 1 || count("SELECT count(*) FROM processed_events WHERE consumer='inbound-demand-consumer'") != 1 {
+	if count("SELECT count(*) FROM inbound_appointments") != 1 || count("SELECT count(*) FROM processed_events WHERE consumer='dock-appointment-consumer'") != 1 {
 		t.Fatal("a successful unit of work did not commit both rows")
 	}
 }
@@ -427,7 +489,7 @@ func TestObservedCapacityRepo_ClaimAndRecordCommitOrRollBackTogether(t *testing.
 	}
 }
 
-func TestMigrations0009And0010_DownIsCleanAndUpIsRepeatable(t *testing.T) {
+func TestMigrations0009To0012_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 	databaseURL := startPostgres(t)
 	if err := postgres.RunMigrations(databaseURL, migrationsDir(t)); err != nil {
 		t.Fatal(err)
@@ -460,6 +522,9 @@ func TestMigrations0009And0010_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 		t.Fatal("the up migrations did not create the 0009/0010 objects")
 	}
 	if err := m.Steps(-1); err != nil {
+		t.Fatalf("down 0012: %v", err)
+	}
+	if err := m.Steps(-1); err != nil {
 		t.Fatalf("down 0011: %v", err)
 	}
 	if err := m.Steps(-1); err != nil {
@@ -479,5 +544,86 @@ func TestMigrations0009And0010_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 	}
 	if tables("observed_capacity") != 1 || tables("inbound_appointments") != 1 || planCols() != 3 {
 		t.Fatal("up again did not recreate the objects")
+	}
+}
+
+// Migration 0012 on a database that already holds rows written under the
+// inbound-receiving source: they become INBOUND at version 0 (any
+// dock-scheduling event for the same appointment id wins), keep their window,
+// ASN count and site, and the relaxed checks admit the partial rows of events
+// that arrive out of order. The down migration restores the old shape.
+func TestMigration0012_UpgradesRowsFromTheRetiredSourceAndRelaxesTheChecks(t *testing.T) {
+	databaseURL := startPostgres(t)
+	m, err := migrate.New("file://"+migrationsDir(t), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = m.Close() }()
+	if err := m.Migrate(11); err != nil {
+		t.Fatalf("migrate to 11: %v", err)
+	}
+	pool, err := postgres.NewPool(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	for _, q := range []string{
+		`INSERT INTO inbound_appointments (appointment_id, location, status, window_start, window_end, asn_count, as_of)
+		 VALUES ('legacy-booked', 'SIM1', 'BOOKED', '2026-10-09T08:00:00Z', '2026-10-09T10:00:00Z', 3, '2026-10-08T12:00:00Z')`,
+		`INSERT INTO inbound_appointments (appointment_id, location, status, as_of) VALUES ('legacy-tomb', 'SIM1', 'CANCELLED', '2026-10-08T12:00:00Z')`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	if err := m.Up(); err != nil {
+		t.Fatalf("up to 12: %v", err)
+	}
+	var (
+		direction string
+		version   int64
+		asns      int
+	)
+	if err := pool.QueryRow(ctx, "SELECT direction, version, asn_count FROM inbound_appointments WHERE appointment_id = 'legacy-booked'").Scan(&direction, &version, &asns); err != nil ||
+		direction != "INBOUND" || version != 0 || asns != 3 {
+		t.Fatalf("legacy row = %s v%d %d ASNs, %v; want INBOUND, version 0, 3 ASNs", direction, version, asns, err)
+	}
+	// The repository applies a dock-scheduling v1 over the legacy row.
+	repo := postgres.NewInboundAppointmentRepo(pool)
+	moved := ibBooked(t, "legacy-booked", "SIM1", ibStart.Add(24*time.Hour), 2, 1, ibAsOf)
+	if changed, err := repo.Apply(ctx, moved); err != nil || !changed {
+		t.Fatalf("Apply over a legacy row = %v, %v; want it to win", changed, err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT version, asn_count FROM inbound_appointments WHERE appointment_id = 'legacy-booked'").Scan(&version, &asns); err != nil || version != 1 || asns != 2 {
+		t.Fatalf("after Apply = v%d %d ASNs, %v; want v1 and the new booking's 2 ASNs", version, asns, err)
+	}
+	// Relaxed checks: a partial row (window, no direction, no ASN count) and a NO_SHOW tombstone are valid.
+	if _, err := repo.Apply(ctx, ibRescheduled(t, "partial", "SIM1", ibStart, 2, ibAsOf)); err != nil {
+		t.Fatalf("a partial row must be admitted: %v", err)
+	}
+	if _, err := repo.Apply(ctx, ibNoShow(t, "ns", "SIM1", 2, ibAsOf)); err != nil {
+		t.Fatalf("a NO_SHOW tombstone must be admitted: %v", err)
+	}
+	// ... but not an unknown status or a BOOKED row without a window.
+	if _, err := pool.Exec(ctx, `INSERT INTO inbound_appointments (appointment_id, location, status, as_of) VALUES ('bad', 'SIM1', 'BOOKED', now())`); err == nil {
+		t.Fatal("a BOOKED row without a window must still be rejected")
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO inbound_appointments (appointment_id, location, status, as_of) VALUES ('bad', 'SIM1', 'LOST', now())`); err == nil {
+		t.Fatal("an unknown status must be rejected")
+	}
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("down 0012: %v", err)
+	}
+	var cols int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.columns WHERE table_name = 'inbound_appointments' AND column_name IN ('direction', 'version')").Scan(&cols); err != nil || cols != 0 {
+		t.Fatalf("direction/version survived the down migration: %d, %v", cols, err)
+	}
+	var left int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM inbound_appointments WHERE status NOT IN ('BOOKED', 'CANCELLED')").Scan(&left); err != nil || left != 0 {
+		t.Fatalf("%d rows kept a state the old shape cannot hold, %v", left, err)
+	}
+	if err := m.Up(); err != nil {
+		t.Fatalf("up again: %v", err)
 	}
 }

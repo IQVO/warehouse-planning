@@ -7,7 +7,7 @@
 #   export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-$USER-labor
 #   export STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-$USER-storage
 #   export DEMAND_CONSUMER_GROUP=wp-local-$USER-demand
-#   export INBOUND_DEMAND_CONSUMER_GROUP=wp-local-$USER-inbound-demand
+#   export DOCK_APPOINTMENT_CONSUMER_GROUP=wp-local-$USER-dock-appointments
 #   export OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-$USER-observed-capacity
 #   export DEMAND_SITE_ID=SIM1
 #   go run ./cmd/api

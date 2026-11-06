@@ -26,7 +26,7 @@ flowchart LR
   WFM[workforce-management] -- "ShiftPlanCommitted" --> WP
   FL[facility-layout] -- "LocationSlotRegistered / Decommissioned" --> WP
   OMIN[order-management] -- "OrderAllocated / OrderPartiallyAllocated" --> WP
-  IR[inbound-receiving] -- "DockAppointmentBooked / Cancelled" --> WP
+  DS[dock-scheduling] -- "DockAppointmentBooked / Rescheduled / Cancelled / NoShow" --> WP
   FE[fulfillment-execution] -- "TaskCompleted" --> WP
   WP((warehouse-planning))
   WP -- "CapacityPlan events" --> OM[order-management]
@@ -44,13 +44,13 @@ DDD pattern of every edge and its code evidence, is on the
 | `workforce-management` to `warehouse-planning` | labor via Kafka (`ShiftPlanCommitted`) | implemented (consumer) |
 | `facility-layout` to `warehouse-planning` | storage positions and stations via Kafka (`LocationSlotRegistered`, `LocationSlotDecommissioned`) | implemented (consumer, tally only) |
 | `order-management` to `warehouse-planning` | expected demand via Kafka (`OrderAllocated`, `OrderPartiallyAllocated`) | implemented (consumer, always on; ADR 0004, ADR 0016) |
-| `inbound-receiving` to `warehouse-planning` | inbound labour demand via Kafka (`DockAppointmentBooked`, `DockAppointmentCancelled`) priced by an operator-declared inbound labour standard | implemented (consumer, always on; ADR 0017) |
+| `dock-scheduling` to `warehouse-planning` | inbound labour demand via Kafka (`DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow`), attributed to the events' `site_id`, priced by an operator-declared inbound labour standard | implemented (consumer, always on; ADR 0017, source switched from `inbound-receiving` by ADR 0020) |
 | `fulfillment-execution` to `warehouse-planning` | observed capacity via Kafka (`TaskCompleted`), an advisory planned-versus-observed variance | implemented (consumer, always on; ADR 0017) |
 | `process-path-management` to `warehouse-planning` | `path_id` as a loose human cross-reference | deliberately **not** consumed (ADR 0001 Addendum) |
 | `warehouse-planning` to `order-management` | `CapacityPlanCreated`, `CapacityPlanPublished`, `CapacityShortageDetected`, `BottleneckDetected` | implemented (producer); `order-management` consumes them (its `planned_capacity_consumer.go`) |
 | `warehouse-planning` to `warehouse-ops-agent` | read-only MCP tools (`get_process_path_capacity`, `get_capacity_plan`, `get_storage_capacity`, `list_station_standards`) | implemented (the agent's MCP client) |
 | `warehouse-planning` to `warehouse-console` | REST through the `capacity_mfe` remote in `web/` | implemented |
-| `wes-work-planning`, `network-fulfillment` | demand ingestion | planned in ADR 0001, **not** implemented (observed capacity feedback from `fulfillment-execution` and inbound demand from `inbound-receiving` landed in ADR 0017; automatic adjustment of planned capacity from observed capacity stays a later ADR) |
+| `wes-work-planning`, `network-fulfillment` | demand ingestion | planned in ADR 0001, **not** implemented (observed capacity feedback from `fulfillment-execution` and inbound demand from the dock appointments landed in ADR 0017 and moved to `dock-scheduling` in ADR 0020; automatic adjustment of planned capacity from observed capacity stays a later ADR) |
 | `product-master` | none: SKU master data (handling classification, unit dimensions) is not a capacity input | no relationship in either direction |
 
 ## No live cross-context lookup

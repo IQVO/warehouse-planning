@@ -31,7 +31,7 @@ type inboundObservedState struct {
 	declare          *usecases.DeclareInboundLabourStandard
 	getInboundDemand *usecases.GetInboundDemand
 
-	inbound   *inboundkafka.InboundDemandConsumer
+	inbound   *inboundkafka.DockAppointmentConsumer
 	completed *inboundkafka.ObservedCapacityConsumer
 
 	seq         int
@@ -54,11 +54,11 @@ func newInboundObservedState() inboundObservedState {
 		observedRepo:     observedRepo,
 		declare:          &usecases.DeclareInboundLabourStandard{Repo: standards},
 		getInboundDemand: &usecases.GetInboundDemand{Appointments: appointments, Standards: standards},
-		inbound: &inboundkafka.InboundDemandConsumer{
+		inbound: &inboundkafka.DockAppointmentConsumer{
 			Record: &usecases.RecordInboundAppointment{
 				UoW: memory.NewUnitOfWork(appointments, inboundProcessed), ProcessedEvents: inboundProcessed, Appointments: appointments,
 			},
-			Location: "SIM1", Logger: quiet,
+			Logger: quiet,
 		},
 		completed: &inboundkafka.ObservedCapacityConsumer{
 			Record: &usecases.RecordObservedCompletion{
@@ -74,16 +74,21 @@ func (w *world) nextIOID(prefix string) string {
 	return fmt.Sprintf("bdd-%s-%d", prefix, w.io.seq)
 }
 
-// inboundEvent builds a CloudEvents 1.0 inbound-receiving event and returns
-// its JSON bytes.
-func (w *world) inboundEvent(eventName, appointmentID string, at time.Time, data map[string]any) ([]byte, error) {
+// dockEvent builds a CloudEvents 1.0 dock-scheduling event (type
+// com.warehouse.wms.dock-scheduling.dockappointment.<Event>) and returns its
+// JSON bytes.
+func (w *world) dockEvent(eventName, appointmentID string, at time.Time, data map[string]any) ([]byte, error) {
+	return w.cloudEvent("dock-scheduling", "dockappointment", eventName, appointmentID, at, data)
+}
+
+func (w *world) cloudEvent(context, entity, eventName, subject string, at time.Time, data map[string]any) ([]byte, error) {
 	e := ce.New(ce.CloudEventsVersionV1)
-	e.SetID(w.nextIOID("inbound-evt"))
-	e.SetSource("/warehouse/inbound-receiving")
-	e.SetType("com.warehouse.wms.inbound-receiving.dockappointment." + eventName)
-	e.SetSubject(appointmentID)
+	e.SetID(w.nextIOID("dock-evt"))
+	e.SetSource("/warehouse/" + context)
+	e.SetType("com.warehouse.wms." + context + "." + entity + "." + eventName)
+	e.SetSubject(subject)
 	e.SetTime(at)
-	e.SetDataSchema("urn:warehouse:inbound-receiving:events:" + eventName + ":v1")
+	e.SetDataSchema("urn:warehouse:" + context + ":events:" + eventName + ":v1")
 	if err := e.SetData("application/json", data); err != nil {
 		return nil, err
 	}
@@ -95,7 +100,7 @@ func (w *world) handleInbound(value []byte) error {
 	return w.io.inbound.HandleMessage(context.Background(), value)
 }
 
-func (w *world) inboundReceivingPublishedBooked(appointmentID, start, end string, asns int, eventTime string) error {
+func (w *world) dockSchedulingPublishedBooked(version int, direction, appointmentID, site, start, end string, asns int, eventTime string) error {
 	at, err := time.Parse(time.RFC3339, eventTime)
 	if err != nil {
 		return err
@@ -104,7 +109,86 @@ func (w *world) inboundReceivingPublishedBooked(appointmentID, start, end string
 	for i := 1; i <= asns; i++ {
 		numbers = append(numbers, fmt.Sprintf("ASN-%s-%d", appointmentID, i))
 	}
-	value, err := w.inboundEvent("DockAppointmentBooked", appointmentID, at, map[string]any{
+	value, err := w.dockEvent("DockAppointmentBooked", appointmentID, at, map[string]any{
+		"appointment_id": appointmentID, "site_id": site, "direction": direction, "door_code": site + "-DOCK-IN-01",
+		"carrier": "Example Freight", "carrier_scac": nil, "window_start": start, "window_end": end, "asn_numbers": numbers,
+		"cpt_id": nil, "shipment_refs": []string{}, "expected_seal_number": nil, "provenance": "native", "version": version,
+	})
+	if err != nil {
+		return err
+	}
+	return w.handleInbound(value)
+}
+
+func (w *world) dockSchedulingPublishedRescheduled(version int, appointmentID, site, start, end, eventTime string) error {
+	at, err := time.Parse(time.RFC3339, eventTime)
+	if err != nil {
+		return err
+	}
+	value, err := w.dockEvent("DockAppointmentRescheduled", appointmentID, at, map[string]any{
+		"appointment_id": appointmentID, "site_id": site, "door_code": site + "-DOCK-IN-01", "window_start": start, "window_end": end,
+		"previous_window_start": "2026-10-05T08:30:00Z", "previous_window_end": "2026-10-05T09:30:00Z", "version": version,
+	})
+	if err != nil {
+		return err
+	}
+	return w.handleInbound(value)
+}
+
+func (w *world) dockSchedulingPublishedCancelled(version int, appointmentID, site, eventTime string) error {
+	at, err := time.Parse(time.RFC3339, eventTime)
+	if err != nil {
+		return err
+	}
+	value, err := w.dockEvent("DockAppointmentCancelled", appointmentID, at, map[string]any{
+		"appointment_id": appointmentID, "site_id": site, "door_code": site + "-DOCK-IN-01", "reason": "CARRIER_REQUEST", "version": version,
+	})
+	if err != nil {
+		return err
+	}
+	return w.handleInbound(value)
+}
+
+func (w *world) dockSchedulingPublishedNoShow(version int, direction, appointmentID, site, eventTime string) error {
+	at, err := time.Parse(time.RFC3339, eventTime)
+	if err != nil {
+		return err
+	}
+	value, err := w.dockEvent("DockAppointmentNoShow", appointmentID, at, map[string]any{
+		"appointment_id": appointmentID, "site_id": site, "door_code": site + "-DOCK-IN-01", "direction": direction,
+		"carrier_scac": "EXFT", "window_end": "2026-10-05T09:30:00Z", "version": version,
+	})
+	if err != nil {
+		return err
+	}
+	return w.handleInbound(value)
+}
+
+// dockSchedulingPublishedCheckedIn: an analytics-only event; it never reaches
+// the integration topic, and the consumer ignores it if it ever did.
+func (w *world) dockSchedulingPublishedCheckedIn(appointmentID, site string) error {
+	value, err := w.dockEvent("DockAppointmentCheckedIn", appointmentID, orderBaseTime, map[string]any{
+		"appointment_id": appointmentID, "site_id": site, "door_code": site + "-DOCK-IN-01",
+		"checked_in_at": orderBaseTime.Format(time.RFC3339), "arrival_status": "ON_TIME", "visit_id": "visit-1", "version": 9,
+	})
+	if err != nil {
+		return err
+	}
+	return w.handleInbound(value)
+}
+
+// retiredInboundReceivingPublishedBooked: the old source's Booked. Its type is
+// no longer consumed.
+func (w *world) retiredInboundReceivingPublishedBooked(appointmentID, start, end string, asns int, eventTime string) error {
+	at, err := time.Parse(time.RFC3339, eventTime)
+	if err != nil {
+		return err
+	}
+	numbers := make([]string, 0, asns)
+	for i := 1; i <= asns; i++ {
+		numbers = append(numbers, fmt.Sprintf("ASN-%s-%d", appointmentID, i))
+	}
+	value, err := w.cloudEvent("inbound-receiving", "dockappointment", "DockAppointmentBooked", appointmentID, at, map[string]any{
 		"appointment_id": appointmentID, "door_code": "SIM1-DOCK-IN-01", "carrier": "ACME Freight",
 		"window_start": start, "window_end": end, "asn_numbers": numbers,
 	})
@@ -114,33 +198,9 @@ func (w *world) inboundReceivingPublishedBooked(appointmentID, start, end string
 	return w.handleInbound(value)
 }
 
-func (w *world) inboundReceivingPublishedCancelled(appointmentID, eventTime string) error {
-	at, err := time.Parse(time.RFC3339, eventTime)
-	if err != nil {
-		return err
-	}
-	value, err := w.inboundEvent("DockAppointmentCancelled", appointmentID, at, map[string]any{
-		"appointment_id": appointmentID, "door_code": "SIM1-DOCK-IN-01", "reason": "Carrier delayed",
-	})
-	if err != nil {
-		return err
-	}
-	return w.handleInbound(value)
-}
-
-func (w *world) inboundReceivingPublishedCheckedIn(appointmentID string) error {
-	value, err := w.inboundEvent("DockAppointmentCheckedIn", appointmentID, orderBaseTime, map[string]any{
-		"appointment_id": appointmentID, "door_code": "SIM1-DOCK-IN-01", "checked_in_at": orderBaseTime.Format(time.RFC3339),
-	})
-	if err != nil {
-		return err
-	}
-	return w.handleInbound(value)
-}
-
-func (w *world) inboundReceivingRedelivers() error {
+func (w *world) dockSchedulingRedelivers() error {
 	if w.io.lastInbound == nil {
-		return fmt.Errorf("no inbound-receiving event was published in this scenario")
+		return fmt.Errorf("no dock-scheduling event was published in this scenario")
 	}
 	return w.io.inbound.HandleMessage(context.Background(), w.io.lastInbound)
 }
@@ -176,8 +236,8 @@ func (w *world) theInboundDemandIs(appointments, asns int, minutes float64) erro
 	if err != nil {
 		return err
 	}
-	if got["appointments"] != float64(appointments) || got["asns"] != float64(asns) || got["labour_minutes"] != minutes || got["source"] != "inbound-receiving" {
-		return fmt.Errorf("inbound demand = %v, want %d appointments, %d ASNs and %v labour minutes from inbound-receiving", got, appointments, asns, minutes)
+	if got["appointments"] != float64(appointments) || got["asns"] != float64(asns) || got["labour_minutes"] != minutes || got["source"] != "dock-scheduling" {
+		return fmt.Errorf("inbound demand = %v, want %d appointments, %d ASNs and %v labour minutes from dock-scheduling", got, appointments, asns, minutes)
 	}
 	return nil
 }
@@ -426,10 +486,13 @@ func (w *world) thePlanAndOutboxAreUnchanged(ctx context.Context) error {
 func registerInboundObservedSteps(sc *godog.ScenarioContext, w *world) {
 	const ts = `\"([^\"]*)\"`
 	num := `(\d+(?:\.\d+)?)`
-	sc.Step(`^inbound-receiving published DockAppointmentBooked for appointment `+ts+` from `+ts+` to `+ts+` covering (\d+) ASNs? at event time `+ts+`$`, w.inboundReceivingPublishedBooked)
-	sc.Step(`^inbound-receiving published DockAppointmentCancelled for appointment `+ts+` at event time `+ts+`$`, w.inboundReceivingPublishedCancelled)
-	sc.Step(`^inbound-receiving published DockAppointmentCheckedIn for appointment `+ts+`$`, w.inboundReceivingPublishedCheckedIn)
-	sc.Step(`^inbound-receiving redelivers its last event$`, w.inboundReceivingRedelivers)
+	sc.Step(`^dock-scheduling published DockAppointmentBooked version (\d+) for (INBOUND|OUTBOUND) appointment `+ts+` at site `+ts+` from `+ts+` to `+ts+` covering (\d+) ASNs? at event time `+ts+`$`, w.dockSchedulingPublishedBooked)
+	sc.Step(`^dock-scheduling published DockAppointmentRescheduled version (\d+) for appointment `+ts+` at site `+ts+` to the window `+ts+` to `+ts+` at event time `+ts+`$`, w.dockSchedulingPublishedRescheduled)
+	sc.Step(`^dock-scheduling published DockAppointmentCancelled version (\d+) for appointment `+ts+` at site `+ts+` at event time `+ts+`$`, w.dockSchedulingPublishedCancelled)
+	sc.Step(`^dock-scheduling published DockAppointmentNoShow version (\d+) for (INBOUND|OUTBOUND) appointment `+ts+` at site `+ts+` at event time `+ts+`$`, w.dockSchedulingPublishedNoShow)
+	sc.Step(`^dock-scheduling published DockAppointmentCheckedIn for appointment `+ts+` at site `+ts+`$`, w.dockSchedulingPublishedCheckedIn)
+	sc.Step(`^inbound-receiving, the retired source, published DockAppointmentBooked for appointment `+ts+` from `+ts+` to `+ts+` covering (\d+) ASNs? at event time `+ts+`$`, w.retiredInboundReceivingPublishedBooked)
+	sc.Step(`^dock-scheduling redelivers its last event$`, w.dockSchedulingRedelivers)
 	sc.Step(`^I declare an inbound labour standard of `+num+` minutes per appointment and `+num+` minutes per ASN for path `+ts+` at `+ts+`$`, w.iDeclareAnInboundStandard)
 	sc.Step(`^I declare an inbound labour standard without minutes per appointment for path `+ts+` at `+ts+`$`, w.iDeclareAnInboundStandardWithoutAppointmentMinutes)
 	sc.Step(`^I list the inbound labour standards of `+ts+`$`, w.iListTheInboundStandards)

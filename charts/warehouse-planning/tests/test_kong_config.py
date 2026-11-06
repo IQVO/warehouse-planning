@@ -47,7 +47,7 @@ ENABLE_KONG = [
     "--set", "config.laborCapacityConsumerGroup=g-labor",
     "--set", "config.storageCapacityConsumerGroup=g-storage",
     "--set", "demand.consumerGroup=g-demand",
-    "--set", "inbound.consumerGroup=g-inbound",
+    "--set", "dockAppointments.consumerGroup=g-dock",
     "--set", "observed.consumerGroup=g-observed",
     "--set", "demand.siteId=SIM1",
     "--set", "analytics.projector.consumerGroup=g-analytics",
@@ -96,7 +96,7 @@ def main() -> int:
         "--set", "config.laborCapacityConsumerGroup=g-labor",
         "--set", "config.storageCapacityConsumerGroup=g-storage",
         "--set", "demand.consumerGroup=g-demand",
-        "--set", "inbound.consumerGroup=g-inbound",
+        "--set", "dockAppointments.consumerGroup=g-dock",
         "--set", "observed.consumerGroup=g-observed",
         "--set", "demand.siteId=SIM1",
     ])

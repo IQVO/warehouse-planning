@@ -26,13 +26,12 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/observed"
 )
 
-func startInboundDemandConsumer(t *testing.T, brokers []string, topic string, appts ports.InboundAppointmentRepository, fx pgFixture) {
+func startDockAppointmentConsumer(t *testing.T, brokers []string, topic string, appts ports.InboundAppointmentRepository, fx pgFixture) {
 	t.Helper()
 	dlq := kafkaconsumer.NewDomainDLQWriterForTest(brokers)
-	c := &kafkaconsumer.InboundDemandConsumer{
-		Reader:   kafkago.NewReader(kafkago.ReaderConfig{Brokers: brokers, Topic: topic, GroupID: uniqueGroupID("inbound-demand")}),
+	c := &kafkaconsumer.DockAppointmentConsumer{
+		Reader:   kafkago.NewReader(kafkago.ReaderConfig{Brokers: brokers, Topic: topic, GroupID: uniqueGroupID("dock-appointments")}),
 		Record:   &usecases.RecordInboundAppointment{UoW: fx.uow, ProcessedEvents: fx.processed, Appointments: appts},
-		Location: "SIM1",
 		Logger:   testLogger(),
 		Retry:    itestRetry,
 		DLQ:      dlq,
@@ -79,72 +78,114 @@ func readDeadLetters(t *testing.T, brokers []string, dlqTopic string, want int) 
 	return out
 }
 
-// REAL dock-appointment events on a REAL Kafka topic land in the REAL Postgres
-// model, with a Cancelled that arrives BEFORE its Booked, a redelivery of the
+// REAL dock-scheduling events on a REAL Kafka topic land in the REAL Postgres
+// model, attributed to the events' site_id, with a Cancelled that arrives
+// BEFORE its Booked, a Rescheduled that arrives before its Booked, a no-show, an
+// OUTBOUND appointment, the retired inbound-receiving type, a redelivery of the
 // same event id and an unusable message that is dead-lettered to the real .dlq
 // topic.
-func TestInboundDemandConsumer_Integration_RealKafkaAndPostgres_CancelBeforeBookedAndRedelivery(t *testing.T) {
+func TestDockAppointmentConsumer_Integration_RealKafkaAndPostgres_OrderingKindsAndRedelivery(t *testing.T) {
 	brokers := startKafkaBroker(t)
-	topic := uniqueTopic("warehouse.inbound-receiving.events")
+	topic := uniqueTopic("warehouse.dock-scheduling.events")
 	createTopic(t, brokers, topic)
 	createTopic(t, brokers, topic+kafkaconsumer.DLQSuffix)
 	fx := startPgFixture(t)
 	repo := postgres.NewInboundAppointmentRepo(fx.pool)
-	startInboundDemandConsumer(t, brokers, topic, repo, fx)
+	startDockAppointmentConsumer(t, brokers, topic, repo, fx)
 
 	const (
-		kept      = "appt-keep"
-		cancelled = "appt-cancel-first"
-		later     = "appt-cancel-later"
+		kept       = "appt-keep"
+		cancelled  = "appt-cancel-first"
+		later      = "appt-cancel-later"
+		moved      = "appt-moved-before-booked"
+		noShow     = "appt-no-show"
+		outbound   = "appt-outbound"
+		legacyType = "appt-retired-source"
 	)
 	base := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	wire := func(id, typ, appt string, at time.Time, data map[string]any) kafkago.Message {
-		return kafkago.Message{Key: []byte(appt), Value: inboundWireEvent(t, id, typ, appt, at, data)}
+		return kafkago.Message{Key: []byte(appt), Value: dockWireEvent(t, id, typ, appt, at, data)}
+	}
+	gone := func(appt string, version int) map[string]any {
+		return map[string]any{"appointment_id": appt, "site_id": inboundSite, "door_code": "D", "reason": "CARRIER_REQUEST", "version": version}
+	}
+	resched := func(appt string, version int) map[string]any {
+		return map[string]any{
+			"appointment_id": appt, "site_id": inboundSite, "door_code": "D",
+			"window_start": inbWinFrom.Add(time.Hour).Format(time.RFC3339), "window_end": inbWinFrom.Add(2 * time.Hour).Format(time.RFC3339),
+			"previous_window_start": doorStart.Format(time.RFC3339), "previous_window_end": doorEnd.Format(time.RFC3339), "version": version,
+		}
 	}
 	junk := []byte("not a cloud event at all")
-	bookedMsg := wire("itest-b-keep", typeBooked, kept, base, bookedData(kept, doorStart, doorEnd, "ASN-1", "ASN-2"))
+	bookedMsg := wire("itest-b-keep", typeBooked, kept, base, bookedData(kept, "INBOUND", doorStart, doorEnd, 1, "ASN-1", "ASN-2"))
 	publishMessages(t, brokers, topic,
-		// 1. Cancelled BEFORE its Booked (older Booked arrives afterwards).
-		wire("itest-c-first", typeCancelled, cancelled, base.Add(time.Hour), map[string]any{"appointment_id": cancelled}),
-		wire("itest-b-first", typeBooked, cancelled, base, bookedData(cancelled, doorStart, doorEnd, "ASN-9")),
+		// 1. Cancelled BEFORE its Booked (the older Booked arrives afterwards).
+		wire("itest-c-first", typeCancelled, cancelled, base.Add(time.Hour), gone(cancelled, 2)),
+		wire("itest-b-first", typeBooked, cancelled, base, bookedData(cancelled, "INBOUND", doorStart, doorEnd, 1, "ASN-9")),
 		// 2. A normal booking, redelivered with the SAME event id.
 		bookedMsg,
 		// 3. Noise that must write nothing: unusable message, an ignored type.
 		kafkago.Message{Key: []byte("junk"), Value: junk},
-		wire("itest-ci", typeCheckedIn, kept, base.Add(time.Minute), map[string]any{"appointment_id": kept, "door_code": "D", "checked_in_at": base.Format(time.RFC3339)}),
+		wire("itest-ci", typeCheckedIn, kept, base.Add(time.Minute), map[string]any{"appointment_id": kept, "site_id": inboundSite, "door_code": "D", "version": 9}),
 		bookedMsg,
 		// 4. Booked then Cancelled in order.
-		wire("itest-b-later", typeBooked, later, base, bookedData(later, doorStart, doorEnd, "ASN-5")),
-		wire("itest-c-later", typeCancelled, later, base.Add(time.Hour), map[string]any{"appointment_id": later}),
+		wire("itest-b-later", typeBooked, later, base, bookedData(later, "INBOUND", doorStart, doorEnd, 1, "ASN-5")),
+		wire("itest-c-later", typeCancelled, later, base.Add(time.Hour), gone(later, 2)),
+		// 5. Rescheduled BEFORE its Booked: the newer window wins, the Booked
+		// only completes the facts.
+		wire("itest-r-moved", typeRescheduled, moved, base.Add(time.Hour), resched(moved, 2)),
+		wire("itest-b-moved", typeBooked, moved, base, bookedData(moved, "INBOUND", doorStart.Add(24*time.Hour), doorEnd.Add(24*time.Hour), 1, "ASN-7")),
+		// 6. Booked then NoShow.
+		wire("itest-b-ns", typeBooked, noShow, base, bookedData(noShow, "INBOUND", doorStart, doorEnd, 1, "ASN-8")),
+		wire("itest-n-ns", typeNoShow, noShow, base.Add(time.Hour), map[string]any{"appointment_id": noShow, "site_id": inboundSite, "door_code": "D", "direction": "INBOUND", "carrier_scac": "EXFT", "window_end": doorEnd.Format(time.RFC3339), "version": 2}),
+		// 7. OUTBOUND is stored but is not demand.
+		wire("itest-b-out", typeBooked, outbound, base, bookedData(outbound, "OUTBOUND", doorStart, doorEnd, 1)),
+		// 8. The retired source's type: neither stored nor claimed.
+		wire("itest-legacy", typeLegacyBooked, legacyType, base, map[string]any{"appointment_id": legacyType, "door_code": "D", "carrier": "C", "window_start": doorStart.Format(time.RFC3339), "window_end": doorEnd.Format(time.RFC3339), "asn_numbers": []string{"A"}}),
+		// 9. The last message: lets the test know everything before it was handled.
+		wire("itest-last", typeBooked, "appt-last", base, bookedData("appt-last", "OUTBOUND", doorStart, doorEnd, 1)),
 	)
 
-	got := waitForInboundDemand(t, repo, 1)
-	// Only appt-keep (2 ASNs) is demand: the Cancelled-first one stays cancelled.
-	if got.ASNs != 2 {
-		t.Fatalf("demand = %+v, want 1 appointment covering 2 ASNs", got)
-	}
-	// Wait for the LAST message to be processed too (cancel of `later`).
-	deadline := time.Now().Add(45 * time.Second)
-	for fx.processedRows(t, "inbound-demand-consumer", "itest-c-later") == 0 {
+	deadline := time.Now().Add(60 * time.Second)
+	for fx.processedRows(t, "dock-appointment-consumer", "itest-last") == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("the last message was never processed")
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	// Demand of the original window: appt-keep (2 ASNs) and appt-moved (its
+	// Rescheduled window starts inside inbWinFrom+1h).
+	got := waitForInboundDemand(t, repo, 2)
+	if got.ASNs != 3 {
+		t.Fatalf("demand = %+v, want 2 appointments covering 3 ASNs (appt-keep 2 + appt-moved 1)", got)
+	}
 
-	for id, want := range map[string]string{cancelled: "CANCELLED", kept: "BOOKED", later: "CANCELLED"} {
-		if n := fx.count(t, "SELECT count(*) FROM inbound_appointments WHERE appointment_id = $1 AND status = $2", id, want); n != 1 {
-			t.Errorf("%s: want status %s", id, want)
+	type row struct{ status, direction string }
+	for id, want := range map[string]row{
+		cancelled: {"CANCELLED", "INBOUND"}, kept: {"BOOKED", "INBOUND"}, later: {"CANCELLED", "INBOUND"},
+		moved: {"BOOKED", "INBOUND"}, noShow: {"NO_SHOW", "INBOUND"}, outbound: {"BOOKED", "OUTBOUND"},
+	} {
+		if n := fx.count(t, "SELECT count(*) FROM inbound_appointments WHERE appointment_id = $1 AND status = $2 AND direction = $3 AND location = $4", id, want.status, want.direction, inboundSite); n != 1 {
+			t.Errorf("%s: want status %s direction %s at %s", id, want.status, want.direction, inboundSite)
 		}
 	}
-	if n := fx.count(t, "SELECT count(*) FROM inbound_appointments"); n != 3 {
-		t.Fatalf("inbound_appointments rows = %d, want 3 (the redelivery, the junk and CheckedIn wrote nothing)", n)
+	if n := fx.count(t, "SELECT count(*) FROM inbound_appointments WHERE appointment_id = $1 AND version = 2 AND asn_count = 1", moved); n != 1 {
+		t.Errorf("%s: want version 2 (the Rescheduled) with the Booked's ASN count", moved)
 	}
-	if n := fx.processedRows(t, "inbound-demand-consumer", "itest-b-keep"); n != 1 {
+	if n := fx.count(t, "SELECT count(*) FROM inbound_appointments WHERE appointment_id = $1", legacyType); n != 0 {
+		t.Fatalf("the retired inbound-receiving type was stored (%d rows)", n)
+	}
+	if n := fx.count(t, "SELECT count(*) FROM inbound_appointments"); n != 7 {
+		t.Fatalf("inbound_appointments rows = %d, want 7 (the redelivery, the junk, CheckedIn and the retired type wrote nothing)", n)
+	}
+	if n := fx.processedRows(t, "dock-appointment-consumer", "itest-b-keep"); n != 1 {
 		t.Fatalf("processed_events rows for the redelivered id = %d, want 1", n)
 	}
-	if n := fx.processedRows(t, "inbound-demand-consumer", "itest-b-first"); n != 1 {
-		t.Fatalf("the stale Booked must still be claimed once, got %d", n)
+	if n := fx.processedRows(t, "dock-appointment-consumer", "itest-b-first"); n != 1 {
+		t.Fatalf("the late Booked must still be claimed once, got %d", n)
+	}
+	if n := fx.processedRows(t, "dock-appointment-consumer", "itest-legacy"); n != 0 {
+		t.Fatalf("the retired type was claimed (%d)", n)
 	}
 
 	dead := readDeadLetters(t, brokers, topic+kafkaconsumer.DLQSuffix, 1)
@@ -175,23 +216,23 @@ func (f *failFirstApply) Apply(ctx context.Context, a inbound.Appointment) (bool
 
 // A failure after the claim on a REAL database rolls the claim back; the
 // consumer retries the SAME message (offset not committed) and converges.
-func TestInboundDemandConsumer_Integration_FailureAfterClaimIsRetriedNotLost(t *testing.T) {
+func TestDockAppointmentConsumer_Integration_FailureAfterClaimIsRetriedNotLost(t *testing.T) {
 	brokers := startKafkaBroker(t)
-	topic := uniqueTopic("warehouse.inbound-receiving.events")
+	topic := uniqueTopic("warehouse.dock-scheduling.events")
 	createTopic(t, brokers, topic)
 	createTopic(t, brokers, topic+kafkaconsumer.DLQSuffix)
 	fx := startPgFixture(t)
 	flaky := &failFirstApply{InboundAppointmentRepository: postgres.NewInboundAppointmentRepo(fx.pool)}
-	startInboundDemandConsumer(t, brokers, topic, flaky, fx)
+	startDockAppointmentConsumer(t, brokers, topic, flaky, fx)
 
 	evtID := fmt.Sprintf("itest-retry-%d", time.Now().UnixNano())
-	publishMessages(t, brokers, topic, kafkago.Message{Key: []byte(apptID), Value: bookedWire(t, evtID, bookedAt, "ASN-1")})
+	publishMessages(t, brokers, topic, kafkago.Message{Key: []byte(apptID), Value: bookedWire(t, evtID, bookedAt, 1, "ASN-1")})
 
 	waitForInboundDemand(t, flaky.InboundAppointmentRepository, 1)
 	if got := flaky.calls.Load(); got < 2 {
 		t.Fatalf("Apply attempts = %d, want >= 2: the message must be retried after the injected failure", got)
 	}
-	if n := fx.processedRows(t, "inbound-demand-consumer", evtID); n != 1 {
+	if n := fx.processedRows(t, "dock-appointment-consumer", evtID); n != 1 {
 		t.Fatalf("processed_events rows = %d, want exactly 1 once the retry succeeded", n)
 	}
 }
