@@ -63,7 +63,7 @@ flowchart LR
   API --> OLTP
   MCP --> OLTP
   A2A --> OLTP
-  KAFKA -- "workforce, facility, order-management, inbound-receiving, fulfillment events" --> API
+  KAFKA -- "workforce, facility, order-management, dock-scheduling, fulfillment events" --> API
   API -- "outbox relay: events and analytics topics" --> KAFKA
   KAFKA -- "warehouse.warehouse-planning.analytics" --> PROJ
   PROJ --> ANA
@@ -111,20 +111,21 @@ non-zero when the relay or a consumer stops on its own, so the pod restarts.
   domain-validation rejections) are skipped.
 - Consumer group ids come from environment variables
   (`LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`,
-  `DEMAND_CONSUMER_GROUP`, `INBOUND_DEMAND_CONSUMER_GROUP`,
+  `DEMAND_CONSUMER_GROUP`, `DOCK_APPOINTMENT_CONSUMER_GROUP`,
   `OBSERVED_CAPACITY_CONSUMER_GROUP`, and the projector's
   `ANALYTICS_CONSUMER_GROUP`), never from string literals. Every consumer is
   always on ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)):
-  a missing group, or a missing `DEMAND_SITE_ID` (the one site the order,
-  dock-appointment and task-completion events are attributed to), is a boot
-  error.
+  a missing group, or a missing `DEMAND_SITE_ID` (the one site the order and
+  task-completion events are attributed to; dock appointments carry their own
+  `site_id`), is a boot error. The retired `INBOUND_DEMAND_CONSUMER_GROUP` is a
+  boot error too ([ADR 0020](/docs/adr/0020-inbound-demand-from-dock-scheduling)).
 
 Dead-lettering ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers) §3,
 `internal/adapters/inbound/kafka/deadletter.go`): the five domain consumers
 retry a transient failure on the same message up to 5 times, then publish it to
 `<topic>.dlq` (`warehouse.workforce.events.dlq`,
 `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`,
-`warehouse.inbound-receiving.events.dlq`, `warehouse.fulfillment.events.dlq`) with
+`warehouse.dock-scheduling.events.dlq`, `warehouse.fulfillment.events.dlq`) with
 `x-dlq-*` headers and commit past it. The two ADR 0017 consumers (dock
 appointments, task completions) also dead-letter a *deterministic* failure (not
 CloudEvents 1.0, malformed or unusable payload) at once instead of skipping it. The DLQ publish itself is retried until it

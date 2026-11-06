@@ -138,7 +138,7 @@ facts (one pinned consumer group each; DLQ at `<topic>.dlq`):
 | `warehouse.workforce.events` | `ShiftPlanCommitted` | `LABOR_CAPACITY_CONSUMER_GROUP` |
 | `warehouse.facility.events` | `LocationSlotRegistered`, `LocationSlotDecommissioned` | `STORAGE_CAPACITY_CONSUMER_GROUP` |
 | `warehouse.order-management.events` | `OrderAllocated`, `OrderPartiallyAllocated` | `DEMAND_CONSUMER_GROUP` |
-| `warehouse.inbound-receiving.events` | `DockAppointmentBooked`, `DockAppointmentCancelled` | `INBOUND_DEMAND_CONSUMER_GROUP` |
+| `warehouse.dock-scheduling.events` | `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow` | `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 | `warehouse.fulfillment.events` | `TaskCompleted` | `OBSERVED_CAPACITY_CONSUMER_GROUP` |
 
 The projector consumes `warehouse.warehouse-planning.analytics` under
@@ -152,16 +152,17 @@ Postgres and Kafka are the only runtime ([ADR 0016](docs/adr/0016-postgres-and-k
 there is no in-memory mode, and `cmd/api` exits at boot, naming every
 missing variable, unless `DATABASE_URL`, `KAFKA_BROKERS`,
 `LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`,
-`DEMAND_CONSUMER_GROUP`, `INBOUND_DEMAND_CONSUMER_GROUP`,
+`DEMAND_CONSUMER_GROUP`, `DOCK_APPOINTMENT_CONSUMER_GROUP`,
 `OBSERVED_CAPACITY_CONSUMER_GROUP` and `DEMAND_SITE_ID` are set
-(`EVENT_PUBLISHER=log` is refused).
+(`EVENT_PUBLISHER=log` is refused, and so is the retired
+`INBOUND_DEMAND_CONSUMER_GROUP` of the old inbound-receiving appointment source, ADR 0020).
 
 ```bash
 docker compose up -d --wait   # Postgres :55432 (planning/planning/planning) + Kafka :9092
                               # (KAFKA_HOST_PORT=19092 picks a free broker port)
 export DATABASE_URL='postgres://planning:planning@localhost:55432/planning?sslmode=disable'
 export KAFKA_BROKERS=localhost:9092 DEMAND_SITE_ID=SIM1
-export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-storage DEMAND_CONSUMER_GROUP=wp-local-demand INBOUND_DEMAND_CONSUMER_GROUP=wp-local-inbound-demand OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-observed-capacity
+export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-storage DEMAND_CONSUMER_GROUP=wp-local-demand DOCK_APPOINTMENT_CONSUMER_GROUP=wp-local-dock-appointments OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-observed-capacity
 go run ./cmd/api              # migrations run automatically at startup; listens on :8080
 ```
 
@@ -178,9 +179,10 @@ go run ./cmd/api              # migrations run automatically at startup; listens
 | `LABOR_CAPACITY_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.workforce.events` |
 | `STORAGE_CAPACITY_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.facility.events` |
 | `DEMAND_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.order-management.events` |
-| `INBOUND_DEMAND_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.inbound-receiving.events` (ADR 0017) |
+| `DOCK_APPOINTMENT_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.dock-scheduling.events` (ADR 0020; inbound demand is attributed to the events' `site_id`) |
+| `INBOUND_DEMAND_CONSUMER_GROUP` | **refused** | retired with inbound-receiving as the appointment source (ADR 0020): setting it is a boot error naming `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 | `OBSERVED_CAPACITY_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.fulfillment.events` (ADR 0017) |
-| `DEMAND_SITE_ID` | **required** | the one site every consumed order, dock appointment and task completion is attributed to (order events carry no site) |
+| `DEMAND_SITE_ID` | **required** | the one site every consumed order and task completion is attributed to (their events carry no site; dock appointments carry their own `site_id`) |
 | `EVENT_PUBLISHER` | *(unset = `kafka`)* | only `kafka` is accepted; `log` is refused at boot (ADR 0016) |
 | `HTTP_ADDR` | `:8080` | REST listen address |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | Go duration between relay passes |

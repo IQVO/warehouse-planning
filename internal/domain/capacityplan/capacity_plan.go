@@ -63,7 +63,7 @@ var (
 	ErrNegativeInbound = errors.New("capacityplan: inbound demand must not be negative")
 )
 
-// InboundDemand is the inbound-receiving dock-appointment demand a plan was
+// InboundDemand is the dock-scheduling dock-appointment demand a plan was
 // created against (docs/adr/0017): a second demand source NEXT TO the order
 // demand, in LABOUR MINUTES. It is never summed into the plan's order demand
 // (different units) and no published event carries it. The zero value is "no

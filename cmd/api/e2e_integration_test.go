@@ -39,7 +39,7 @@ const (
 	topicLabor     = "warehouse.workforce.events"
 	topicFacility  = "warehouse.facility.events"
 	topicOrders    = "warehouse.order-management.events"
-	topicInbound   = "warehouse.inbound-receiving.events"
+	topicDock      = "warehouse.dock-scheduling.events"
 	topicFulfil    = "warehouse.fulfillment.events"
 	topicEvents    = "warehouse.warehouse-planning.events"
 	topicAnalytics = "warehouse.warehouse-planning.analytics"
@@ -53,9 +53,10 @@ const (
 )
 
 // consumedEvents is how many distinct CloudEvents ids the five consumers
-// claim in the whole test: 4 in phaseConsumers, 4 dock-appointment events and 5
-// task completions in phaseInboundObserved (duplicates excluded).
-const consumedEvents = 13
+// claim in the whole test: 4 in phaseConsumers, 9 dock-scheduling appointment
+// events and 5 task completions in phaseInboundObserved (duplicates excluded;
+// the retired inbound-receiving event is never claimed).
+const consumedEvents = 18
 
 // containerStartTimeout bounds a testcontainers start.
 const containerStartTimeout = 120 * time.Second
@@ -245,7 +246,7 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("LABOR_CAPACITY_CONSUMER_GROUP", "warehouse-planning-labor-capacity-e2e")
 	t.Setenv("STORAGE_CAPACITY_CONSUMER_GROUP", "warehouse-planning-storage-capacity-e2e")
 	t.Setenv("DEMAND_CONSUMER_GROUP", "warehouse-planning-demand-e2e")
-	t.Setenv("INBOUND_DEMAND_CONSUMER_GROUP", "warehouse-planning-inbound-demand-e2e")
+	t.Setenv("DOCK_APPOINTMENT_CONSUMER_GROUP", "warehouse-planning-dock-appointments-e2e")
 	t.Setenv("OBSERVED_CAPACITY_CONSUMER_GROUP", "warehouse-planning-observed-capacity-e2e")
 	t.Setenv("DEMAND_SITE_ID", siteID)
 	t.Setenv("HTTP_ADDR", e.addr)
@@ -517,33 +518,59 @@ func phaseConsumers(t *testing.T, w *world) {
 	}
 }
 
-func dockData(id, start, end string, asns ...string) map[string]any {
-	return map[string]any{"appointment_id": id, "door_code": "WH1-DOCK-IN-01", "carrier": "ACME", "window_start": start, "window_end": end, "asn_numbers": asns}
+// dockBooked is a dock-scheduling DockAppointmentBooked `data` (contracts-delta).
+func dockBooked(id, direction, start, end string, version int, asns ...string) map[string]any {
+	if asns == nil {
+		asns = []string{}
+	}
+	return map[string]any{
+		"appointment_id": id, "site_id": siteID, "direction": direction, "door_code": "WH1-DOCK-IN-01", "carrier": "ACME", "carrier_scac": nil,
+		"window_start": start, "window_end": end, "asn_numbers": asns, "cpt_id": nil, "shipment_refs": []string{}, "expected_seal_number": nil,
+		"provenance": "native", "version": version,
+	}
 }
 
 func taskData(id, taskType string) map[string]any {
 	return map[string]any{"task_id": id, "task_type": taskType, "duration_seconds": 60}
 }
 
-// Phase 2b (ADR 0017): the dock-appointment and task-completion consumers are
-// fed through Kafka only. A Cancelled that arrives BEFORE its Booked wins, a
-// redelivered id is applied once, an appointment on the window end is not in
-// the window, and the labour comes only from the declared standard: until one
-// is declared the appointment is counted, unpriced and reported missing.
+// Phase 2b (ADR 0017, ADR 0020): the dock-appointment and task-completion
+// consumers are fed through Kafka only. The appointments come from
+// dock-scheduling and are attributed to the site_id of their events. A
+// Cancelled that arrives BEFORE its Booked wins, a no-show removes the demand,
+// a reschedule moves it (appt-3 moves INTO the window, appt-2 OUT of it), an
+// OUTBOUND appointment and an inbound-receiving event on the same topic are not
+// demand, a redelivered id is applied once, an appointment on the window end is
+// not in the window, and the labour comes only from the declared standard:
+// until one is declared the appointment is counted, unpriced and reported
+// missing.
 func phaseInboundObserved(t *testing.T, s *service, w *world) {
 	t.Helper()
-	const dockType = "com.warehouse.wms.inbound-receiving.dockappointment."
+	const dockType = "com.warehouse.wms.dock-scheduling.dockappointment."
 	const taskType = "com.warehouse.wes.fulfillment-execution.task.TaskCompleted"
 	at := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 	ev := func(id, typ, subject string, when time.Time, data any) kafkago.Message {
 		return kafkago.Message{Key: []byte(subject), Value: inputEvent(t, id, "/warehouse/e2e", typ, subject, when, data)}
 	}
-	booked2 := ev("dock-e3", dockType+"DockAppointmentBooked", "appt-2", at.Add(5*time.Minute), dockData("appt-2", "2026-10-05T09:00:00Z", "2026-10-05T10:30:00Z", "ASN-2"))
-	produce(t, w.brokers, topicInbound,
-		ev("dock-e1", dockType+"DockAppointmentCancelled", "appt-1", at.Add(time.Hour), map[string]any{"appointment_id": "appt-1", "door_code": "WH1-DOCK-IN-01"}),
-		ev("dock-e2", dockType+"DockAppointmentBooked", "appt-1", at, dockData("appt-1", "2026-10-05T08:30:00Z", "2026-10-05T09:30:00Z", "ASN-1", "ASN-1b")),
+	booked2 := ev("dock-e3", dockType+"DockAppointmentBooked", "appt-2", at.Add(5*time.Minute), dockBooked("appt-2", "INBOUND", "2026-10-05T09:00:00Z", "2026-10-05T10:30:00Z", 1, "ASN-2"))
+	produce(t, w.brokers, topicDock,
+		ev("dock-e1", dockType+"DockAppointmentCancelled", "appt-1", at.Add(time.Hour), map[string]any{"appointment_id": "appt-1", "site_id": siteID, "door_code": "WH1-DOCK-IN-01", "reason": "CARRIER_REQUEST", "version": 2}),
+		ev("dock-e2", dockType+"DockAppointmentBooked", "appt-1", at, dockBooked("appt-1", "INBOUND", "2026-10-05T08:30:00Z", "2026-10-05T09:30:00Z", 1, "ASN-1", "ASN-1b")),
 		booked2, booked2,
-		ev("dock-e4", dockType+"DockAppointmentBooked", "appt-3", at.Add(10*time.Minute), dockData("appt-3", windowEnd, "2026-10-05T17:00:00Z", "ASN-3")))
+		ev("dock-e4", dockType+"DockAppointmentBooked", "appt-3", at.Add(10*time.Minute), dockBooked("appt-3", "INBOUND", windowEnd, "2026-10-05T17:00:00Z", 1, "ASN-3")),
+		ev("dock-e5", dockType+"DockAppointmentBooked", "appt-4", at.Add(11*time.Minute), dockBooked("appt-4", "OUTBOUND", "2026-10-05T09:00:00Z", "2026-10-05T10:00:00Z", 1)),
+		ev("dock-e6", dockType+"DockAppointmentBooked", "appt-5", at.Add(12*time.Minute), dockBooked("appt-5", "INBOUND", "2026-10-05T11:00:00Z", "2026-10-05T12:00:00Z", 1, "ASN-5", "ASN-5b")),
+		ev("dock-e7", dockType+"DockAppointmentNoShow", "appt-5", at.Add(13*time.Minute), map[string]any{
+			"appointment_id": "appt-5", "site_id": siteID, "door_code": "WH1-DOCK-IN-01", "direction": "INBOUND", "carrier_scac": "ACME", "window_end": "2026-10-05T12:00:00Z", "version": 2}),
+		ev("dock-e8", dockType+"DockAppointmentRescheduled", "appt-2", at.Add(14*time.Minute), map[string]any{
+			"appointment_id": "appt-2", "site_id": siteID, "door_code": "WH1-DOCK-IN-01", "window_start": "2026-10-05T17:30:00Z", "window_end": "2026-10-05T18:30:00Z",
+			"previous_window_start": "2026-10-05T09:00:00Z", "previous_window_end": "2026-10-05T10:30:00Z", "version": 2}),
+		ev("dock-e9", dockType+"DockAppointmentRescheduled", "appt-3", at.Add(15*time.Minute), map[string]any{
+			"appointment_id": "appt-3", "site_id": siteID, "door_code": "WH1-DOCK-IN-01", "window_start": "2026-10-05T12:00:00Z", "window_end": "2026-10-05T13:00:00Z",
+			"previous_window_start": windowEnd, "previous_window_end": "2026-10-05T17:00:00Z", "version": 2}),
+		// The retired source's type on the new topic is not consumed: no row, no claim.
+		ev("dock-legacy", "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked", "appt-6", at.Add(16*time.Minute), map[string]any{
+			"appointment_id": "appt-6", "door_code": "WH1-DOCK-IN-01", "carrier": "ACME", "window_start": "2026-10-05T09:00:00Z", "window_end": "2026-10-05T10:00:00Z", "asn_numbers": []string{"ASN-6"}}))
 	done := func(id, kind string, when string) kafkago.Message {
 		ts, err := time.Parse(time.RFC3339, when)
 		if err != nil {
@@ -557,10 +584,16 @@ func phaseInboundObserved(t *testing.T, s *service, w *world) {
 		done("4", "PACK", "2026-10-05T09:00:00Z"), done("5", "PICK", "2026-10-05T07:59:00Z"))
 
 	waitFor(t, 90*time.Second, "the dock-appointment and task-completion consumers to be fed from Kafka", func() bool {
-		return w.db.count(`SELECT count(*) FROM inbound_appointments`) == 3 && w.db.count(`SELECT count(*) FROM processed_events`) == consumedEvents
+		return w.db.count(`SELECT count(*) FROM inbound_appointments`) == 5 && w.db.count(`SELECT count(*) FROM processed_events`) == consumedEvents
 	})
-	if n := w.db.count(`SELECT count(*) FROM inbound_appointments WHERE status = 'BOOKED'`); n != 2 {
-		t.Fatalf("BOOKED appointments = %d, want 2 (appt-1 was cancelled before it was booked)", n)
+	if n := w.db.count(`SELECT count(*) FROM inbound_appointments WHERE status = 'BOOKED'`); n != 3 {
+		t.Fatalf("BOOKED appointments = %d, want 3 (appt-1 was cancelled before it was booked, appt-5 was a no-show, appt-6 is the retired source and was never read)", n)
+	}
+	if n := w.db.count(`SELECT count(*) FROM inbound_appointments WHERE appointment_id = 'appt-6'`); n != 0 {
+		t.Fatalf("the retired inbound-receiving type was consumed (%d rows)", n)
+	}
+	if n := w.db.count(`SELECT count(*) FROM inbound_appointments WHERE location <> '` + siteID + `'`); n != 0 {
+		t.Fatalf("%d appointments are not attributed to the events' site_id %s", n, siteID)
 	}
 	if n := w.db.count(`SELECT COALESCE(sum(tasks_completed), 0)::bigint FROM observed_capacity`); n != 5 {
 		t.Fatalf("observed tasks = %d, want 5 (the duplicate id counted once)", n)
@@ -797,7 +830,7 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	pg, dbURL := startPostgres(t)
 	kc, brokers := startKafka(t)
 	// The input topics are infra's: create them the way the cluster has them.
-	for _, topic := range []string{topicLabor, topicFacility, topicOrders, topicInbound, topicFulfil} {
+	for _, topic := range []string{topicLabor, topicFacility, topicOrders, topicDock, topicFulfil} {
 		createTopic(t, brokers, topic)
 	}
 	w := &world{e: env{dbURL: dbURL, brokers: brokers, addr: freeAddr(t)}, pg: pg, kc: kc, db: newPGView(t, dbURL), brokers: brokers}

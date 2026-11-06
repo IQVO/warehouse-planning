@@ -14,7 +14,7 @@ import (
 )
 
 // InboundAppointmentRepo is a pgxpool-backed ports.InboundAppointmentRepository
-// over the inbound_appointments table (migration 0009). Inside a
+// over the inbound_appointments table (migrations 0009 and 0012). Inside a
 // ports.UnitOfWork it uses the transaction carried by ctx, so the consumer's
 // processed-event claim and Apply commit or roll back together.
 type InboundAppointmentRepo struct {
@@ -29,8 +29,9 @@ func NewInboundAppointmentRepo(pool *pgxpool.Pool) *InboundAppointmentRepo {
 // Apply implements ports.InboundAppointmentRepository. The decision is
 // inbound.Resolve -- the SAME function the in-memory adapter uses -- over the
 // stored row read under a transaction-scoped advisory lock keyed on the
-// appointment id: the row may not exist yet (a Cancelled before its Booked), so
-// FOR UPDATE alone would not serialize two concurrent first writes.
+// appointment id: the row may not exist yet (a Rescheduled or Cancelled before
+// its Booked), so FOR UPDATE alone would not serialize two concurrent first
+// writes.
 func (r *InboundAppointmentRepo) Apply(ctx context.Context, next inbound.Appointment) (bool, error) {
 	changed := false
 	err := inTx(ctx, r.pool, func(q querier) error {
@@ -46,22 +47,32 @@ func (r *InboundAppointmentRepo) Apply(ctx context.Context, next inbound.Appoint
 			return nil
 		}
 		var windowStart, windowEnd *time.Time
-		var asns *int
 		if resolved.HasWindow() {
-			ws, we, n := resolved.WindowStart(), resolved.WindowEnd(), resolved.ASNCount()
-			windowStart, windowEnd, asns = &ws, &we, &n
+			ws, we := resolved.WindowStart(), resolved.WindowEnd()
+			windowStart, windowEnd = &ws, &we
+		}
+		var direction *string
+		if d := string(resolved.Direction()); d != "" {
+			direction = &d
+		}
+		var asns *int
+		if resolved.ASNCount() > 0 {
+			n := resolved.ASNCount()
+			asns = &n
 		}
 		if _, err := q.Exec(ctx, `
-			INSERT INTO inbound_appointments (appointment_id, location, status, window_start, window_end, asn_count, as_of)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			INSERT INTO inbound_appointments (appointment_id, location, direction, status, window_start, window_end, asn_count, version, as_of)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT (appointment_id) DO UPDATE SET
 				location = EXCLUDED.location,
+				direction = EXCLUDED.direction,
 				status = EXCLUDED.status,
 				window_start = EXCLUDED.window_start,
 				window_end = EXCLUDED.window_end,
 				asn_count = EXCLUDED.asn_count,
+				version = EXCLUDED.version,
 				as_of = EXCLUDED.as_of
-		`, resolved.ID(), resolved.Location(), string(resolved.Status()), windowStart, windowEnd, asns, resolved.AsOf()); err != nil {
+		`, resolved.ID(), resolved.Location(), direction, string(resolved.Status()), windowStart, windowEnd, asns, resolved.Version(), resolved.AsOf()); err != nil {
 			return err
 		}
 		changed = true
@@ -76,21 +87,26 @@ func (r *InboundAppointmentRepo) Apply(ctx context.Context, next inbound.Appoint
 func findInboundAppointment(ctx context.Context, q querier, id string) (*inbound.Appointment, error) {
 	var (
 		location, status       string
+		direction              *string
 		windowStart, windowEnd *time.Time
 		asns                   *int
+		version                int64
 		asOf                   time.Time
 	)
 	err := q.QueryRow(ctx, `
-		SELECT location, status, window_start, window_end, asn_count, as_of
+		SELECT location, direction, status, window_start, window_end, asn_count, version, as_of
 		FROM inbound_appointments WHERE appointment_id = $1
-	`, id).Scan(&location, &status, &windowStart, &windowEnd, &asns, &asOf)
+	`, id).Scan(&location, &direction, &status, &windowStart, &windowEnd, &asns, &version, &asOf)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	p := inbound.RehydrateParams{AppointmentID: id, Location: location, Status: inbound.Status(status), AsOf: asOf}
+	p := inbound.RehydrateParams{AppointmentID: id, Location: location, Status: inbound.Status(status), Version: version, AsOf: asOf}
+	if direction != nil {
+		p.Direction = inbound.Direction(*direction)
+	}
 	if windowStart != nil && windowEnd != nil {
 		p.WindowStart, p.WindowEnd = *windowStart, *windowEnd
 	}
@@ -101,10 +117,10 @@ func findInboundAppointment(ctx context.Context, q querier, id string) (*inbound
 	return &a, nil
 }
 
-// Demand implements ports.InboundAppointmentRepository. The window is
-// half-open on the door-window start ([start, end)), matching
-// inbound.Appointment.CountsIn; as_of is the site's newest event time
-// regardless of the window or the status.
+// Demand implements ports.InboundAppointmentRepository. Only INBOUND, BOOKED
+// appointments count; the window is half-open on the door-window start
+// ([start, end)), matching inbound.Appointment.CountsIn; as_of is the site's
+// newest event time regardless of the window, the direction or the status.
 func (r *InboundAppointmentRepo) Demand(ctx context.Context, location string, start, end time.Time) (inbound.Demand, error) {
 	var (
 		appointments int64
@@ -112,8 +128,8 @@ func (r *InboundAppointmentRepo) Demand(ctx context.Context, location string, st
 		asOf         *time.Time
 	)
 	err := queryFor(ctx, r.pool).QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE status = 'BOOKED' AND window_start >= $2 AND window_start < $3),
-		       COALESCE(sum(asn_count) FILTER (WHERE status = 'BOOKED' AND window_start >= $2 AND window_start < $3), 0),
+		SELECT count(*) FILTER (WHERE status = 'BOOKED' AND direction = 'INBOUND' AND window_start >= $2 AND window_start < $3),
+		       COALESCE(sum(asn_count) FILTER (WHERE status = 'BOOKED' AND direction = 'INBOUND' AND window_start >= $2 AND window_start < $3), 0),
 		       max(as_of)
 		FROM inbound_appointments WHERE location = $1
 	`, location, start, end).Scan(&appointments, &asns, &asOf)

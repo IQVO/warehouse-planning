@@ -58,11 +58,13 @@ kafka:
 demand:
   consumerGroup: "warehouse-planning-demand"
   siteId: "SIM1"
-# ADR 0017 handoff: NOT yet in warehouse-infra origin/develop. The infra values PR
-# must add exactly these two keys (the api exits at boot, and the chart refuses to
-# render, without them). This copy carries them so the render test proves the shape.
-inbound:
-  consumerGroup: "warehouse-planning-inbound-demand"
+# ADR 0017 / ADR 0020 handoff: NOT yet in warehouse-infra origin/develop. The infra
+# values PR must add exactly these two keys (the api exits at boot, and the chart
+# refuses to render, without them) and must NOT carry the retired
+# `inbound.consumerGroup` (the chart and the binary refuse it). This copy carries
+# the target shape so the render test proves it.
+dockAppointments:
+  consumerGroup: "warehouse-planning-dock-appointments"
 observed:
   consumerGroup: "warehouse-planning-observed-capacity"
 

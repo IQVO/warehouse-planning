@@ -43,17 +43,22 @@ info:
     the ONE configured site (`DEMAND_SITE_ID`): order-management's events carry
     no fulfillment site. `OrderRepromised` and every other type are ignored.
 
-    **Consumed (ADR 0017).** `DockAppointmentBooked` and
-    `DockAppointmentCancelled` (inbound-receiving, topic
-    `warehouse.inbound-receiving.events`, group `INBOUND_DEMAND_CONSUMER_GROUP`)
+    **Consumed (ADR 0017, source switched by ADR 0020).** dock-scheduling's
+    `DockAppointmentBooked`, `DockAppointmentRescheduled`,
+    `DockAppointmentCancelled` and `DockAppointmentNoShow` (topic
+    `warehouse.dock-scheduling.events`, group `DOCK_APPOINTMENT_CONSUMER_GROUP`)
     keep a local inbound-demand read model current: a capacity plan carries the
-    dock appointments of its window and the labour the operator-declared inbound
-    standard attributes to them (a Cancelled that arrives before its Booked
-    wins). `TaskCompleted` (fulfillment-execution, topic
-    `warehouse.fulfillment.events`, group `OBSERVED_CAPACITY_CONSUMER_GROUP`)
-    keeps a local observed-capacity read model current that feeds an ADVISORY
-    planned-versus-observed variance; it never changes a planned capacity. Both
-    attribute to the same configured site and dead-letter unusable payloads to
+    INBOUND dock appointments of its window and the labour the operator-declared
+    inbound standard attributes to them. Each appointment is attributed to the
+    `site_id` of its events; the producer's aggregate `version` orders them (a
+    Cancelled that arrives before its Booked wins). inbound-receiving's
+    appointment events are NO LONGER consumed, and a deployment that still sets
+    `INBOUND_DEMAND_CONSUMER_GROUP` is refused at boot. `TaskCompleted`
+    (fulfillment-execution, topic `warehouse.fulfillment.events`, group
+    `OBSERVED_CAPACITY_CONSUMER_GROUP`) keeps a local observed-capacity read
+    model current that feeds an ADVISORY planned-versus-observed variance; it
+    never changes a planned capacity and is attributed to the configured site
+    (`DEMAND_SITE_ID`). Both consumers dead-letter unusable payloads to
     `<topic>.dlq`.
 
     **Analytics stream (ADR 0005).** The same four events are ALSO written to
@@ -256,35 +261,61 @@ channels:
           - $ref: "#/components/messages/OrderAllocated"
           - $ref: "#/components/messages/OrderPartiallyAllocated"
 
-  warehouse.inbound-receiving.events:
+  warehouse.dock-scheduling.events:
     description: |
-      inbound-receiving's integration topic (`InboundTopic`, key = appointment id for
+      dock-scheduling's integration topic (`DockSchedulingTopic`, key = appointment id for
       appointment events). This service consumes it with a STABLE consumer group read from
-      env `INBOUND_DEMAND_CONSUMER_GROUP` (REQUIRED, no default; ADR 0016/0017). Only
-      `DockAppointmentBooked` and `DockAppointmentCancelled` are acted on; every other
-      `type` on the topic (ASN, check-in, completion, receipt events) is ignored. A message
-      that is not CloudEvents 1.0, or a known type with an unusable payload, is published to
-      `warehouse.inbound-receiving.events.dlq` (raw bytes plus `x-dlq-*` headers).
+      env `DOCK_APPOINTMENT_CONSUMER_GROUP` (REQUIRED, no default; ADR 0016/0020). Only
+      `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled` and
+      `DockAppointmentNoShow` are acted on, dispatched on the FULL `type` string; every other
+      `type` on the topic (door calendar events, and the retired
+      `com.warehouse.wms.inbound-receiving.dockappointment.*` types) is ignored. The
+      analytics-only appointment events (checked-in, door reassigned, completed, at risk) are
+      published to the producer's analytics topic and never reach this one. A message that is
+      not CloudEvents 1.0, or a known type with an unusable payload, is published to
+      `warehouse.dock-scheduling.events.dlq` (raw bytes plus `x-dlq-*` headers).
+
+      The previous source, inbound-receiving's `warehouse.inbound-receiving.events` and the
+      env `INBOUND_DEMAND_CONSUMER_GROUP`, is retired by ADR 0020: setting that variable is a
+      boot error naming `DOCK_APPOINTMENT_CONSUMER_GROUP`.
     publish:
       operationId: consumeDockAppointmentEvents
-      summary: Consume inbound-receiving's dock appointment events.
+      summary: Consume dock-scheduling's dock appointment events.
       description: |
         Consumed by this service into a LOCAL inbound-demand read model
         (`inbound_appointments`, one row per appointment id; `GET /inbound-demand`,
-        `get_inbound_demand`, the inbound figures on a capacity plan). An appointment is
-        demand in a window [start, end) when its door window STARTS at or after start and
-        strictly before end. Last writer wins per appointment on the CloudEvents `time`; a
-        Cancelled wins a tie and is stored as a tombstone if it arrives before its Booked.
+        `get_inbound_demand`, the inbound figures on a capacity plan). Only INBOUND
+        appointments (`data.direction`) are demand; OUTBOUND ones are stored and never
+        counted. An appointment is demand in a window [start, end) when it is BOOKED and its
+        door window STARTS at or after start and strictly before end. A Rescheduled moves the
+        window; a Cancelled and a NoShow remove the demand (both are terminal on the
+        producer). Each appointment is attributed to the `data.site_id` of its events (a
+        facility-layout siteCode): there is no configured site on this path.
+
+        Ordering: every event carries the aggregate `data.version` (starts at 1, +1 per
+        accepted change). The state (status, window, version) changes only when the event's
+        version is GREATER than the stored one, so a redelivery, a duplicate or an older event
+        changes nothing. The booking facts only a Booked carries (direction, ASN count) are
+        filled in whenever they arrive, so a Cancelled or Rescheduled that arrives before its
+        Booked is stored as a partial row (a tombstone) that the Booked then completes
+        without resurrecting it or moving the window back. Rows written by the retired
+        inbound-receiving source are INBOUND at version 0, so any dock-scheduling event for
+        the same appointment id supersedes them.
+
         The idempotency claim on the CloudEvents `id` and the upsert commit in ONE database
-        transaction; the offset is committed only afterwards. The labour minutes are NOT in
-        the event: they come from the operator-declared inbound labour standard. See
-        docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md.
+        transaction; the offset is committed only afterwards. This consumer raises no event
+        of its own. The labour minutes are NOT in the event: they come from the
+        operator-declared inbound labour standard. See
+        docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md and
+        docs/adr/0020-inbound-demand-from-dock-scheduling.md.
       tags:
         - name: consumed
       message:
         oneOf:
           - $ref: "#/components/messages/DockAppointmentBooked"
+          - $ref: "#/components/messages/DockAppointmentRescheduled"
           - $ref: "#/components/messages/DockAppointmentCancelled"
+          - $ref: "#/components/messages/DockAppointmentNoShow"
 
   warehouse.fulfillment.events:
     description: |
@@ -869,17 +900,17 @@ components:
     DockAppointmentBooked:
       name: DockAppointmentBooked
       title: Dock appointment booked (consumed)
-      summary: inbound-receiving booked a door window for a carrier.
+      summary: dock-scheduling booked a door window for a carrier.
       description: |
-        CONSUMED from `warehouse.inbound-receiving.events` (producer: inbound-receiving, its own
-        `apis/asyncapi.yaml`). Stores the appointment in the local inbound-demand read model
-        (`inbound_appointments`, one row per `data.appointment_id`): door window start/end and
-        ASN count = `len(data.asn_numbers)`, site = the configured `DEMAND_SITE_ID` (the event
-        carries none). `subject` must equal `data.appointment_id`. Ordering guard: last writer
-        wins per appointment on the CloudEvents `time`, and a Cancelled wins a tie, so a Booked
-        that arrives after the Cancelled that supersedes it changes nothing. Deduped on the
-        CloudEvents `id`. `type` =
-        `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked`.
+        CONSUMED from `warehouse.dock-scheduling.events` (producer: dock-scheduling; the data
+        is the superset contract of the yard-management plan). Stores the appointment in the
+        local inbound-demand read model (`inbound_appointments`, one row per
+        `data.appointment_id`): site = `data.site_id`, direction, door window start/end and ASN
+        count = `len(data.asn_numbers)`. `subject` must equal `data.appointment_id`.
+        Version-guarded: the window and status are written only when `data.version` is greater
+        than the stored version; the direction and ASN count are filled in when the row lacks
+        them. Deduped on the CloudEvents `id`. `type` =
+        `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked`.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -892,30 +923,78 @@ components:
           payload:
             specversion: "1.0"
             id: "4a8c2e91-5b3d-4c7f-a012-9e6d1b8f3c25"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked"
             subject: "appt-123e4567-e89b-12d3-a456-426614174000"
             time: "2026-10-08T12:05:00Z"
             datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentBooked:v1"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentBooked:v1"
             data:
               appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
+              direction: "INBOUND"
               door_code: "WH1-DOCK-IN-01"
-              carrier: "ACME Freight"
+              carrier: "Example Freight"
+              carrier_scac: "EXFT"
               window_start: "2026-10-09T08:00:00Z"
               window_end: "2026-10-09T10:00:00Z"
               asn_numbers: ["ASN-1001"]
+              cpt_id: null
+              shipment_refs: []
+              expected_seal_number: null
+              provenance: "native"
+              version: 1
+
+    DockAppointmentRescheduled:
+      name: DockAppointmentRescheduled
+      title: Dock appointment rescheduled (consumed)
+      summary: dock-scheduling moved a booked appointment to another door window.
+      description: |
+        CONSUMED from `warehouse.dock-scheduling.events`. Moves the appointment's demand to
+        `data.window_start` / `data.window_end` (the previous window and the door are
+        ignored) when `data.version` is greater than the stored version. Carries no direction
+        and no ASNs: arriving before its Booked it is stored as a partial row that is not
+        demand until the Booked supplies the direction. `type` =
+        `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/DockAppointmentRescheduledEvent"
+      examples:
+        - name: rescheduled
+          summary: Moved to the afternoon window of the same day.
+          payload:
+            specversion: "1.0"
+            id: "c3d5e7f9-2a4b-4c6d-8e0f-1a2b3c4d5e6f"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-08T15:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentRescheduled:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
+              door_code: "WH1-DOCK-IN-02"
+              window_start: "2026-10-09T13:00:00Z"
+              window_end: "2026-10-09T15:00:00Z"
+              previous_window_start: "2026-10-09T08:00:00Z"
+              previous_window_end: "2026-10-09T10:00:00Z"
+              version: 2
 
     DockAppointmentCancelled:
       name: DockAppointmentCancelled
       title: Dock appointment cancelled (consumed)
-      summary: inbound-receiving cancelled a Booked appointment.
+      summary: dock-scheduling cancelled a booked appointment.
       description: |
-        CONSUMED from `warehouse.inbound-receiving.events`. Removes the appointment's demand:
-        the row flips to CANCELLED and stops counting. A Cancelled that arrives BEFORE its
-        Booked is stored as a tombstone (no window) and wins over any Booked with an older or
-        equal `time`. Idempotent: a redelivered `id` is a no-op. `type` =
-        `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled`.
+        CONSUMED from `warehouse.dock-scheduling.events`. Removes the appointment's demand:
+        the row flips to CANCELLED and stops counting (terminal on the producer). A Cancelled
+        that arrives BEFORE its Booked is stored as a tombstone (no window) that no Booked of
+        an older version can resurrect. Idempotent: a redelivered `id` or a version that is not
+        greater than the stored one is a no-op. `type` =
+        `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled`.
       contentType: application/cloudevents+json
       tags:
         - name: consumed
@@ -924,20 +1003,59 @@ components:
         $ref: "#/components/schemas/DockAppointmentCancelledEvent"
       examples:
         - name: cancelled
-          summary: Cancelled because the carrier was delayed.
+          summary: Cancelled at the carrier's request.
           payload:
             specversion: "1.0"
             id: "b2c4d6e8-1f3a-4b5c-9d7e-8f0a1b2c3d4e"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled"
             subject: "appt-123e4567-e89b-12d3-a456-426614174000"
             time: "2026-10-08T18:00:00Z"
             datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentCancelled:v1"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentCancelled:v1"
             data:
               appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
               door_code: "WH1-DOCK-IN-01"
-              reason: "Carrier delayed"
+              reason: "CARRIER_REQUEST"
+              version: 2
+
+    DockAppointmentNoShow:
+      name: DockAppointmentNoShow
+      title: Dock appointment no-show (consumed)
+      summary: dock-scheduling marked a booked appointment as not shown.
+      description: |
+        CONSUMED from `warehouse.dock-scheduling.events`. Removes the appointment's demand
+        exactly like a Cancelled (the row flips to NO_SHOW; terminal on the producer: a late
+        carrier needs a new booking). Carries the direction, so even a NoShow that arrives
+        before its Booked is stored with a known direction. `type` =
+        `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+        - name: warehouse-planning
+      payload:
+        $ref: "#/components/schemas/DockAppointmentNoShowEvent"
+      examples:
+        - name: no-show
+          summary: The carrier did not arrive within the no-show grace.
+          payload:
+            specversion: "1.0"
+            id: "d4e6f8a0-3b5c-4d7e-9f1a-2b3c4d5e6f70"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T11:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentNoShow:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
+              door_code: "WH1-DOCK-IN-01"
+              direction: "INBOUND"
+              carrier_scac: "EXFT"
+              window_end: "2026-10-09T10:00:00Z"
+              version: 2
 
     TaskCompleted:
       name: TaskCompleted
@@ -1689,13 +1807,21 @@ components:
     DockAppointmentBookedData:
       type: object
       description: >-
-        Fields this service reads from inbound-receiving's DockAppointmentBooked `data`
-        (hand-mirrored, never imported). door_code and carrier are ignored.
-      required: [appointment_id, window_start, window_end, asn_numbers]
+        Fields this service reads from dock-scheduling's DockAppointmentBooked `data`
+        (hand-mirrored, never imported). door_code, carrier, carrier_scac, cpt_id,
+        shipment_refs, expected_seal_number and provenance are ignored.
+      required: [appointment_id, site_id, direction, window_start, window_end, asn_numbers, version]
       properties:
         appointment_id:
           type: string
           description: Must equal the CloudEvents `subject`.
+        site_id:
+          type: string
+          description: The facility-layout siteCode the demand is attributed to.
+        direction:
+          type: string
+          enum: [INBOUND, OUTBOUND]
+          description: Only INBOUND appointments are demand.
         window_start:
           type: string
           format: date-time
@@ -1706,42 +1832,117 @@ components:
           description: Must be after window_start.
         asn_numbers:
           type: array
-          minItems: 1
-          description: Only its length is read (the ASN count that `minutes_per_asn` multiplies).
+          description: >-
+            Only its length is read (the ASN count that `minutes_per_asn` multiplies); at least
+            one for an INBOUND booking, empty for an OUTBOUND one.
           items:
             type: string
+        version:
+          type: integer
+          minimum: 1
+          description: The aggregate version; the ordering key.
     DockAppointmentBookedEvent:
-      description: CloudEvents 1.0 envelope of inbound-receiving's DockAppointmentBooked (consumed).
+      description: CloudEvents 1.0 envelope of dock-scheduling's DockAppointmentBooked (consumed).
       allOf:
         - $ref: "#/components/schemas/CloudEventEnvelope"
         - type: object
           properties:
             type:
-              const: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked"
+              const: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked"
             dataschema:
-              const: "urn:warehouse:inbound-receiving:events:DockAppointmentBooked:v1"
+              const: "urn:warehouse:dock-scheduling:events:DockAppointmentBooked:v1"
             data:
               $ref: "#/components/schemas/DockAppointmentBookedData"
-    DockAppointmentCancelledData:
+    DockAppointmentRescheduledData:
       type: object
-      description: Fields this service reads from inbound-receiving's DockAppointmentCancelled `data`. door_code and reason are ignored.
-      required: [appointment_id]
+      description: >-
+        Fields this service reads from dock-scheduling's DockAppointmentRescheduled `data`.
+        door_code, previous_window_start and previous_window_end are ignored.
+      required: [appointment_id, site_id, window_start, window_end, version]
       properties:
         appointment_id:
           type: string
           description: Must equal the CloudEvents `subject`.
-    DockAppointmentCancelledEvent:
-      description: CloudEvents 1.0 envelope of inbound-receiving's DockAppointmentCancelled (consumed).
+        site_id:
+          type: string
+        window_start:
+          type: string
+          format: date-time
+          description: The new door window start.
+        window_end:
+          type: string
+          format: date-time
+          description: Must be after window_start.
+        version:
+          type: integer
+          minimum: 1
+    DockAppointmentRescheduledEvent:
+      description: CloudEvents 1.0 envelope of dock-scheduling's DockAppointmentRescheduled (consumed).
       allOf:
         - $ref: "#/components/schemas/CloudEventEnvelope"
         - type: object
           properties:
             type:
-              const: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled"
+              const: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled"
             dataschema:
-              const: "urn:warehouse:inbound-receiving:events:DockAppointmentCancelled:v1"
+              const: "urn:warehouse:dock-scheduling:events:DockAppointmentRescheduled:v1"
+            data:
+              $ref: "#/components/schemas/DockAppointmentRescheduledData"
+    DockAppointmentCancelledData:
+      type: object
+      description: Fields this service reads from dock-scheduling's DockAppointmentCancelled `data`. door_code and reason are ignored.
+      required: [appointment_id, site_id, version]
+      properties:
+        appointment_id:
+          type: string
+          description: Must equal the CloudEvents `subject`.
+        site_id:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+    DockAppointmentCancelledEvent:
+      description: CloudEvents 1.0 envelope of dock-scheduling's DockAppointmentCancelled (consumed).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled"
+            dataschema:
+              const: "urn:warehouse:dock-scheduling:events:DockAppointmentCancelled:v1"
             data:
               $ref: "#/components/schemas/DockAppointmentCancelledData"
+    DockAppointmentNoShowData:
+      type: object
+      description: >-
+        Fields this service reads from dock-scheduling's DockAppointmentNoShow `data`.
+        door_code, carrier_scac and window_end are ignored.
+      required: [appointment_id, site_id, direction, version]
+      properties:
+        appointment_id:
+          type: string
+          description: Must equal the CloudEvents `subject`.
+        site_id:
+          type: string
+        direction:
+          type: string
+          enum: [INBOUND, OUTBOUND]
+        version:
+          type: integer
+          minimum: 1
+    DockAppointmentNoShowEvent:
+      description: CloudEvents 1.0 envelope of dock-scheduling's DockAppointmentNoShow (consumed).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow"
+            dataschema:
+              const: "urn:warehouse:dock-scheduling:events:DockAppointmentNoShow:v1"
+            data:
+              $ref: "#/components/schemas/DockAppointmentNoShowData"
     TaskCompletedData:
       type: object
       description: >-
