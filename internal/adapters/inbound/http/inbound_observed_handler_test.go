@@ -94,7 +94,7 @@ func TestInboundDemand_PricedByStandardAndFailsVisibleWithout(t *testing.T) {
 	srv, appointments := newInboundObservedServer(t)
 	start := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
 	booked, err := inbound.NewBooked(inbound.BookedParams{
-		AppointmentID: "A1", Location: "SIM1", WindowStart: start.Add(time.Hour), WindowEnd: start.Add(2 * time.Hour),
+		AppointmentID: "A1", Location: "SIM1", Direction: inbound.DirectionInbound, Version: 1, WindowStart: start.Add(time.Hour), WindowEnd: start.Add(2 * time.Hour),
 		ASNCount: 2, AsOf: start,
 	})
 	if err != nil {
@@ -119,7 +119,7 @@ func TestInboundDemand_PricedByStandardAndFailsVisibleWithout(t *testing.T) {
 	// 40 per appointment + 2 ASNs * 10 = 60 minutes over an 8h window.
 	requireFields(t, "priced demand", decodeMap(t, body), map[string]any{
 		"labour_minutes": 60.0, "asns": 2.0, "standard_missing": false, "standard_declared": true,
-		"as_of": "2026-10-05T08:00:00Z", "source": "inbound-receiving", "average_heads": 60.0 / 480.0,
+		"as_of": "2026-10-05T08:00:00Z", "source": "dock-scheduling", "average_heads": 60.0 / 480.0,
 	})
 }
 

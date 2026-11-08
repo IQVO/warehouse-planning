@@ -47,13 +47,13 @@ type inboundLabourStandardResponse struct {
 	MinutesPerASN         float64 `json:"minutes_per_asn"`
 }
 
-// inboundDemandSourceInboundReceiving labels where GET /inbound-demand's
-// figures come from: the read model fed by inbound-receiving's dock
-// appointment events.
-const inboundDemandSourceInboundReceiving = "inbound-receiving"
+// inboundDemandSourceDockScheduling labels where GET /inbound-demand's
+// figures come from: the read model fed by dock-scheduling's dock appointment
+// events (docs/adr/0020; it was "inbound-receiving" under docs/adr/0017).
+const inboundDemandSourceDockScheduling = "dock-scheduling"
 
 // inboundDemandResponse is GET /inbound-demand's body. appointments counts the
-// BOOKED dock appointments whose door window STARTS in [window_start,
+// BOOKED INBOUND dock appointments whose door window STARTS in [window_start,
 // window_end); asns sums the ASNs they cover; labour_minutes is what the
 // standard declared for (location, path_id) attributes to them (0 when none is
 // declared -- never a guessed default); average_heads is labour_minutes over
@@ -93,7 +93,7 @@ func toInboundDemandResponse(location, pathID string, start, end time.Time, r us
 		AverageHeads:     r.AverageHeads,
 		StandardDeclared: r.StandardDeclared,
 		StandardMissing:  r.StandardMissing,
-		Source:           inboundDemandSourceInboundReceiving,
+		Source:           inboundDemandSourceDockScheduling,
 	}
 	if !r.Demand.AsOf.IsZero() {
 		asOf := r.Demand.AsOf.UTC().Format(time.RFC3339)

@@ -45,7 +45,7 @@ tags:
   - name: demand
     description: Expected demand of a site, read from the local read model fed by order-management's order events (ADR 0004).
   - name: inbound-demand
-    description: Operator-declared inbound labour standards and the inbound demand of a site, read from the local read model fed by inbound-receiving's dock appointment events (ADR 0017).
+    description: Operator-declared inbound labour standards and the inbound demand of a site, read from the local read model fed by dock-scheduling's dock appointment events (ADR 0017, source switched by ADR 0020).
   - name: observed-capacity
     description: Advisory planned-versus-observed variance of a capacity plan, from the local read model fed by fulfillment-execution's task completions (ADR 0017).
   - name: reports
@@ -811,21 +811,23 @@ paths:
   /inbound-demand:
     get:
       operationId: getInboundDemand
-      summary: Inbound demand of a site over a window (inbound-receiving read model)
+      summary: Inbound demand of a site over a window (dock-scheduling read model)
       tags: [inbound-demand]
       description: >
-        The BOOKED dock appointments at a site whose door window STARTS in the
-        half-open window [window_start, window_end), read from the LOCAL read
-        model this service builds from inbound-receiving's
-        DockAppointmentBooked / DockAppointmentCancelled CloudEvents
-        (docs/adr/0017; never a live call). A cancelled appointment never
-        counts, whatever the arrival order of the two events (the producer's
-        event time is the ordering guard). `labour_minutes` is what the
-        standard declared for `path_id` attributes to them; with no standard it
-        is 0 and `standard_missing` is true when appointments exist.
-        Appointments carry no site, so every one is attributed to the ONE site
-        configured on this service; any other location reads 0. 200 with
-        appointments 0 and as_of null when nothing is known.
+        The BOOKED INBOUND dock appointments at a site whose door window STARTS
+        in the half-open window [window_start, window_end), read from the LOCAL
+        read model this service builds from dock-scheduling's
+        DockAppointmentBooked / Rescheduled / Cancelled / NoShow CloudEvents
+        (docs/adr/0017, source switched by docs/adr/0020; never a live call).
+        A rescheduled appointment counts at its new window; a cancelled or
+        no-show one never counts, whatever the arrival order of the events (the
+        producer's aggregate `version` is the ordering guard). OUTBOUND
+        appointments are never counted. `labour_minutes` is what the standard
+        declared for `path_id` attributes to them; with no standard it is 0
+        and `standard_missing` is true when appointments exist. Each
+        appointment is attributed to the `site_id` of its events, so
+        `location` is that site code; a site with no appointment reads 0.
+        200 with appointments 0 and as_of null when nothing is known.
       parameters:
         - name: location
           in: query
@@ -1906,7 +1908,7 @@ components:
           description: Appointments exist but no standard is declared for (location, path_id).
         source:
           type: string
-          enum: [inbound-receiving]
+          enum: [dock-scheduling]
         as_of:
           type: string
           format: date-time

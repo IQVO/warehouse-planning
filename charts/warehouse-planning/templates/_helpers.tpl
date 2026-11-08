@@ -174,18 +174,24 @@ The five consumers (labor capacity, storage capacity, order demand, dock
 appointments, task completions) always run, each under a STABLE consumer group
 id that must come from values (cmd/api exits at boot without
 LABOR_CAPACITY_CONSUMER_GROUP, STORAGE_CAPACITY_CONSUMER_GROUP,
-DEMAND_CONSUMER_GROUP, INBOUND_DEMAND_CONSUMER_GROUP and
+DEMAND_CONSUMER_GROUP, DOCK_APPOINTMENT_CONSUMER_GROUP and
 OBSERVED_CAPACITY_CONSUMER_GROUP; the binary has no default group, which would
 let a locally run process join the live one). A stable id is what lets a
 rescheduled pod resume from its committed offsets.
-The order, dock-appointment and task-completion consumers also need the ONE site
-their data is attributed to (DEMAND_SITE_ID): those events carry no site.
+The order and task-completion consumers also need the ONE site their data is
+attributed to (DEMAND_SITE_ID): those events carry no site. Dock appointments
+carry their own site_id (docs/adr/0020).
+The retired inbound-receiving source (`inbound.consumerGroup`,
+INBOUND_DEMAND_CONSUMER_GROUP) is refused here, loudly, like the binary does.
 */}}
 {{- define "warehouse-planning.requireConsumerGroups" -}}
-{{- range $c := list (dict "section" "config" "key" "laborCapacityConsumerGroup" "env" "LABOR_CAPACITY_CONSUMER_GROUP") (dict "section" "config" "key" "storageCapacityConsumerGroup" "env" "STORAGE_CAPACITY_CONSUMER_GROUP") (dict "section" "demand" "key" "consumerGroup" "env" "DEMAND_CONSUMER_GROUP") (dict "section" "inbound" "key" "consumerGroup" "env" "INBOUND_DEMAND_CONSUMER_GROUP") (dict "section" "observed" "key" "consumerGroup" "env" "OBSERVED_CAPACITY_CONSUMER_GROUP") -}}
+{{- range $c := list (dict "section" "config" "key" "laborCapacityConsumerGroup" "env" "LABOR_CAPACITY_CONSUMER_GROUP") (dict "section" "config" "key" "storageCapacityConsumerGroup" "env" "STORAGE_CAPACITY_CONSUMER_GROUP") (dict "section" "demand" "key" "consumerGroup" "env" "DEMAND_CONSUMER_GROUP") (dict "section" "dockAppointments" "key" "consumerGroup" "env" "DOCK_APPOINTMENT_CONSUMER_GROUP") (dict "section" "observed" "key" "consumerGroup" "env" "OBSERVED_CAPACITY_CONSUMER_GROUP") -}}
 {{- if not (index (index $.Values $c.section) $c.key) -}}
 {{- fail (printf "%s.%s is required (%s): the consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0016)." $c.section $c.key $c.env) -}}
 {{- end -}}
+{{- end -}}
+{{- if (default dict .Values.inbound).consumerGroup -}}
+{{- fail "inbound.consumerGroup is set (INBOUND_DEMAND_CONSUMER_GROUP) but that source is retired (docs/adr/0020): the inbound labour demand is read from dock-scheduling now. Remove inbound.consumerGroup and set dockAppointments.consumerGroup (DOCK_APPOINTMENT_CONSUMER_GROUP); cmd/api refuses to boot with the old variable." -}}
 {{- end -}}
 {{- if not .Values.demand.siteId -}}
 {{- fail "demand.siteId is required (DEMAND_SITE_ID): order-management orders carry no site, so the site the demand is attributed to must be configured; cmd/api exits at boot without it (ADR 0016)." -}}
@@ -194,7 +200,8 @@ their data is attributed to (DEMAND_SITE_ID): those events carry no site.
 
 {{/*
 extraEnv may not bring back a log publisher (ADR 0016): no EVENT_PUBLISHER other
-than kafka. Called with the list to check and the name of its value for the
+than kafka. It may not bring back the retired INBOUND_DEMAND_CONSUMER_GROUP either
+(docs/adr/0020). Called with the list to check and the name of its value for the
 message.
 */}}
 {{- define "warehouse-planning.requireNoInMemoryEnv" -}}
@@ -202,6 +209,9 @@ message.
 {{- range .list -}}
 {{- $name := toString .name -}}
 {{- $value := toString (default "" .value) -}}
+{{- if eq $name "INBOUND_DEMAND_CONSUMER_GROUP" -}}
+{{- fail (printf "%s sets INBOUND_DEMAND_CONSUMER_GROUP — that source (inbound-receiving's appointment events) is retired; set dockAppointments.consumerGroup (DOCK_APPOINTMENT_CONSUMER_GROUP) instead (docs/adr/0020)." $where) -}}
+{{- end -}}
 {{- if and (eq $name "EVENT_PUBLISHER") (ne $value "kafka") -}}
 {{- fail (printf "%s sets EVENT_PUBLISHER=%s — the only publisher is \"kafka\" (ADR 0016)." $where $value) -}}
 {{- end -}}

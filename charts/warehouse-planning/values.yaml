@@ -196,15 +196,21 @@ demand:
   # `location` the labor and facility data use.
   siteId: ""
 
-# Dock-appointment consumer (docs/adr/0017): inbound-receiving's
-# DockAppointmentBooked / DockAppointmentCancelled events
-# (warehouse.inbound-receiving.events) into the local inbound-demand read model.
-# ALWAYS on (docs/adr/0016): the value is REQUIRED and the chart refuses to
-# render while it is empty. Appointments carry no site, so they are attributed to
-# demand.siteId.
-inbound:
-  # INBOUND_DEMAND_CONSUMER_GROUP: a STABLE Kafka consumer group id (warehouse-infra
-  # pins "warehouse-planning-inbound-demand").
+# Dock-appointment consumer (docs/adr/0017, source switched by docs/adr/0020):
+# dock-scheduling's DockAppointmentBooked / Rescheduled / Cancelled / NoShow
+# events (warehouse.dock-scheduling.events) into the local inbound-demand read
+# model. ALWAYS on (docs/adr/0016): the value is REQUIRED and the chart refuses
+# to render while it is empty. Each appointment is attributed to the site_id of
+# its own events; demand.siteId is NOT used for it.
+#
+# The previous source, `inbound.consumerGroup` (INBOUND_DEMAND_CONSUMER_GROUP,
+# inbound-receiving's events), is RETIRED: the chart refuses to render while it
+# is set (also through extraEnv), as the binary refuses to boot with the
+# variable, so a stale values file fails loudly instead of degrading silently.
+dockAppointments:
+  # DOCK_APPOINTMENT_CONSUMER_GROUP: a STABLE Kafka consumer group id
+  # (warehouse-infra pins "warehouse-planning-dock-appointments"). A new group
+  # starts from the earliest retained message and rebuilds the model.
   consumerGroup: ""
 
 # Observed-capacity consumer (docs/adr/0017): fulfillment-execution's

@@ -12,7 +12,7 @@ config:
 demand:
   consumerGroup: "warehouse-planning-demand"
   siteId: "SIM1"
-inbound:
-  consumerGroup: "warehouse-planning-inbound-demand"
+dockAppointments:
+  consumerGroup: "warehouse-planning-dock-appointments"
 observed:
   consumerGroup: "warehouse-planning-observed-capacity"

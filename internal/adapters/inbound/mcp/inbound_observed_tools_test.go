@@ -57,7 +57,7 @@ func TestInboundDemandTool_PricedByDeclaredStandard(t *testing.T) {
 	h := &harness{session: connectSession(t, deps), deps: deps}
 	start := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
 	booked, err := inbound.NewBooked(inbound.BookedParams{
-		AppointmentID: "A1", Location: "SIM1", WindowStart: start.Add(time.Hour), WindowEnd: start.Add(2 * time.Hour),
+		AppointmentID: "A1", Location: "SIM1", Direction: inbound.DirectionInbound, Version: 1, WindowStart: start.Add(time.Hour), WindowEnd: start.Add(2 * time.Hour),
 		ASNCount: 3, AsOf: start,
 	})
 	if err != nil {
@@ -81,7 +81,7 @@ func TestInboundDemandTool_PricedByDeclaredStandard(t *testing.T) {
 	}
 	got = h.ok(t, "get_inbound_demand", args)
 	// 30 + 3 ASNs * 10 = 60 minutes.
-	if got["labour_minutes"] != 60.0 || got["asns"] != 3.0 || got["standard_declared"] != true || got["standard_missing"] != false || got["source"] != "inbound-receiving" {
+	if got["labour_minutes"] != 60.0 || got["asns"] != 3.0 || got["standard_declared"] != true || got["standard_missing"] != false || got["source"] != "dock-scheduling" {
 		t.Fatalf("with a standard: %v", got)
 	}
 }

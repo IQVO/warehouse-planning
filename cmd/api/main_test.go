@@ -24,7 +24,7 @@ func validEnv() map[string]string {
 		"LABOR_CAPACITY_CONSUMER_GROUP":    "g-labor",
 		"STORAGE_CAPACITY_CONSUMER_GROUP":  "g-storage",
 		"DEMAND_CONSUMER_GROUP":            "g-demand",
-		"INBOUND_DEMAND_CONSUMER_GROUP":    "g-inbound",
+		"DOCK_APPOINTMENT_CONSUMER_GROUP":  "g-dock",
 		"OBSERVED_CAPACITY_CONSUMER_GROUP": "g-observed",
 		"DEMAND_SITE_ID":                   "SIM1",
 	}
@@ -42,7 +42,7 @@ func TestLoadRuntime_AcceptsACompleteEnvironment(t *testing.T) {
 	if len(rt.brokers) != 2 || rt.brokers[1] != "kafka-2.invalid:9092" {
 		t.Errorf("brokers = %v, want two trimmed addresses", rt.brokers)
 	}
-	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" || rt.groups["INBOUND_DEMAND_CONSUMER_GROUP"] != "g-inbound" || rt.groups["OBSERVED_CAPACITY_CONSUMER_GROUP"] != "g-observed" {
+	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" || rt.groups["DOCK_APPOINTMENT_CONSUMER_GROUP"] != "g-dock" || rt.groups["OBSERVED_CAPACITY_CONSUMER_GROUP"] != "g-observed" {
 		t.Errorf("groups = %v", rt.groups)
 	}
 	if rt.demandSiteID != "SIM1" {
@@ -73,7 +73,7 @@ func TestLoadRuntime_BootErrorsNameTheVariable(t *testing.T) {
 		{"no labor group", func(e map[string]string) { delete(e, "LABOR_CAPACITY_CONSUMER_GROUP") }, "LABOR_CAPACITY_CONSUMER_GROUP"},
 		{"no storage group", func(e map[string]string) { delete(e, "STORAGE_CAPACITY_CONSUMER_GROUP") }, "STORAGE_CAPACITY_CONSUMER_GROUP"},
 		{"no demand group", func(e map[string]string) { delete(e, "DEMAND_CONSUMER_GROUP") }, "DEMAND_CONSUMER_GROUP"},
-		{"no inbound demand group", func(e map[string]string) { delete(e, "INBOUND_DEMAND_CONSUMER_GROUP") }, "INBOUND_DEMAND_CONSUMER_GROUP"},
+		{"no dock appointment group", func(e map[string]string) { delete(e, "DOCK_APPOINTMENT_CONSUMER_GROUP") }, "DOCK_APPOINTMENT_CONSUMER_GROUP"},
 		{"no observed capacity group", func(e map[string]string) { delete(e, "OBSERVED_CAPACITY_CONSUMER_GROUP") }, "OBSERVED_CAPACITY_CONSUMER_GROUP"},
 		{"no demand site", func(e map[string]string) { delete(e, "DEMAND_SITE_ID") }, "DEMAND_SITE_ID"},
 	}
@@ -89,6 +89,31 @@ func TestLoadRuntime_BootErrorsNameTheVariable(t *testing.T) {
 				t.Fatalf("error %q does not name %s", err, tc.wantName)
 			}
 		})
+	}
+}
+
+// ADR 0020: the retired inbound-receiving source must fail LOUDLY, naming both
+// the stale variable and its replacement, whether or not the new group is set
+// (a stale deployment must not degrade to an unread topic and an empty model).
+func TestLoadRuntime_RefusesTheRetiredInboundReceivingGroup(t *testing.T) {
+	for name, mutate := range map[string]func(map[string]string){
+		"alongside the new group": func(e map[string]string) { e["INBOUND_DEMAND_CONSUMER_GROUP"] = "g-inbound" },
+		"instead of the new group": func(e map[string]string) {
+			delete(e, "DOCK_APPOINTMENT_CONSUMER_GROUP")
+			e["INBOUND_DEMAND_CONSUMER_GROUP"] = "g-inbound"
+		},
+	} {
+		env := validEnv()
+		mutate(env)
+		_, err := loadRuntime(envFunc(env))
+		if err == nil {
+			t.Fatalf("%s: a stale INBOUND_DEMAND_CONSUMER_GROUP must be a boot error", name)
+		}
+		for _, want := range []string{"INBOUND_DEMAND_CONSUMER_GROUP", "DOCK_APPOINTMENT_CONSUMER_GROUP", "dock-scheduling"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q does not mention %s", name, err, want)
+			}
+		}
 	}
 }
 
