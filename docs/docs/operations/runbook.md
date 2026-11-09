@@ -45,6 +45,7 @@ In the kind cluster, `warehouse-infra` turns on `kafka`, `demand` and
 
 - Kong on `:8000`: `/api/warehouse-planning/...` goes to the `api` Service with the prefix stripped (the chart's `gatewayApi` HTTPRoute, `stripPath: true`).
 - Kong on `:8000`: `/api/warehouse-planning/reports/...` goes to the `<fullname>-reports` Service, rewritten to `/reports/...` (a second route defined in `warehouse-infra`'s `terraform/services.tf`).
+- The reports route carries `konghq.com/regex-priority: "10"` (chart `reports-route.yaml`) so the reports prefix outranks the API prefix under Kong's traditional router; without it `/reports/...` can reach the API Service and answer 404.
 - Nginx on `:80`: `/mfes/warehouse-planning/` serves the frontend remote. Kong never serves frontend assets.
 
 REST, MCP and reports are unauthenticated. Access control is the in-cluster
