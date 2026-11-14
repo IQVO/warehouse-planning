@@ -341,9 +341,10 @@ helm install warehouse-planning ./charts/warehouse-planning \
 The chart (OLTP `api` component; optional `mcp`, `a2a`, `frontend` and
 analytics (`analytics-projector`, `analytics-reports`) components, all off
 by default) refuses to render without `database.url` or
-`database.existingSecret`, `kafka.brokers`, the three consumer groups
+`database.existingSecret`, `kafka.brokers`, the five consumer groups
 (`config.laborCapacityConsumerGroup`, `config.storageCapacityConsumerGroup`,
-`demand.consumerGroup`) and `demand.siteId` (and, with analytics on,
+`demand.consumerGroup`, `dockAppointments.consumerGroup`,
+`observed.consumerGroup`) and `demand.siteId` (and, with analytics on,
 `analytics.projector.consumerGroup`): Postgres and Kafka are the only
 runtime ([ADR 0016](docs/adr/0016-postgres-and-kafka-are-the-only-runtime.md)).
 The analytical DSN comes from `analytics.databaseUrl` or

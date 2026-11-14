@@ -139,3 +139,8 @@ consumer.
   `order-management`'s `OrderAllocated`/`OrderPartiallyAllocated` events into
   a local read model, and `assigned_demand` is now optional on
   `POST /capacity-plans`.
+
+## Addendum 2026-11-13: current state
+
+The "later, separate change" in the context map and the last Consequences bullet above has landed: order-management consumes `warehouse.warehouse-planning.events` in its `internal/adapters/inbound/kafka/planned_capacity_consumer.go` (order-management ADR 0031), under `PLANNED_CAPACITY_CONSUMER_GROUP` (`cmd/order/planned_capacity.go:29`; the consumer is built only when that variable is set, `:45`).
+It acts on `CapacityPlanCreated` (stored as a draft) and on `CapacityPlanPublished` and `CapacityShortageDetected` (stored as published); `BottleneckDetected` and every other type are ignored (`planned_capacity_consumer.go:196-203`).

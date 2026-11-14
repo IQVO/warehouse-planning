@@ -24,6 +24,7 @@ sequenceDiagram
   participant UC as RegisterProcessCapacityConstraint
   participant PC as ProcessCapacity
   participant R as ProcessCapacityRepository
+  participant OB as OutboxRepository
   Client->>H: POST /process-capacities or register_process_capacity_constraint
   H->>UC: Handle(command)
   UC->>UC: NewCapacityWindow, NewCapacityRate
@@ -42,6 +43,7 @@ sequenceDiagram
     H-->>Client: 409 unit-mismatch
   end
   UC->>R: Save(aggregate) upserts parent and constraint rows
+  UC->>OB: Insert(encoded events the aggregate raised, if any) in the same unit of work
   UC->>PC: EffectiveRate()
   UC-->>H: effective rate and binding constraint
   H-->>Client: 201 effective_rate, effective_unit, binding_constraint
@@ -52,8 +54,13 @@ Source: `internal/application/usecases/register_process_capacity_constraint.go`,
 `internal/adapters/inbound/mcp/tools.go`,
 `internal/adapters/outbound/postgres/process_capacity_repository.go`.
 Omits: JSON decoding errors (`400 malformed-json`) and the MCP-only
-`non-positive-period` check of `period_seconds` before the use case. There is
-no unit of work on this REST path: `Save` runs its own transaction.
+`non-positive-period` check of `period_seconds` before the use case. The
+aggregate raises `ProcessCapacityRegistered` (first constraint) or
+`ProcessCapacityChanged` (effective rate moved), and nothing otherwise. In
+`cmd/api` and `cmd/mcp` the use case is wired with the outbox, the encoder and
+the unit of work, so the save and the outbox rows commit or roll back as one
+(`cmd/api/main.go`); a use case built without them saves and publishes
+nothing.
 
 ## 2. Labor capacity from ShiftPlanCommitted (Kafka)
 
