@@ -244,7 +244,7 @@ redelivered, that event is applied again.
 ## Scaling
 
 - **HPA** (`templates/hpa.yaml`, [ADR 0009](/docs/adr/0009-hpa-and-pgxpool-tuning)): each component has its own `autoscaling.<component>` block, and all are off by default. The CPU target is 70 %, and the maximum is 4 replicas for `api`, 2 for `projector`, 3 for `reports` and 3 for `frontend`. With an HPA enabled, the Deployment omits `replicas`.
-- **`api` with more than one replica**: the relay is safe because `SKIP LOCKED` hands each pass a disjoint batch. Strict `id` order then holds within one pass, not across replicas. The three consumers share partitions through their stable group ids, and every message's claim and effect form one transaction.
+- **`api` with more than one replica**: the relay is safe because `SKIP LOCKED` hands each pass a disjoint batch. Strict `id` order then holds within one pass, not across replicas. The five consumers share partitions through their stable group ids, and every message's claim and effect form one transaction.
 - **`mcp`**: it has no HPA block on purpose. The Streamable HTTP handler keeps per-process session state, so scale it only with session affinity.
 - **Connection budget**: each `api` or `mcp` process opens at most 10 OLTP connections (`pool.go`). Each projector or reports process opens at most 5 analytical connections. Budget the database with replicas × pool size before raising `maxReplicas`.
 

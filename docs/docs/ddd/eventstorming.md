@@ -9,7 +9,7 @@ sidebar_position: 16
 
 Notation from the ddd-crew
 [EventStorming glossary and cheat sheet](https://github.com/ddd-crew/eventstorming-glossary-cheat-sheet).
-Three processes, each read left to right. Hotspots are real, documented gaps
+Five processes, each read left to right. Hotspots are real, documented gaps
 (ADRs, code comments), not invented ones.
 
 ## Legend
@@ -35,7 +35,7 @@ flowchart LR
 ```
 
 Source: ddd-crew cheat-sheet colours as specified for the fleet.
-Omits: nothing; this is the key for the three diagrams below.
+Omits: nothing; this is the key for the five diagrams below.
 
 ## 1. Capacity facts arrive from upstream
 
@@ -47,6 +47,10 @@ flowchart LR
   OP([Operator]):::actor --> C1
   C1 --> A1[ProcessCapacity]:::aggregate
   A1 --> R1[process_capacity read for path capacity]:::readmodel
+  A1 --> E4[ProcessCapacityRegistered]:::event
+  A1 --> E5[ProcessCapacityChanged]:::event
+  E4 --> P3[Both events are written to the integration topic only, through the outbox]:::policy
+  E5 --> P3
   H1[Window derived from event time, planned_rate unit assumed UNIT per hour]:::hotspot -.- P1
 
   FL[facility-layout]:::external --> E2[LocationSlotRegistered]:::event
@@ -72,11 +76,16 @@ flowchart LR
 Source: `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
 `storage_capacity_consumer.go`,
 `internal/application/usecases/register_process_capacity_constraint.go`,
-`declare_station_standard.go`, `internal/domain/processcapacity/*.go`.
+`declare_station_standard.go`, `internal/domain/processcapacity/*.go`
+(`events.go`).
 Omits: the processed-event claim and DLQ mechanics (see the
 [sequence diagrams](/docs/ddd/sequence-diagrams)) and `RegisterProcessPath`,
-which the operator also issues before planning. No domain event is raised by
-`ProcessCapacity` itself.
+which the operator also issues before planning. `ProcessCapacity` raises
+`ProcessCapacityRegistered` when its first constraint is registered and
+`ProcessCapacityChanged` when a registration moves the effective rate; a
+registration that leaves the rate untouched raises nothing. Neither event has
+a consumer yet (see [Domain events](/docs/ddd/domain-events)), and the
+analytics fanout carries plan facts only (`apis/asyncapi.yaml`, ADR 0005).
 
 ## 2. Plan, publish, announce the shortage
 
@@ -85,6 +94,7 @@ flowchart LR
   PL([Planner]):::actor --> C1[CreateCapacityPlan]:::command
   R1[Path capacity composed at read time]:::readmodel --> C1
   R2[Expected demand]:::readmodel --> C1
+  R5[Inbound appointment demand]:::readmodel --> C1
   C1 --> A1[CapacityPlan]:::aggregate
   A1 --> E1[CapacityPlanCreated]:::event
   PL --> C2[PublishCapacityPlan]:::command
@@ -113,7 +123,7 @@ flowchart LR
 ```
 
 Source: `internal/application/usecases/create_capacity_plan.go`,
-`publish_capacity_plan.go`, `internal/domain/capacityplan/*.go`,
+`publish_capacity_plan.go`, `inbound_demand.go`, `internal/domain/capacityplan/*.go`,
 `internal/adapters/outbound/kafka/analytics_encoder.go` (`FanoutEncoder`),
 `internal/adapters/outbound/analyticsstore/postgres_projection.go`,
 `internal/adapters/inbound/http/reports_handler.go`.
@@ -151,6 +161,74 @@ Source: `internal/adapters/inbound/kafka/order_demand_consumer.go`,
 Omits: `OrderRepromised` (deliberately ignored: no new cutoff instant) and the
 required `DEMAND_CONSUMER_GROUP` / `DEMAND_SITE_ID` configuration.
 
+## 4. Inbound demand from dock-scheduling
+
+```mermaid
+flowchart LR
+  DS[dock-scheduling]:::external --> E1[DockAppointmentBooked]:::event
+  DS --> E2[DockAppointmentRescheduled]:::event
+  DS --> E3[DockAppointmentCancelled]:::event
+  DS --> E4[DockAppointmentNoShow]:::event
+  E1 --> P1[Whenever an appointment event arrives, apply it if its version is newer, attributed to the site_id of the event]:::policy
+  E2 --> P1
+  E3 --> P1
+  E4 --> P1
+  P1 --> C1[RecordInboundAppointment]:::command
+  C1 --> R1[inbound_appointments: one row per appointment, version guarded]:::readmodel
+  OP([Operator]):::actor --> C2[DeclareInboundLabourStandard]:::command
+  C2 --> R2[inbound_labour_standards per site and process path]:::readmodel
+  PL([Planner]):::actor --> C3[CreateCapacityPlan]:::command
+  R1 --> C3
+  R2 --> C3
+  H1[Appointments at a site with no declared inbound standard contribute no labour and the plan only warns]:::hotspot -.- R2
+
+  classDef actor fill:#fff7a8,stroke:#b8a400,color:#000,font-size:11px
+  classDef command fill:#4aa3df,stroke:#1f6fa3,color:#fff
+  classDef aggregate fill:#f7d84a,stroke:#b39b12,color:#000
+  classDef event fill:#f6a04d,stroke:#b8661c,color:#000
+  classDef policy fill:#c39bd3,stroke:#7d4f91,color:#000
+  classDef readmodel fill:#7dcea0,stroke:#2f8a57,color:#000
+  classDef external fill:#f1948a,stroke:#a9483e,color:#000
+  classDef hotspot fill:#e74c3c,stroke:#8e1f14,color:#fff
+```
+
+Source: `internal/adapters/inbound/kafka/dock_appointment_consumer.go`,
+`internal/application/usecases/inbound_demand.go`
+(`RecordInboundAppointment`, `DeclareInboundLabourStandard`,
+`GetInboundDemand`), `create_capacity_plan.go` (`resolveInbound`), ADR 0017
+and ADR 0020.
+Omits: the processed-event claim and DLQ mechanics, and the retired source
+(inbound-receiving's appointment events are no longer consumed, ADR 0020).
+
+## 5. Observed capacity from fulfillment-execution
+
+```mermaid
+flowchart LR
+  FX[fulfillment-execution]:::external --> E1[TaskCompleted]:::event
+  E1 --> P1[Whenever a task completes, count it in the minute bucket of its process step at the configured site]:::policy
+  P1 --> C1[RecordObservedCompletion]:::command
+  C1 --> R1[observed_capacity: completions per site, step and minute]:::readmodel
+  PL([Planner]):::actor --> Q1[GetCapacityPlanVariance]:::readmodel
+  R1 --> Q1
+  H1[Advisory only and every completion is attributed to the one configured site]:::hotspot -.- P1
+
+  classDef actor fill:#fff7a8,stroke:#b8a400,color:#000,font-size:11px
+  classDef command fill:#4aa3df,stroke:#1f6fa3,color:#fff
+  classDef aggregate fill:#f7d84a,stroke:#b39b12,color:#000
+  classDef event fill:#f6a04d,stroke:#b8661c,color:#000
+  classDef policy fill:#c39bd3,stroke:#7d4f91,color:#000
+  classDef readmodel fill:#7dcea0,stroke:#2f8a57,color:#000
+  classDef external fill:#f1948a,stroke:#a9483e,color:#000
+  classDef hotspot fill:#e74c3c,stroke:#8e1f14,color:#fff
+```
+
+Source: `internal/adapters/inbound/kafka/observed_capacity_consumer.go`,
+`internal/application/usecases/observed_capacity.go`
+(`RecordObservedCompletion`, `GetCapacityPlanVariance`), ADR 0017.
+Omits: the processed-event claim and DLQ mechanics and the required
+`OBSERVED_CAPACITY_CONSUMER_GROUP` / `DEMAND_SITE_ID` configuration. The
+variance never changes a planned capacity.
+
 ## Sticky inventory
 
 | Sticky | Kind | Code evidence |
@@ -161,20 +239,29 @@ required `DEMAND_CONSUMER_GROUP` / `DEMAND_SITE_ID` configuration.
 | `CreateCapacityPlan` | Command | `internal/application/usecases/create_capacity_plan.go` |
 | `PublishCapacityPlan` | Command | `internal/application/usecases/publish_capacity_plan.go` |
 | `RecordOrderDemand` | Command | `internal/application/usecases/expected_demand.go` |
+| `RecordInboundAppointment`, `DeclareInboundLabourStandard` | Command | `internal/application/usecases/inbound_demand.go` |
+| `RecordObservedCompletion` | Command | `internal/application/usecases/observed_capacity.go` |
 | `ProcessCapacity` | Aggregate | `internal/domain/processcapacity/process_capacity.go` |
 | `CapacityPlan` | Aggregate | `internal/domain/capacityplan/capacity_plan.go` |
 | `CapacityPlanCreated`, `CapacityPlanPublished`, `CapacityShortageDetected`, `BottleneckDetected` | Domain event (published) | `internal/domain/capacityplan/events.go`, `internal/adapters/outbound/kafka/encoder.go` |
+| `ProcessCapacityRegistered`, `ProcessCapacityChanged` | Domain event (published, integration topic only) | `internal/domain/processcapacity/events.go`, `register_process_capacity_constraint.go` |
 | `ShiftPlanCommitted` | Domain event (consumed) | `typeShiftPlanCommitted` in `labor_capacity_consumer.go` |
 | `LocationSlotRegistered`, `LocationSlotDecommissioned` | Domain event (consumed) | `typeLocationSlotRegistered`, `typeLocationSlotDecommissioned` in `storage_capacity_consumer.go` |
 | `OrderAllocated`, `OrderPartiallyAllocated` | Domain event (consumed) | `typeOrderAllocated`, `typeOrderPartiallyAllocated` in `order_demand_consumer.go` |
+| `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow` | Domain event (consumed) | `typeDockAppointment*` in `dock_appointment_consumer.go` |
+| `TaskCompleted` | Domain event (consumed) | `typeTaskCompleted` in `observed_capacity_consumer.go` |
 | Register LABOR on shift commit | Policy | `LaborCapacityConsumer.HandleMessage` |
 | Adjust the tally on slot change | Policy | `StorageCapacityConsumer.handleRegistered` / `handleDecommissioned` |
 | Record order demand | Policy | `OrderDemandConsumer.HandleMessage` |
+| Apply a dock appointment event, version guarded | Policy | `DockAppointmentConsumer.HandleMessage` |
+| Count a completed task in its minute bucket | Policy | `ObservedCapacityConsumer.HandleMessage` |
 | Fan out to both topics through the outbox | Policy | `FanoutEncoder.Encode`, `enqueue` in `create_capacity_plan.go` |
-| Path capacity, facility tally, StationStandard, expected demand, `plan_facts`, reports | Read model | `GetProcessPathCapacity`, `location_slot_tally`, `station_standards`, `order_demand`, `plan_facts`, `internal/analytics/report` |
-| workforce-management, facility-layout, order-management | External system | the three consumer files above and order-management's `planned_capacity_consumer.go` |
+| Path capacity, facility tally, StationStandard, expected demand, inbound demand, observed capacity and variance, `plan_facts`, reports | Read model | `GetProcessPathCapacity`, `location_slot_tally`, `station_standards`, `order_demand`, `inbound_appointments`, `inbound_labour_standards`, `observed_capacity`, `plan_facts`, `internal/analytics/report` |
+| workforce-management, facility-layout, order-management, dock-scheduling, fulfillment-execution | External system | the five consumer files above (`labor_capacity_consumer.go`, `storage_capacity_consumer.go`, `order_demand_consumer.go`, `dock_appointment_consumer.go`, `observed_capacity_consumer.go`) and order-management's `planned_capacity_consumer.go` |
 | Derived labor window, assumed UNIT/HOUR | Hotspot | ADR 0001 Addendum; `laborRateUnit` comment in `labor_capacity_consumer.go` |
 | Stations without a standard only warn | Hotspot | `ComposeStepCapacity` warning, ADR 0002 |
 | WorkloadProfile not stored | Hotspot | `GetProcessPathCapacityCommand` doc comment ("PHASE 2 SIMPLIFICATION") |
 | BottleneckDetected without a consumer | Hotspot | order-management's `planned_capacity_consumer.go` ignores it |
 | One site, no cancellation netting | Hotspot | ADR 0004, `cmd/api/runtime.go` |
+| No inbound standard declared, appointments price at zero | Hotspot | `resolveInbound` in `create_capacity_plan.go` |
+| Observed capacity is advisory and single-site | Hotspot | `observed_capacity_consumer.go`, ADR 0017 |

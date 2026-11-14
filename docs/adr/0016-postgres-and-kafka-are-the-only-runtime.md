@@ -123,3 +123,7 @@ Until this ADR every binary had a degraded default that looked healthy:
 - `cmd/mcp` has no `/readyz` (its probes stay `/healthz`) and dials no Kafka:
   it only writes outbox rows that `cmd/api` relays. A Postgres-aware MCP
   readiness probe is a follow-up.
+
+## Addendum 2026-11-13: current state
+
+Decision 8 counts three consumer groups, which was the set on 2026-10-19. `cmd/api` now requires five (`consumerGroupEnvs` in `cmd/api/runtime.go:66`): ADR 0017 added `OBSERVED_CAPACITY_CONSUMER_GROUP` and ADR 0020 `DOCK_APPOINTMENT_CONSUMER_GROUP`. The chart keys are `dockAppointments.consumerGroup` and `observed.consumerGroup` (`charts/warehouse-planning/tests/render_test.sh:122-123`).
