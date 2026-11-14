@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -31,12 +32,20 @@ import (
 // TestFeatures runs every Gherkin feature under features/ against a
 // freshly wired HTTP server.
 func TestFeatures(t *testing.T) {
+	// @known-bug scenarios describe the documented behaviour the service does
+	// not honour yet; they are excluded unless BDD_TAGS says otherwise
+	// (BDD_TAGS=@known-bug runs only them, and they must fail).
+	tags := os.Getenv("BDD_TAGS")
+	if tags == "" {
+		tags = "~@known-bug"
+	}
 	suite := godog.TestSuite{
 		ScenarioInitializer: InitializeScenario,
 		Options: &godog.Options{
 			Format:   "pretty",
 			Paths:    []string{"features"},
 			Strict:   true,
+			Tags:     tags,
 			TestingT: t,
 		},
 	}
@@ -85,6 +94,10 @@ type world struct {
 	// io holds the ADR 0017 state (dock-appointment and task-completion
 	// consumers); see features_inbound_observed_test.go.
 	io inboundObservedState
+
+	// doc holds the documentation-derived steps' state; see
+	// steps_doc_rules_test.go.
+	doc docRulesState
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -115,6 +128,7 @@ func (w *world) start() {
 	w.planClock = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	w.w2 = newWave2State(repo, outboxRepo, encoder, uow)
 	w.io = newInboundObservedState()
+	w.doc = newDocRulesState()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
 			Repo: repo,
@@ -682,4 +696,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerListSteps(sc, w)
 	registerWave2Steps(sc, w)
 	registerInboundObservedSteps(sc, w)
+	registerDocRulesSteps(sc, w)
 }
