@@ -175,6 +175,13 @@ func TestCreateCapacityPlan_Rejections(t *testing.T) {
 		{"negative demand", func(c *CreateCapacityPlanCommand) { c.AssignedDemand = -1 }, capacityplan.ErrNegativeDemand},
 		{"blank warehouse", func(c *CreateCapacityPlanCommand) { c.WarehouseID = "" }, capacityplan.ErrRequiredField},
 		{"blank site id", func(c *CreateCapacityPlanCommand) { c.SiteID = "" }, capacityplan.ErrRequiredField},
+		// A blank location / path id is a required-field refusal, never the
+		// missing-step-capacity or unknown-path answer the path lookup would
+		// give (openapi, ADR 0012, troubleshooting).
+		{"blank location", func(c *CreateCapacityPlanCommand) { c.Location = "" }, capacityplan.ErrRequiredField},
+		{"blank path id", func(c *CreateCapacityPlanCommand) { c.ProcessPathID = "" }, capacityplan.ErrRequiredField},
+		{"blank location and inverted window", func(c *CreateCapacityPlanCommand) { c.Location = ""; c.WindowEnd = c.WindowStart }, capacityplan.ErrRequiredField},
+		{"blank location and omitted demand", func(c *CreateCapacityPlanCommand) { c.Location = ""; c.DemandFromOrders = true }, capacityplan.ErrRequiredField},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

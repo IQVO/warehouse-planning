@@ -141,14 +141,14 @@ Feature: CapacityPlan lifecycle, arithmetic and published events, as the aggrega
     And the CapacityShortageDetected event of the plan has no field "path_capacity"
     And the BottleneckDetected event of the plan has no field "shortage"
 
-  # ------------------------------------------- documented but not honoured
+  # ------------------------------------------- blank identifying fields
 
-  # troubleshooting.md and rest-api.md: blank warehouse_id, site_id, location or
-  # path_id is 422 missing-required-field. The use case resolves the path
-  # capacity BEFORE the aggregate validates its required fields, so a blank
-  # location answers 422 missing-step-capacity and a blank path_id answers
-  # 404 process-path-not-found instead.
-  @bdd @known-bug
+  # troubleshooting.md, rest-api.md, ADR 0012 and the openapi: a blank
+  # warehouse_id, site_id, location or path_id is 422 missing-required-field.
+  # The use case checks those fields before it resolves the demand or the path
+  # capacity, so a blank location is never a missing-step-capacity and a blank
+  # path_id is never a process-path-not-found.
+  @bdd
   Scenario: A plan with a blank location is a missing-required-field problem
     When I send POST "/capacity-plans" with body:
       """
@@ -157,7 +157,7 @@ Feature: CapacityPlan lifecycle, arithmetic and published events, as the aggrega
     Then the response status is 422
     And the problem detail type is "missing-required-field"
 
-  @bdd @known-bug
+  @bdd
   Scenario: A plan with a blank path_id is a missing-required-field problem
     When I send POST "/capacity-plans" with body:
       """

@@ -156,6 +156,18 @@ type CreateParams struct {
 	Inbound InboundDemand
 }
 
+// ValidateRequired reports ErrRequiredField when the warehouse id, site id,
+// location or process path id is blank. Create applies the same rule; a caller
+// that must refuse a blank identifying field BEFORE doing other work (looking
+// up the ProcessPath, resolving demand) calls it first, so a blank location or
+// path id is never reported as a missing step capacity or an unknown path.
+func ValidateRequired(warehouseID, siteID, location, processPathID string) error {
+	if warehouseID == "" || siteID == "" || location == "" || processPathID == "" {
+		return ErrRequiredField
+	}
+	return nil
+}
+
 // Create builds a DRAFT CapacityPlan, computes its derived fields and
 // records CapacityPlanCreated (occurring at now).
 //
@@ -163,7 +175,7 @@ type CreateParams struct {
 //	capacityOverWindow = pathCapacity x window hours
 //	shortage           = max(0, demand - capacityOverWindow), never negative
 func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
-	if p.ID == "" || p.WarehouseID == "" || p.SiteID == "" || p.Location == "" || p.ProcessPathID == "" {
+	if p.ID == "" || ValidateRequired(p.WarehouseID, p.SiteID, p.Location, p.ProcessPathID) != nil {
 		return nil, ErrRequiredField
 	}
 	if p.AssignedDemand < 0 {
