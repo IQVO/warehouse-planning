@@ -189,7 +189,7 @@ Confirmed 2026-10-03 against each producer's own `apis/asyncapi.yaml` on
 | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (fan-out: one message per PathPlan line) -> LABOR `CapacityConstraint` = `planned_heads * planned_rate`; window = `[event.time, event.time + planned_hours]` (documented assumption, no real shift-start field exists yet) |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `zoneId`, `locationType`, `role` (default `Storage`), `activities` (present only when `role=WorkCenter`) -> tallied per `(zoneId, locationType)` as storage positions (role=Storage), or per zone+activity as stations (role=WorkCenter). Tally only: no ProcessCapacity constraint is registered |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `locationCode` -> decrements the same tally |
-| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `order_id` (= `subject`), `promise_date`, `len(lines)` -> upserts ONE row per order id in the expected-demand read model (`order_demand`), site = the configured `DEMAND_SITE_ID` (the event carries none), last writer wins on the CloudEvents `time`. Consumer group env `DEMAND_CONSUMER_GROUP` (REQUIRED, no default; the consumer is always on, docs/adr/0004 + ADR 0016) |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `order_id` (= `subject`), `promise_date`, `len(lines)` -> upserts ONE row per order id in the expected-demand read model (`order_demand`), site = the event's optional `site_id`, else the fallback `DEMAND_SITE_ID` (ADR 0021), last writer wins on the CloudEvents `time`. Consumer group env `DEMAND_CONSUMER_GROUP` (REQUIRED, no default; the consumer is always on, docs/adr/0004 + ADR 0016) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | same payload shape and effect as `OrderAllocated` |
 
 `OrderRepromised` (same topic: cpt ids only, no new cutoff instant), the
@@ -215,8 +215,8 @@ cannot derive honestly.
 
 - **LABOR** (`ShiftPlanCommitted`, the labor consumer -- unchanged): a clean
   fit onto `ProcessCapacity`'s `(ProcessType, Location, CapacityWindow)`
-  identity. `ProcessType` = uppercase(`path_id`), `Location` = `building_id`
-  (the SITE code, e.g. `SIM1`), `CapacityWindow` = `[event.time, event.time +
+  identity. `ProcessType` = uppercase(`path_id`), `Location` = `site_code`, or
+  the deprecated `building_id` when it is absent (the SITE code, e.g. `SIM1`; ADR 0021), `CapacityWindow` = `[event.time, event.time +
   planned_hours)`. The window derivation is kept as is: one commit's lines
   share the start and differ in end per path (live `SIM1`: PICK +32h, REBIN
   +8h, PACK +24h), which is why capacity lookups match by window COVERAGE

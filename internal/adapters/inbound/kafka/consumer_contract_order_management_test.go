@@ -12,8 +12,8 @@ package kafka
 // drifts from IQVO/order-management@develop).
 //
 // Golden fixtures are the producer spec's OWN examples (two per type: one
-// bare allocation, one carrying a site_id this consumer deliberately
-// ignores — demand is attributed to the CONFIGURED site, ADR 0004).
+// bare allocation, attributed to the CONFIGURED fallback site, and one
+// carrying the order's site_id, attributed to that site — ADR 0021).
 
 import (
 	"context"
@@ -67,8 +67,9 @@ func TestPinnedAsyncAPICoversSubscriptions_OrderManagement(t *testing.T) {
 // cloudevents.Decode and routes through the REAL
 // OrderDemandConsumer.HandleMessage into the expected-demand read model:
 // the order exists with the event's promise cutoff and released-line count,
-// attributed to the CONFIGURED site (a site_id in the data is ignored by
-// design); the replayed CloudEvents id records nothing more.
+// attributed to the event's site_id, or to the CONFIGURED site when the
+// example carries none (ADR 0021); the replayed CloudEvents id records
+// nothing more.
 func TestGoldenEventsDecode_OrderManagement(t *testing.T) {
 	for _, c := range []struct {
 		message string
@@ -98,8 +99,12 @@ func runOrderGoldenCase(t *testing.T, ex pinnedExample) {
 	if !ok {
 		t.Fatalf("order %q (the subject/data order_id) is not in the model", wantID)
 	}
-	if order.Location() != contractTestDemandSite {
-		t.Errorf("%s: location %q, want the CONFIGURED site %q (the events carry none)", ex.Name, order.Location(), contractTestDemandSite)
+	wantSite := contractTestDemandSite
+	if site, _ := data["site_id"].(string); site != "" {
+		wantSite = site
+	}
+	if order.Location() != wantSite {
+		t.Errorf("%s: location %q, want %q (the event's site_id, else the CONFIGURED site)", ex.Name, order.Location(), wantSite)
 	}
 	lines, _ := data["lines"].([]any)
 	if order.ReleasedLines() != len(lines) {

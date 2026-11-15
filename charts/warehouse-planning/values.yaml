@@ -191,9 +191,9 @@ demand:
   # rescheduled pod resumes from its committed offsets (warehouse-infra pins
   # "warehouse-planning-demand").
   consumerGroup: ""
-  # DEMAND_SITE_ID: order-management's orders carry no fulfillment site, so ALL
-  # consumed demand is attributed to this ONE site code (e.g. SIM1) -- the same
-  # `location` the labor and facility data use.
+  # DEMAND_SITE_ID: the fallback site code (e.g. SIM1) for orders whose event
+  # carries no site_id (ADR 0021), and the site every task completion is
+  # attributed to -- the same `location` the labor and facility data use.
   siteId: ""
 
 # Dock-appointment consumer (docs/adr/0017, source switched by docs/adr/0020):

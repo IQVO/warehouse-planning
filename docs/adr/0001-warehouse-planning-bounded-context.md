@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-03). Amended (2026-10-03) — see Addendum. The Addendum's handling of `facility-layout` storage/station tallies as capacity constraints is superseded by [ADR 0002](0002-station-capacity-composition.md).
+Accepted (2026-10-03). Amended (2026-10-03) — see Addendum. The Addendum's handling of `facility-layout` storage/station tallies as capacity constraints is superseded by [ADR 0002](0002-station-capacity-composition.md). The labour consumer's site attribution (`building_id`) is amended by [ADR 0021](0021-order-demand-and-labour-read-the-events-own-site.md): it reads `site_code` first.
 
 ## Context
 

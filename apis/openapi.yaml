@@ -676,9 +676,10 @@ paths:
         is counted once, at the promise of its latest event (last writer wins on
         the CloudEvents time). `released_lines` sums the lines their latest
         allocation pass released; it is NOT units -- order-management's events
-        carry no quantities. order-management orders carry no fulfillment
-        site, so every consumed order is attributed to the ONE site configured
-        on this service (DEMAND_SITE_ID); any other location reads 0. Cancellations
+        carry no quantities. An order is attributed to the fulfillment site its
+        event carries (site_id, order-management ADR 0050), or to the fallback
+        site configured on this service (DEMAND_SITE_ID) when it carries none
+        (docs/adr/0021). Cancellations
         are not published on the integration topic and are not netted, and an
         OrderRepromised event carries no new cutoff, so it is ignored. 200 with
         orders 0 and as_of null when nothing is known -- an empty answer that
