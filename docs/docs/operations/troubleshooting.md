@@ -12,10 +12,12 @@ that identifies it. Log messages are quoted exactly as the binaries write them
 [Configuration](/docs/operations/configuration), procedures on the
 [Runbook](/docs/operations/runbook).
 
-This service has **no** idempotency-key middleware, **no** optimistic
-concurrency (`If-Match`/`ETag`, so no 412) and **no** circuit breaker: it
-makes no synchronous call to another context. A repeated `POST /capacity-plans`
-creates a second plan; a repeated publish is a 409.
+Every REST `POST` requires an `Idempotency-Key` ([ADR 0019](/docs/adr/0019-adopt-the-fleet-rest-api-guideline)).
+There is **no** optimistic concurrency (`If-Match`/`ETag`, so no 412) and
+**no** circuit breaker: the service makes no synchronous call to another
+context. A repeated `POST /capacity-plans` under a *fresh* key creates a second
+plan (the same key and body replays the first answer); a repeated publish is a
+409.
 
 ## Boot and readiness
 
@@ -78,7 +80,8 @@ REST `detail` carries the underlying error text; the MCP tools return only
 | --- | --- | --- | --- |
 | 400 | `malformed-json` | the body is not JSON | send valid JSON |
 | 400 | `malformed-window-start`, `malformed-window-end` | not RFC 3339, often an unencoded `+` or `:` in a query string | percent-encode (`T08%3A00%3A00Z`) or use `Z` |
-| 400 | `malformed-units-per-order`, `malformed-packages-per-order`, `malformed-limit` | non-numeric query value, or `limit` < 1 | send a number; `limit` is capped at 100 |
+| 400 | `malformed-units-per-order`, `malformed-packages-per-order` | non-numeric query value | send a number |
+| 400 | `invalid-limit`, `invalid-cursor`, `unknown-query-parameter` | on a collection GET (`/capacity-plans`, `/process-paths`, `/station-standards`, inbound reads): `limit` not a single integer 1 to 500 (default 100), a cursor that is not the one the previous page returned, or a query parameter the collection does not declare (including retired `after`, `from`, `offset`, `nextToken`) | follow `nextCursor` until it is absent; repeat the filters on every page |
 | 400 | `invalid-capacity-window` | `window_end` not after `window_start` | swap or fix the window |
 | 400 | `missing-location` | `GET /storage-capacity` or `GET /demand` without `location` | add `location` |
 | 400 | `invalid-report-range` | report `from`/`to` not RFC 3339, `from >= to`, or longer than 366 days | narrow the range |
