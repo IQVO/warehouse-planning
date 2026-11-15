@@ -178,9 +178,10 @@ DEMAND_CONSUMER_GROUP, DOCK_APPOINTMENT_CONSUMER_GROUP and
 OBSERVED_CAPACITY_CONSUMER_GROUP; the binary has no default group, which would
 let a locally run process join the live one). A stable id is what lets a
 rescheduled pod resume from its committed offsets.
-The order and task-completion consumers also need the ONE site their data is
-attributed to (DEMAND_SITE_ID): those events carry no site. Dock appointments
-carry their own site_id (docs/adr/0020).
+The order and task-completion consumers also need a configured site
+(DEMAND_SITE_ID): task completions carry no site, and it is the fallback for
+orders whose event carries no site_id (docs/adr/0021). Dock appointments carry
+their own site_id (docs/adr/0020).
 The retired inbound-receiving source (`inbound.consumerGroup`,
 INBOUND_DEMAND_CONSUMER_GROUP) is refused here, loudly, like the binary does.
 */}}
@@ -194,7 +195,7 @@ INBOUND_DEMAND_CONSUMER_GROUP) is refused here, loudly, like the binary does.
 {{- fail "inbound.consumerGroup is set (INBOUND_DEMAND_CONSUMER_GROUP) but that source is retired (docs/adr/0020): the inbound labour demand is read from dock-scheduling now. Remove inbound.consumerGroup and set dockAppointments.consumerGroup (DOCK_APPOINTMENT_CONSUMER_GROUP); cmd/api refuses to boot with the old variable." -}}
 {{- end -}}
 {{- if not .Values.demand.siteId -}}
-{{- fail "demand.siteId is required (DEMAND_SITE_ID): order-management orders carry no site, so the site the demand is attributed to must be configured; cmd/api exits at boot without it (ADR 0016)." -}}
+{{- fail "demand.siteId is required (DEMAND_SITE_ID): task completions carry no site and orders without a site_id need a fallback, so the site they are attributed to must be configured; cmd/api exits at boot without it (ADR 0016, ADR 0021)." -}}
 {{- end -}}
 {{- end -}}
 

@@ -77,7 +77,7 @@ sequenceDiagram
   participant D as DLQ writer
   K->>L: FetchMessage
   L->>L: cloudevents.Decode, match full type, DataAs
-  alt not CloudEvents, other type, bad payload or missing building_id or path_id
+  alt not CloudEvents, other type, bad payload, no site_code nor building_id, or no path_id
     L->>K: CommitMessages, skipped with a WARN
   else valid ShiftPlanCommitted
     L->>U: Do
@@ -85,7 +85,7 @@ sequenceDiagram
     alt already claimed
       P-->>U: false, nothing else happens
     else first time
-      U->>UC: Handle(LABOR, upper(path_id), building_id, window from event time, heads x rate UNIT per hour)
+      U->>UC: Handle(LABOR, upper(path_id), site_code or building_id, window from event time, heads x rate UNIT per hour)
       alt domain validation error
         UC-->>U: skipped with a WARN, claim kept
       end
@@ -153,7 +153,7 @@ sequenceDiagram
   participant R as OrderDemandRepository
   K->>O: FetchMessage
   O->>O: Decode, match OrderAllocated or OrderPartiallyAllocated
-  O->>O: order_id must equal subject, demand.NewOrder with DEMAND_SITE_ID
+  O->>O: order_id must equal subject, demand.NewOrder at site_id or else DEMAND_SITE_ID
   O->>UC: Handle(order-demand-consumer, event id, order)
   UC->>U: Do
   U->>P: Claim

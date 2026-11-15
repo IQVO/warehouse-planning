@@ -337,8 +337,8 @@ is half-open `[window_start, window_end)`.
 - `as_of`: `time` of the newest order event the site's model reflects (null when
   none). `200` with `orders: 0` and `as_of: null` when nothing is known: that is
   *no data*, and `POST /capacity-plans` never turns it into a zero-demand plan.
-- Every consumed order is attributed to the ONE configured site
-  (`DEMAND_SITE_ID`); any other `location` reads 0. Cancellations are not netted.
+- A consumed order is attributed to its event's `site_id`, or to the fallback
+  site `DEMAND_SITE_ID` when it carries none (ADR 0021). Cancellations are not netted.
 - `400 missing-location` / `malformed-window-start` / `malformed-window-end` /
   `invalid-capacity-window`. The route exists only when the demand read model is
   wired (always in `cmd/api`); it reads the table even when the consumer is off.

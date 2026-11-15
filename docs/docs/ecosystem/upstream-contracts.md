@@ -74,8 +74,8 @@ logged and skipped.
 | Topic | `warehouse.workforce.events` |
 | Consumer group | `LABOR_CAPACITY_CONSUMER_GROUP` (default `warehouse-planning-labor-capacity`) |
 | Fan-out | one message per PathPlan line of a committed ShiftPlan |
-| Fields used | `building_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` |
-| Effect | a `LABOR` constraint on the ProcessCapacity of ProcessType = upper-case(`path_id`) at Location = `building_id` |
+| Fields used | `site_code` (else the deprecated `building_id`), `path_id`, `planned_heads`, `planned_rate`, `planned_hours` |
+| Effect | a `LABOR` constraint on the ProcessCapacity of ProcessType = upper-case(`path_id`) at Location = `site_code`, or `building_id` when `site_code` is absent ([ADR 0021](/docs/adr/0021-order-demand-and-labour-read-the-events-own-site)) |
 | Rate | `planned_heads * planned_rate`, registered as `UNIT/HOUR` (a documented default; the native unit of `planned_rate` is not specified upstream) |
 | Window | `[event.time, event.time + planned_hours)` (a documented assumption: no real shift-start field exists upstream yet) |
 
@@ -111,7 +111,7 @@ required and the binary exits at boot, naming the variable, without either.
 | Topic | `warehouse.order-management.events` |
 | Consumer group | `DEMAND_CONSUMER_GROUP` (required, no default) |
 | Fields used | `order_id` (must equal the CloudEvents `subject`), `promise_date`, `len(lines)`, and the CloudEvents `time` |
-| Effect | upserts one `order_demand` row per order id (last writer wins on `time`); every order is attributed to the one configured site `DEMAND_SITE_ID`, because the events carry no fulfillment site |
+| Effect | upserts one `order_demand` row per order id (last writer wins on `time`); an order is attributed to the event's optional `site_id` (order-management ADR 0050), or to the fallback site `DEMAND_SITE_ID` when it carries none ([ADR 0021](/docs/adr/0021-order-demand-and-labour-read-the-events-own-site)) |
 | Ignored | `OrderRepromised` (no new cutoff instant) and every other type on the topic |
 
 Demand is therefore counted in orders (no units) and not netted for
