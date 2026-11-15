@@ -182,7 +182,7 @@ go run ./cmd/api              # migrations run automatically at startup; listens
 | `DOCK_APPOINTMENT_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.dock-scheduling.events` (ADR 0020; inbound demand is attributed to the events' `site_id`) |
 | `INBOUND_DEMAND_CONSUMER_GROUP` | **refused** | retired with inbound-receiving as the appointment source (ADR 0020): setting it is a boot error naming `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 | `OBSERVED_CAPACITY_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.fulfillment.events` (ADR 0017) |
-| `DEMAND_SITE_ID` | **required** | the one site every consumed order and task completion is attributed to (their events carry no site; dock appointments carry their own `site_id`) |
+| `DEMAND_SITE_ID` | **required** | the fallback site for consumed orders whose event carries no `site_id` (ADR 0021), and the one site every task completion is attributed to (those events carry no site); dock appointments carry their own `site_id` |
 | `EVENT_PUBLISHER` | *(unset = `kafka`)* | only `kafka` is accepted; `log` is refused at boot (ADR 0016) |
 | `HTTP_ADDR` | `:8080` | REST listen address |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | Go duration between relay passes |

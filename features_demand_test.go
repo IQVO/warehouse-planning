@@ -20,6 +20,13 @@ var orderBaseTime = time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 // publishOrderEvent hands one order-management CloudEvent to the REAL
 // consumer's HandleMessage, exactly the bytes the Kafka loop would.
 func (w *world) publishOrderEvent(eventName, orderID, promise string, lines int, at time.Time) error {
+	return w.publishOrderEventAtSite(eventName, orderID, promise, lines, at, "")
+}
+
+// publishOrderEventAtSite is publishOrderEvent with the optional top-level
+// site_id order-management adds for a sited order (its ADR 0050); an empty
+// site leaves the field out, exactly like the producer's omitempty.
+func (w *world) publishOrderEventAtSite(eventName, orderID, promise string, lines int, at time.Time, site string) error {
 	w.orderSeq++
 	e := ce.New(ce.CloudEventsVersionV1)
 	e.SetID(fmt.Sprintf("bdd-order-evt-%d", w.orderSeq))
@@ -32,7 +39,11 @@ func (w *world) publishOrderEvent(eventName, orderID, promise string, lines int,
 	for i := 1; i <= lines; i++ {
 		released = append(released, map[string]any{"line_no": i, "sku": "SKU-1", "path_id": "pick", "gift_wrap": false, "fulfillment_class": "SINGLE"})
 	}
-	if err := e.SetData("application/json", map[string]any{"order_id": orderID, "promise_date": promise, "lines": released}); err != nil {
+	data := map[string]any{"order_id": orderID, "promise_date": promise, "lines": released}
+	if site != "" {
+		data["site_id"] = site
+	}
+	if err := e.SetData("application/json", data); err != nil {
 		return err
 	}
 	value, err := json.Marshal(e)
@@ -56,6 +67,10 @@ func (w *world) orderManagementPublishedAt(eventName, orderID, promise string, l
 		return err
 	}
 	return w.publishOrderEvent(eventName, orderID, promise, lines, at)
+}
+
+func (w *world) orderManagementPublishedAtSite(eventName, orderID, promise string, lines int, site string) error {
+	return w.publishOrderEventAtSite(eventName, orderID, promise, lines, w.nextOrderTime(), site)
 }
 
 func (w *world) orderManagementPublishedMany(n int, promise string) error {
@@ -197,6 +212,7 @@ func registerDemandSteps(sc *godog.ScenarioContext, w *world) {
 	const ts = `\"([^\"]*)\"`
 	sc.Step(`^order-management published (OrderAllocated|OrderPartiallyAllocated) for order `+ts+` promised at `+ts+` with (\d+) released lines?$`, w.orderManagementPublished)
 	sc.Step(`^order-management published (OrderAllocated|OrderPartiallyAllocated) for order `+ts+` promised at `+ts+` with (\d+) released lines? at event time `+ts+`$`, w.orderManagementPublishedAt)
+	sc.Step(`^order-management published (OrderAllocated|OrderPartiallyAllocated) for order `+ts+` promised at `+ts+` with (\d+) released lines? at site `+ts+`$`, w.orderManagementPublishedAtSite)
 	sc.Step(`^order-management published (\d+) orders promised at `+ts+`$`, w.orderManagementPublishedMany)
 	sc.Step(`^order-management published an OrderRepromised for order `+ts+`$`, w.orderManagementPublishedRepromised)
 	sc.Step(`^order-management topic carries a message that is not a CloudEvent$`, w.orderManagementPublishedGarbage)

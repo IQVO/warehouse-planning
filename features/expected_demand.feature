@@ -8,8 +8,9 @@ Feature: Expected demand from order-management
   # order's promise cutoff (promise_date); warehouse-planning keeps a LOCAL read
   # model of them (docs/adr/0004). An order is demand in the half-open window
   # [start, end) when its cutoff is at or after start and strictly before end.
-  # order-management orders carry no site: every order belongs to the one
-  # configured site, SIM1 here. The events go through the REAL consumer's
+  # An order belongs to the site its event names (site_id, order-management
+  # ADR 0050); an order whose event names none belongs to the configured
+  # fallback site, SIM1 here (docs/adr/0021). The events go through the REAL consumer's
   # HandleMessage; the requests go through the REAL HTTP surface.
 
   Scenario: Orders promised inside a window are expected demand; the cutoff at the window end is not
@@ -45,6 +46,23 @@ Feature: Expected demand from order-management
     Given order-management published OrderAllocated for order "ord-a" promised at "2026-10-05T09:00:00Z" with 2 released lines
     When I request the expected demand for "SIM2" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
     Then the expected demand is 0 orders and 0 released lines
+
+  Scenario: An order whose event names its site is demand at that site, not at the configured one
+    Given order-management published OrderAllocated for order "ord-sited" promised at "2026-10-05T09:00:00Z" with 3 released lines at site "SIM2"
+    And order-management published OrderAllocated for order "ord-unsited" promised at "2026-10-05T09:00:00Z" with 1 released line
+    When I request the expected demand for "SIM2" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    Then the response status is 200
+    And the expected demand is 1 order and 3 released lines
+    When I request the expected demand for "SIM1" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    Then the expected demand is 1 order and 1 released line
+
+  Scenario: A later allocation at another site moves the order there
+    Given order-management published OrderPartiallyAllocated for order "ord-moved" promised at "2026-10-05T09:00:00Z" with 1 released line
+    And order-management published OrderAllocated for order "ord-moved" promised at "2026-10-05T09:00:00Z" with 2 released lines at site "SIM2"
+    When I request the expected demand for "SIM1" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    Then the expected demand is 0 orders and 0 released lines
+    When I request the expected demand for "SIM2" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z"
+    Then the expected demand is 1 order and 2 released lines
 
   Scenario: A plan created without assigned_demand uses the expected orders and is labelled as such
     Given I register a LABOR constraint of 5 UNIT per HOUR for PICK at SIM1 for the window "2026-10-05T08:00:00Z" to "2026-10-05T10:00:00Z"

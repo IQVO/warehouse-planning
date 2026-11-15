@@ -53,14 +53,14 @@ paths:
   10 stations x 180 packages/hour/station = 1,800 packages/hour). Counts live
   in the facility tally (`location_slot_tally`), never as a ProcessCapacity.
 - **Site / location** — a planning `location` is a site (building) code, e.g.
-  `SIM1`: the labor consumer's `building_id`, and the first dash-separated
+  `SIM1`: the labor consumer's `site_code` (or deprecated `building_id`), and the first dash-separated
   segment of the facility zone ids of that site (`SIM1-OPS-WC`,
   `SIM1-STOR-AMB`). The zones of a site are the tally zones whose id starts
   with `<location>-`; a zone with no matching site contributes nothing.
 - **Expected demand (order)** — the local read model of orders
   order-management has promised (`internal/domain/demand`, docs/adr/0004): one
-  `demand.Order` per order id (`location` = the ONE configured site
-  `DEMAND_SITE_ID`, `promise_at` = the order's `promise_date`, `released_lines`,
+  `demand.Order` per order id (`location` = the event's optional `site_id`,
+  else the fallback site `DEMAND_SITE_ID`, ADR 0021; `promise_at` = the order's `promise_date`, `released_lines`,
   `as_of` = the CloudEvents `time`), fed only by Kafka. An order is demand in
   `[start, end)` when `promise_at >= start AND promise_at < end`
   (`Order.CountsIn`: start counts, end does not); last writer wins per order id

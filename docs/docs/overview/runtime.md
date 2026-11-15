@@ -115,9 +115,9 @@ non-zero when the relay or a consumer stops on its own, so the pod restarts.
   `OBSERVED_CAPACITY_CONSUMER_GROUP`, and the projector's
   `ANALYTICS_CONSUMER_GROUP`), never from string literals. Every consumer is
   always on ([ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime)):
-  a missing group, or a missing `DEMAND_SITE_ID` (the one site the order and
-  task-completion events are attributed to; dock appointments carry their own
-  `site_id`), is a boot error. The retired `INBOUND_DEMAND_CONSUMER_GROUP` is a
+  a missing group, or a missing `DEMAND_SITE_ID` (the site task completions are
+  attributed to and the fallback for orders without a `site_id`; dock
+  appointments carry their own `site_id`), is a boot error. The retired `INBOUND_DEMAND_CONSUMER_GROUP` is a
   boot error too ([ADR 0020](/docs/adr/0020-inbound-demand-from-dock-scheduling)).
 
 Dead-lettering ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers) §3,

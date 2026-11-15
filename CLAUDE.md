@@ -63,7 +63,7 @@ Study project: not production software.
    otherwise.
 10. **An ADR comes first** for a new cross-context contract, a custom
     CloudEvents extension attribute or any auth. ADRs live in `docs/adr/`
-    (0001-0011 today).
+    (0001-0021 today).
 
 ## Commands
 

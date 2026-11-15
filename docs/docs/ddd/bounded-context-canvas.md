@@ -226,8 +226,9 @@ demand**, **DemandSource**.
 - `planned_rate` is in units per hour (`laborRateUnit = UnitUnit`), a
   documented default.
 - Site = building id = the first dash-separated segment of a facility zone id.
-- Every order is attributed to one configured site (`DEMAND_SITE_ID`) because
-  order-management events carry none (ADR 0004).
+- An order is attributed to the site its event names (`site_id`,
+  order-management ADR 0050), or to the fallback site `DEMAND_SITE_ID` when it
+  names none (ADR 0021). Task completions carry no site and always use it.
 - The WorkloadProfile factors are supplied on each request (no persistence).
 
 ## Verification Metrics

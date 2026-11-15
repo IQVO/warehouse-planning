@@ -51,8 +51,11 @@ const laborRatePeriod = time.Hour
 // from that service's own Go types (see how-to-add-an-integration-event.md
 // §"Never import the sibling's Go packages"). One Kafka message = one
 // PathPlan line within a committed ShiftPlan (fan-out already performed
-// by the producer).
+// by the producer). site_code is the canonical site; building_id is its
+// deprecated twin (same value), still read for messages produced before
+// site_code existed (ADR 0021).
 type shiftPlanCommittedData struct {
+	SiteCode     string  `json:"site_code"`
 	BuildingID   string  `json:"building_id"`
 	ShiftID      string  `json:"shift_id"`
 	PathID       string  `json:"path_id"`
@@ -63,7 +66,7 @@ type shiftPlanCommittedData struct {
 
 // LaborCapacityConsumer upserts a LABOR CapacityConstraint on the
 // ProcessCapacity aggregate identified by (ProcessType derived from
-// path_id, Location=building_id, window=[event time, event time +
+// path_id, Location=site_code or else building_id, window=[event time, event time +
 // planned_hours)) for every ShiftPlanCommitted fan-out message it
 // receives.
 //
@@ -161,15 +164,16 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 		c.Logger.WarnContext(ctx, "skipping malformed ShiftPlanCommitted payload", "error", err, "event_id", e.ID())
 		return nil
 	}
-	if data.BuildingID == "" || data.PathID == "" {
-		c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted with missing building_id/path_id", "event_id", e.ID())
+	site := data.site()
+	if site == "" || data.PathID == "" {
+		c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted with missing site_code/building_id or path_id", "event_id", e.ID())
 		return nil
 	}
 
 	windowStart := e.Time()
 	cmd := usecases.RegisterProcessCapacityConstraintCommand{
 		ProcessType:    processcapacity.ProcessType(strings.ToUpper(data.PathID)),
-		Location:       data.BuildingID,
+		Location:       site,
 		WindowStart:    windowStart,
 		WindowEnd:      windowStart.Add(durationFromHours(data.PlannedHours)),
 		ConstraintType: processcapacity.ConstraintLabor,
@@ -208,6 +212,15 @@ func (c *LaborCapacityConsumer) Close() error {
 		err = errors.Join(err, c.DLQ.Close())
 	}
 	return err
+}
+
+// site is the line's site: the canonical site_code, or the deprecated
+// building_id when site_code is absent or blank (ADR 0021).
+func (d shiftPlanCommittedData) site() string {
+	if s := strings.TrimSpace(d.SiteCode); s != "" {
+		return s
+	}
+	return strings.TrimSpace(d.BuildingID)
 }
 
 // durationFromHours converts a float64 hour count (workforce-management's
