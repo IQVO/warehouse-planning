@@ -3,3 +3,10 @@ __pycache__/
 
 coverage.out
 .claude/settings.local.json
+
+# go build ./cmd/<name> output at the repo root (TestNoBuildOutputTrackedAtRepoRoot)
+/a2a
+/api
+/mcp
+/planning-projector
+/planning-reports
