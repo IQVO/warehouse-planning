@@ -246,5 +246,6 @@ transaction as the `plan_facts` upsert.
 | `plan_facts` | **Analytics projection** (separate database) | none (derived from the analytics stream) |
 | `analytics_processed_events` | **Infrastructure / analytics**: projector idempotency | none |
 
-There is no `idempotency_keys` table: this service does not implement the fleet
-`Idempotency-Key` middleware on its POST endpoints.
+The `idempotency_keys` table (migration `0011_idempotency_keys`, ADR 0019)
+holds the fleet `Idempotency-Key` answers of the four REST POSTs; the key row
+commits in the same unit of work as the aggregate change and the outbox rows.

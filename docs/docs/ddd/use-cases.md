@@ -21,7 +21,7 @@ same use cases.
 | `RecordOrderDemand` | command (Kafka only) | Claims the CloudEvents id and upserts one `demand.Order` in one unit of work; reports `applied`, `duplicate` or `stale` (an older event for a known order). Called by `OrderDemandConsumer`. |
 | `GetExpectedDemand` | query | The orders whose promise cutoff falls in `[start, end)` at a site, their released lines and the newest `as_of`, from the local read model. |
 | `ListProcessPaths` | query | Every registered ProcessPath, ordered by id (REST only, for the console remote). |
-| `ListCapacityPlans` | query | The most recently created plans, optionally for one location; default 20, capped at 100 (REST only). |
+| `ListCapacityPlans` | query | The most recently created plans, optionally for one location; one keyset page `{items,nextCursor}`: `limit` default 100, max 500 (REST only). |
 
 Plain reads without a use case (a repository port is called directly):
 `GET /process-capacities` (the effective rate of one exact
