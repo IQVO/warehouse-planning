@@ -123,7 +123,15 @@ func (uc *CreateCapacityPlan) Handle(ctx context.Context, cmd CreateCapacityPlan
 }
 
 func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlanCommand) (*capacityplan.CapacityPlan, error) {
-	// Resolve the demand FIRST: an omitted assigned_demand with no order
+	// A blank identifying field is refused before anything is looked up or
+	// derived, so it is never reported as a missing step capacity, an unknown
+	// path or a missing demand (openapi, ADR 0012, troubleshooting:
+	// 422 missing-required-field).
+	if err := capacityplan.ValidateRequired(cmd.WarehouseID, cmd.SiteID, cmd.Location, cmd.ProcessPathID); err != nil {
+		return nil, err
+	}
+
+	// Resolve the demand next: an omitted assigned_demand with no order
 	// data has always been rejected before any other check.
 	assignedDemand, source, err := uc.resolveDemand(ctx, cmd)
 	if err != nil {

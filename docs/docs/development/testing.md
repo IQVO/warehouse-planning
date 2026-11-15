@@ -20,7 +20,7 @@ sub-tests.
 | Analytics report tests | `internal/analytics/report` | 17 tests in 2 files | `make test` | nothing |
 | Adapter tests (httptest, fake Kafka reader/writer, in-memory stores) | `internal/adapters/...` (http 57, kafka inbound 65, mcp 19, outbound kafka 22, memory 16, outbox 12, cloudevents 6, analyticsstore 3) | 200 tests | `make test` | nothing |
 | Composition-root tests | `cmd/*/main_test.go`, `cmd/api/{readiness,logger_level,outbox_relay_config}_test.go`, `cmd/planning-projector/telemetry_test.go` (boot errors that name the variable, `/readyz`, the relay) | 35 tests | `make test` | nothing |
-| BDD acceptance (godog) | `features/*.feature`, driven by `features_test.go`, `features_demand_test.go`, `features_list_test.go` at the repo root | 18 features, 146 scenarios (184 executed) | `make bdd` (`go test ./... -run TestFeatures -v`), also part of `make test` | nothing |
+| BDD acceptance (godog) | `features/*.feature`, driven by `features_test.go`, `features_demand_test.go`, `features_list_test.go` at the repo root | 18 features, 146 scenarios (186 executed) | `make bdd` (`go test ./... -run TestFeatures -v`), also part of `make test` | nothing |
 | Integration (`-tags=integration`) | 27 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the five Kafka consumers, the analytics store, `cmd/mcp`, `cmd/api/e2e_integration_test.go` (boots the real `run()`) and `analytics_e2e_integration_test.go` | 84 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
 | Architecture fitness | `internal/architecture` | 18 tests | `make arch-test` | nothing |
 | Mutation | `.gremlins.yaml` | see below | `make mutation-fast`, `make mutation-full` | `gremlins` v0.6.0 |
@@ -40,19 +40,19 @@ CloudEvents bytes to the real consumers' `HandleMessage`. `Strict: true` fails
 a scenario with an undefined step.
 
 18 feature files hold **146** `Scenario`/`Scenario Outline` blocks (count:
-`git grep -c -E "^[[:space:]]*Scenario" -- features`). Two of them are tagged
-`@known-bug` and are excluded by default (`BDD_TAGS` defaults to `~@known-bug`;
-`BDD_TAGS=@known-bug go test . -run TestFeatures -count=1` runs only them and
-they fail by design), so `make bdd` runs 144 blocks as **184** executed
-scenarios (Examples rows expanded) and 1357 steps (`184 scenarios (184
-passed)`, `1357 steps (1357 passed)`, godog's summary from `go test . -run
+`git grep -c -E "^[[:space:]]*Scenario" -- features`). None is tagged
+`@known-bug` any more; the runner still excludes that tag by default
+(`BDD_TAGS` defaults to `~@known-bug`) so a future known gap can be parked
+there, and `make bdd` runs all 146 blocks as **186** executed
+scenarios (Examples rows expanded) and 1367 steps (`186 scenarios (186
+passed)`, `1367 steps (1367 passed)`, godog's summary from `go test . -run
 TestFeatures -count=1 -v`).
 
 | Feature file | Scenarios | Executed | What it pins |
 | --- | --- | --- | --- |
 | `capacity_plan.feature` | 7 | 7 | the 12,000-order worked example (shortage 4,000, bottleneck REBIN, the four outbox events, a second publish = 409), no shortage under capacity, unknown path, negative demand, unknown plan, window coverage for plans |
 | `capacity_plan_rules.feature` | 5 | 5 | CapacityPlan rules, events and validation |
-| `capacity_plan_doc_rules.feature` | 11 (2 `@known-bug`) | 15 | plan arithmetic over the window and the rate's period, two creates = two plans, `Idempotency-Key` replay / reuse / missing, explicit `assigned_demand: 0`, the CloudEvents attributes and payload of each plan event |
+| `capacity_plan_doc_rules.feature` | 11 | 15 | plan arithmetic over the window and the rate's period, two creates = two plans, `Idempotency-Key` replay / reuse / missing, explicit `assigned_demand: 0`, the CloudEvents attributes and payload of each plan event |
 | `demand_and_list_limits.feature` | 2 | 2 | demand request validation and plan list limits |
 | `expected_demand.feature` | 8 | 8 | the demand window `[start, end)`, latest event wins, ignored events, site attribution, `demand_source` orders vs request, no data = 422, RFC 7807 validation |
 | `inbound_demand.feature` | 18 | 18 | inbound labour demand from dock-scheduling appointments |
@@ -68,14 +68,16 @@ TestFeatures -count=1 -v`).
 | `station_capacity.feature` | 6 | 6 | stations binding a path once a standard exists, the no-standard warning, declare twice = replace, the storage-capacity read model |
 | `station_lifecycle.feature` | 5 | 5 | station standards and the facility tally lifecycle |
 | `upstream_events_doc_rules.feature` | 13 | 27 | the policies driven by `ShiftPlanCommitted`, `LocationSlot*` and `OrderAllocated`: unusable messages are acknowledged and change nothing, redelivery, ordering |
-| **18 files** | **146** | **184** | |
+| **18 files** | **146** | **186** | |
 
 The `*_doc_rules.feature` files pin rules written in the documentation; their
-steps are in `steps_doc_rules_test.go`. The two `@known-bug` scenarios
-(`capacity_plan_doc_rules.feature`) describe `422 missing-required-field` for a
-blank `location` or `path_id`; the code answers `422 missing-step-capacity` and
-`404 process-path-not-found`, because `CreateCapacityPlan` composes the path
-capacity before the aggregate validates its required fields.
+steps are in `steps_doc_rules_test.go`. Two of them
+(`capacity_plan_doc_rules.feature`) pin `422 missing-required-field` for a
+blank `location` or `path_id`. They were `@known-bug` until `CreateCapacityPlan`
+started validating the required identifying fields
+(`capacityplan.ValidateRequired`) before it composes the path capacity or
+resolves the demand; `BDD_TAGS=@known-bug go test . -run TestFeatures -count=1`
+now selects no scenario.
 
 ### Integration tests
 
