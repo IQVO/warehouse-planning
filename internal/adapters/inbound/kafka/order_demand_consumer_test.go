@@ -139,7 +139,7 @@ func TestOrderDemandConsumer_OrderAllocatedUpdatesTheModel(t *testing.T) {
 		t.Fatal("order not in the model")
 	}
 	if o.Location() != demandSiteID {
-		t.Errorf("location = %q, want the CONFIGURED site %q (events carry none)", o.Location(), demandSiteID)
+		t.Errorf("location = %q, want the CONFIGURED site %q (this event carries no site_id)", o.Location(), demandSiteID)
 	}
 	if !o.PromiseAt().Equal(promiseAt) || o.ReleasedLines() != 2 || !o.AsOf().Equal(eventTime) {
 		t.Errorf("order = promise %v lines %d asOf %v", o.PromiseAt(), o.ReleasedLines(), o.AsOf())

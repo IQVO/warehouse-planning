@@ -137,13 +137,13 @@ are raised only when `shortage > 0`.
 flowchart LR
   OM[order-management]:::external --> E1[OrderAllocated]:::event
   OM --> E2[OrderPartiallyAllocated]:::event
-  E1 --> P1[Whenever an order is allocated, record its promise cutoff for the configured site]:::policy
+  E1 --> P1[Whenever an order is allocated, record its promise cutoff at its own site, else the configured site]:::policy
   E2 --> P1
   P1 --> C1[RecordOrderDemand]:::command
   C1 --> R1[order_demand: one row per order, last writer wins]:::readmodel
   PL([Planner]):::actor --> Q1[GetExpectedDemand]:::readmodel
   R1 --> Q1
-  H1[All orders attributed to one site, cancellations not netted]:::hotspot -.- P1
+  H1[Orders without a site go to one configured site, cancellations not netted]:::hotspot -.- P1
 
   classDef actor fill:#fff7a8,stroke:#b8a400,color:#000,font-size:11px
   classDef command fill:#4aa3df,stroke:#1f6fa3,color:#fff
@@ -157,7 +157,7 @@ flowchart LR
 
 Source: `internal/adapters/inbound/kafka/order_demand_consumer.go`,
 `internal/application/usecases/expected_demand.go`,
-`internal/domain/demand/order.go`, ADR 0004.
+`internal/domain/demand/order.go`, ADR 0004, ADR 0021.
 Omits: `OrderRepromised` (deliberately ignored: no new cutoff instant) and the
 required `DEMAND_CONSUMER_GROUP` / `DEMAND_SITE_ID` configuration.
 
@@ -262,6 +262,6 @@ variance never changes a planned capacity.
 | Stations without a standard only warn | Hotspot | `ComposeStepCapacity` warning, ADR 0002 |
 | WorkloadProfile not stored | Hotspot | `GetProcessPathCapacityCommand` doc comment ("PHASE 2 SIMPLIFICATION") |
 | BottleneckDetected without a consumer | Hotspot | order-management's `planned_capacity_consumer.go` ignores it |
-| One site, no cancellation netting | Hotspot | ADR 0004, `cmd/api/runtime.go` |
+| Unsited orders on one site, no cancellation netting | Hotspot | ADR 0004 §3, ADR 0021, `cmd/api/runtime.go` |
 | No inbound standard declared, appointments price at zero | Hotspot | `resolveInbound` in `create_capacity_plan.go` |
 | Observed capacity is advisory and single-site | Hotspot | `observed_capacity_consumer.go`, ADR 0017 |

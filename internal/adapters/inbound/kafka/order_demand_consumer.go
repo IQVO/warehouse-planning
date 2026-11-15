@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -45,11 +46,14 @@ const orderDemandConsumerName = "order-demand-consumer"
 // OrderAllocated / OrderPartiallyAllocated `data` this service reads --
 // hand-mirrored, never imported from that service's Go types. promise_date
 // is the order's promise cutoff instant; lines is exactly the set of lines
-// released in this allocation pass (it may be empty).
+// released in this allocation pass (it may be empty). site_id is the order's
+// caller-assigned fulfillment site, optional and omitted when the order has
+// none (order-management ADR 0050; this service's ADR 0021).
 type orderAllocationData struct {
 	OrderID     string      `json:"order_id"`
 	PromiseDate time.Time   `json:"promise_date"`
 	Lines       []orderLine `json:"lines"`
+	SiteID      string      `json:"site_id"`
 }
 
 type orderLine struct {
@@ -57,9 +61,10 @@ type orderLine struct {
 }
 
 // OrderDemandConsumer maintains the expected-demand read model from
-// order-management's OrderAllocated / OrderPartiallyAllocated events. Every
-// order is attributed to ONE configured site, Location: order-management's
-// events carry no fulfillment site (ADR 0004).
+// order-management's OrderAllocated / OrderPartiallyAllocated events. An
+// order is attributed to the event's own `site_id` when it carries one, and
+// to the configured fallback site, Location, when it does not (ADR 0021,
+// amending ADR 0004 §4).
 //
 // Delivery is at-least-once with an atomic effect: the processed-event claim
 // and the read-model upsert are ONE unit of work (usecases.RecordOrderDemand)
@@ -67,8 +72,8 @@ type orderLine struct {
 type OrderDemandConsumer struct {
 	Reader Reader
 	Record *usecases.RecordOrderDemand
-	// Location is the site every consumed order is attributed to
-	// (DEMAND_SITE_ID).
+	// Location is the fallback site an order is attributed to when its
+	// event carries no site_id (DEMAND_SITE_ID).
 	Location string
 	Logger   *slog.Logger
 	Retry    RetryPolicy
@@ -161,7 +166,7 @@ func (c *OrderDemandConsumer) HandleMessage(ctx context.Context, value []byte) e
 	}
 	order, err := demand.NewOrder(demand.OrderParams{
 		OrderID:       data.OrderID,
-		Location:      c.Location,
+		Location:      c.siteOf(data),
 		PromiseAt:     data.PromiseDate,
 		ReleasedLines: len(data.Lines),
 		AsOf:          e.Time(),
@@ -182,6 +187,16 @@ func (c *OrderDemandConsumer) HandleMessage(ctx context.Context, value []byte) e
 		c.Logger.InfoContext(ctx, "order event is older than the stored order; model unchanged", "event_id", e.ID(), "order_id", data.OrderID)
 	}
 	return nil
+}
+
+// siteOf is the site an order's demand belongs to: the event's own site_id
+// (surrounding space trimmed), or the configured fallback when it is absent
+// or blank (ADR 0021).
+func (c *OrderDemandConsumer) siteOf(data orderAllocationData) string {
+	if site := strings.TrimSpace(data.SiteID); site != "" {
+		return site
+	}
+	return c.Location
 }
 
 // Close releases the underlying Kafka reader and dead-letter writer.

@@ -93,7 +93,7 @@ erDiagram
   }
   order_demand {
     text order_id PK
-    text location "DEMAND_SITE_ID"
+    text location "event site_id, else DEMAND_SITE_ID (0021)"
     timestamptz promise_at
     integer released_lines "CHECK at least 0"
     timestamptz as_of

@@ -203,7 +203,7 @@ func (d Deps) registerDemandTools(server *mcp.Server, readOnly *mcp.ToolAnnotati
 		Name: "get_expected_demand",
 		Description: "Read the expected demand of a site over a window from the local read model fed by order-management's published order events (OrderAllocated, OrderPartiallyAllocated): " +
 			"orders = distinct orders whose promise cutoff falls in [window_start, window_end) (start inclusive, end exclusive), released_lines = lines their latest allocation pass released (NOT units: the events carry no quantities), " +
-			"source, and as_of = the time of the newest order event the site's model reflects (null when none). order-management orders carry no site, so every order is attributed to the one configured site. " +
+			"source, and as_of = the time of the newest order event the site's model reflects (null when none). An order is attributed to the site its event names (site_id), or to the configured fallback site when it names none. " +
 			"Cancellations are not published on the integration topic and are not netted. orders 0 means no data, not zero demand. Read-only.",
 		Annotations: readOnly,
 	}, d.getExpectedDemand)

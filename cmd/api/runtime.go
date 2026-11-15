@@ -53,10 +53,10 @@ type runtimeEnv struct {
 	// ...) to its value; every consumer always runs, so every entry is
 	// present.
 	groups map[string]string
-	// demandSiteID is the ONE site every consumed order and task completion
-	// is attributed to (DEMAND_SITE_ID): order-management's and
-	// fulfillment-execution's events carry no site. Dock appointments do carry
-	// one (site_id) and no longer use it (ADR 0020).
+	// demandSiteID (DEMAND_SITE_ID) is the site every task completion is
+	// attributed to (fulfillment-execution's events carry no site) and the
+	// fallback for an order whose event carries no site_id (ADR 0021). Dock
+	// appointments carry their own site_id and do not use it (ADR 0020).
 	demandSiteID string
 }
 
@@ -92,7 +92,7 @@ func loadRuntime(env func(string) string) (runtimeEnv, error) {
 	}
 	rt.demandSiteID = env(envDemandSiteID)
 	if rt.demandSiteID == "" {
-		return runtimeEnv{}, fmt.Errorf("%s is required: order-management orders carry no site, so the site the demand is attributed to must be configured", envDemandSiteID)
+		return runtimeEnv{}, fmt.Errorf("%s is required: task completions carry no site and orders without a site_id need a fallback, so that site must be configured", envDemandSiteID)
 	}
 	return rt, nil
 }

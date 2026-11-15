@@ -50,7 +50,7 @@ func (d Deps) getStorageCapacity(ctx context.Context, in getStorageCapacityInput
 }
 
 type getExpectedDemandInput struct {
-	Location    string `json:"location" jsonschema:"the site code the orders are attributed to, e.g. SIM1 (order-management orders carry no site, so all of them are attributed to one configured site)"`
+	Location    string `json:"location" jsonschema:"the site code the orders are attributed to, e.g. SIM1 (an order belongs to the site its event names, or to the configured fallback site when it names none)"`
 	WindowStart string `json:"window_start" jsonschema:"window start, RFC3339 timestamp; inclusive: an order promised exactly at window_start counts"`
 	WindowEnd   string `json:"window_end" jsonschema:"window end, RFC3339 timestamp; exclusive: an order promised exactly at window_end belongs to the next window; must be after window_start"`
 }
