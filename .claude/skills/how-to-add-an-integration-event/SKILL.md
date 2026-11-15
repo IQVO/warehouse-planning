@@ -24,11 +24,11 @@ Real code to read alongside it:
 
 ### 1. Is it actually cross-service?
 
-Only `CapacityPlan` events go on the wire today: `CapacityPlanCreated`,
-`CapacityPlanPublished`, `CapacityShortageDetected`, `BottleneckDetected`, on
+`CapacityPlan` events (`CapacityPlanCreated`, `CapacityPlanPublished`,
+`CapacityShortageDetected`, `BottleneckDetected`) and `ProcessCapacity` events
+(`ProcessCapacityRegistered`, `ProcessCapacityChanged`) go on the wire, on
 `warehouse.warehouse-planning.events` (see `docs/adr/0001-warehouse-planning-bounded-context.md`
-for the context map). `ProcessCapacityRegistered` / `ProcessCapacityChanged`
-are vocabulary in `.claude/rules/domain-model.md` only: nothing raises them.
+for the context map). The ProcessCapacity events have no analytics-topic copy.
 Before adding an event, confirm a sibling context needs to react to it. A
 new subscriber relationship or a changed payload is a cross-repo contract
 change: update the AsyncAPI document, the ADR and every consumer in one

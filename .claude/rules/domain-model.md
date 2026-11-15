@@ -162,9 +162,14 @@ to both the integration and the analytics topic by the outbox; the analytical
 side (`internal/analytics/report`, `analyticsstore`) is a projection built from
 them and the domain never imports it.
 
-Vocabulary only, NOT implemented or published yet (nothing raises them):
-`ProcessCapacityRegistered` (a native constraint was registered) and
-`ProcessCapacityChanged` (the effective rate changed).
+`ProcessCapacity` raises two events (`internal/domain/processcapacity/events.go`,
+raised in `ProcessCapacity.AddConstraint`): `ProcessCapacityRegistered` (the
+FIRST native constraint registered, so the aggregate came into being) and
+`ProcessCapacityChanged` (a registration moved the effective rate, or the
+binding constraint). The `RegisterProcessCapacityConstraint` use case writes
+them to the outbox in the same unit of work; they are encoded in
+`internal/adapters/outbound/kafka/encoder.go` and published on the integration
+topic only (no analytics copy).
 
 ## Key use cases (`internal/application/usecases`)
 

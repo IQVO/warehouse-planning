@@ -252,15 +252,19 @@ The most recently created plans, newest first (`created_at` descending, ties by
 `id` descending), each item exactly the `GET /capacity-plans/{id}` shape:
 
 ```json
-{ "location": "SIM1", "capacity_plans": [ { "id": "...", "status": "DRAFT", "...": "..." } ] }
+{ "items": [ { "id": "...", "status": "DRAFT", "...": "..." } ], "nextCursor": "..." }
 ```
 
-- `location` (optional): restrict to one location; omitted = every location and
-  the body then carries no `location` field.
-- `limit` (optional): default **20**, capped at **100** (a larger value is
-  served as 100). Not a positive integer (`0`, `-1`, `abc`, `1.5`) is
-  `400 malformed-limit` (`application/problem+json`).
-- `200` with `"capacity_plans": []` when nothing matches (never `null`).
+- `location` (optional): restrict to one location (repeat it on every page
+  request); omitted = every location.
+- `limit` (optional): default **100**, max **500**. Anything that is not a
+  single integer from 1 to 500 (`0`, `501`, `-1`, `abc`, `1.5`, a repeated
+  `limit`) is `400 invalid-limit`; it is never clamped. `cursor` is the opaque
+  `nextCursor` of the previous page (`400 invalid-cursor` when it is not);
+  `nextCursor` is absent on the last page. A parameter the collection does not
+  declare is `400 unknown-query-parameter` (all `application/problem+json`;
+  `internal/adapters/inbound/http/pagination.go`, `http/page/page.go`).
+- `200` with `"items": []` when nothing matches (never `null`).
 - Read through `ports.CapacityPlanLister.ListRecent` (memory + Postgres repos;
   `CapacityPlanRepository` itself is not widened, test fakes embed it). It never
   locks a row. No dedicated index: the table is small and `(location,

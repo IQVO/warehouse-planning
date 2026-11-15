@@ -54,10 +54,12 @@ the domain conversation.
    operator-declared parameter of this context. Flag a change that stores a
    derived capacity, invents a standard, or reaches into a sibling context
    or into stock levels.
-7. **Terms the model deliberately keeps unimplemented.**
-   `ProcessCapacityRegistered` and `ProcessCapacityChanged` are vocabulary
-   only; a change that references them as if published is wrong until it
-   adds the raise path, the encoder case and the AsyncAPI message.
+7. **Events the model raises.** `ProcessCapacityRegistered` and
+   `ProcessCapacityChanged` are raised by `ProcessCapacity.AddConstraint`,
+   encoded in `outbound/kafka/encoder.go` and published on the integration
+   topic. A change that alters when they fire (first constraint; effective rate
+   or binding constraint moved) must update the AsyncAPI message and the
+   catalogue ADR with it.
 8. **New terminology without a doc update.** A genuinely new concept needs an
    entry in `.claude/rules/domain-model.md` (and the ubiquitous-language page)
    in the same PR, or code and prose fork.
