@@ -286,9 +286,13 @@ gate plus a Postgres ping plus a Kafka broker check).
 ## API
 
 Errors are **RFC 7807** (`application/problem+json`) throughout. Every route
-below is declared at the same path in `apis/openapi.yaml`. There is no
-`Idempotency-Key` middleware on this API (unlike some siblings); write
-idempotency is the consumed-events `processed_events` table.
+below is declared at the same path in `apis/openapi.yaml`. Every `POST`
+requires an `Idempotency-Key` header (ADR 0019, `internal/adapters/inbound/http/idempotency.go`):
+a missing key is `400 idempotency-key-required`, a malformed one
+`400 idempotency-key-invalid`, the same key with a different method, path or
+body `409 idempotency-key-reused`, and a replay carries
+`Idempotency-Replayed: true`. Consumer-side idempotency (Kafka) is the
+`processed_events` table.
 
 Write side:
 
@@ -308,7 +312,7 @@ Read side (`cmd/api`, `:8080`):
 | `GET` | `/process-capacities` | GetEffectiveProcessCapacity (the composed effective capacity) |
 | `GET` | `/process-paths` | ListProcessPaths (the read the console remote uses) |
 | `GET` | `/process-paths/{id}/capacity` | GetProcessPathCapacity |
-| `GET` | `/capacity-plans?location=&limit=` | ListCapacityPlans (newest first, default 20, max 100 — the read the console remote uses) |
+| `GET` | `/capacity-plans?location=&limit=` | ListCapacityPlans (newest first, keyset page `{items,nextCursor}`, `limit` default 100, max 500 — the read the console remote uses) |
 | `GET` | `/capacity-plans/{id}` | GetCapacityPlan |
 | `GET` | `/capacity-plans/{id}/variance` | GetCapacityPlanVariance |
 | `GET` | `/station-standards` | ListStationStandards |
@@ -430,7 +434,7 @@ by its own nginx workload (chart `frontend.enabled=true`, image
 
 Besides the endpoints in `.claude/rules/rest-api.md`, the remote needed two
 list reads (REST only, no MCP tool): `GET /process-paths` and
-`GET /capacity-plans?location=&limit=` (newest first, default 20, max 100).
+`GET /capacity-plans?location=&limit=` (newest first, keyset page `{items,nextCursor}`, `limit` default 100, max 500).
 
 ---
 

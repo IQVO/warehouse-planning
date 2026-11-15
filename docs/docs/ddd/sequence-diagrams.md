@@ -10,9 +10,11 @@ sidebar_position: 20
 UML sequence diagrams of every command use case, derived from the use-case
 bodies in `internal/application/usecases`, the inbound adapters and the
 Postgres adapters. REST and MCP call the **same** use cases; where both exist
-the diagram shows REST and names the MCP tool. This service has **no**
-`Idempotency-Key` middleware and **no** optimistic version column: concurrent
-publishes serialize on a row lock instead.
+the diagram shows REST and names the MCP tool. The four REST POSTs sit behind
+the `Idempotency-Key` middleware (ADR 0019; the diagrams below omit it: the key
+row, the aggregate change and the outbox rows commit in one unit of work). There
+is **no** optimistic version column: concurrent publishes serialize on a row
+lock instead.
 
 ## 1. Register a process capacity constraint (REST / MCP)
 
