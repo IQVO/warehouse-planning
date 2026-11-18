@@ -58,15 +58,24 @@ kafka:
 demand:
   consumerGroup: "warehouse-planning-demand"
   siteId: "SIM1"
-# ADR 0017 / ADR 0020 handoff: NOT yet in warehouse-infra origin/develop. The infra
-# values PR must add exactly these two keys (the api exits at boot, and the chart
-# refuses to render, without them) and must NOT carry the retired
-# `inbound.consumerGroup` (the chart and the binary refuse it). This copy carries
-# the target shape so the render test proves it.
-dockAppointments:
-  consumerGroup: "warehouse-planning-dock-appointments"
+# Required by warehouse-planning's chart (warehouse-planning #79, ADR 0017: the
+# chart refuses to render without them). Stable ids, pinned so a rename in code
+# cannot silently orphan the committed offsets.
+#   observed <- warehouse.fulfillment.events (TaskCompleted)
+# The inbound labour demand is read from dock-scheduling now (ADR 0020): the old
+# `inbound.consumerGroup` (INBOUND_DEMAND_CONSUMER_GROUP) is retired and the chart
+# refuses to render while it is set -- see dockAppointments below.
 observed:
   consumerGroup: "warehouse-planning-observed-capacity"
+# Required by warehouse-planning's chart: the dock-appointment consumer's STABLE group id
+# (a new group would replay from the earliest retained message and rebuild the model).
+dockAppointments:
+  consumerGroup: "warehouse-planning-dock-appointments"
+# Required by warehouse-planning's chart from its ADR 0022 on: the labour-standard consumer's
+# STABLE group id (warehouse.labor-performance.events: LaborStandardDefined/Revised). Landed
+# before the chart needs it; an unknown values key is ignored by the current chart.
+laborStandard:
+  consumerGroup: "warehouse-planning-labor-standards"
 
 # Analytics read side (ADR 0005). The projector's consumer group is a FIXED, stable id (fleet charter naming
 # `<ctx>-analytics`): a restarted pod resumes from its committed offsets, and a
@@ -127,11 +136,11 @@ mcp:
   route:
     enabled: true
     path: /api/mcp/warehouse-planning
-# ANTICIPATED (ADR 0018): the warehouse-infra flip for the A2A agent is a
-# separate PR that lands after this chart change; drop this note when a refresh
-# from warehouse-infra origin/develop carries the block.
 a2a:
   enabled: true
+  # cmd/a2a (warehouse-planning's A2A inbound adapter ADR): delegation only; facts still travel as
+  # CloudEvents on Kafka. Kong rewrites the path to / so the well-known agent card
+  # stays reachable under the same prefix; parentRefs come from _platform.yaml.
   route:
     enabled: true
     path: /api/a2a/warehouse-planning

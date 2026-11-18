@@ -170,14 +170,16 @@ kafka.enabled is kept only so values written before ADR 0016 still render
 {{- end -}}
 
 {{/*
-The five consumers (labor capacity, storage capacity, order demand, dock
-appointments, task completions) always run, each under a STABLE consumer group
+The six consumers (labor capacity, storage capacity, order demand, dock
+appointments, task completions, labour standards) always run, each under a STABLE consumer group
 id that must come from values (cmd/api exits at boot without
 LABOR_CAPACITY_CONSUMER_GROUP, STORAGE_CAPACITY_CONSUMER_GROUP,
-DEMAND_CONSUMER_GROUP, DOCK_APPOINTMENT_CONSUMER_GROUP and
-OBSERVED_CAPACITY_CONSUMER_GROUP; the binary has no default group, which would
+DEMAND_CONSUMER_GROUP, DOCK_APPOINTMENT_CONSUMER_GROUP,
+OBSERVED_CAPACITY_CONSUMER_GROUP and LABOR_STANDARD_CONSUMER_GROUP; the binary has no default group, which would
 let a locally run process join the live one). A stable id is what lets a
-rescheduled pod resume from its committed offsets.
+rescheduled pod resume from its committed offsets. laborStandard.consumerGroup
+(docs/adr/0022) has a chart default equal to warehouse-infra's pin; an empty
+value is refused like the others.
 The order and task-completion consumers also need a configured site
 (DEMAND_SITE_ID): task completions carry no site, and it is the fallback for
 orders whose event carries no site_id (docs/adr/0021). Dock appointments carry
@@ -186,7 +188,7 @@ The retired inbound-receiving source (`inbound.consumerGroup`,
 INBOUND_DEMAND_CONSUMER_GROUP) is refused here, loudly, like the binary does.
 */}}
 {{- define "warehouse-planning.requireConsumerGroups" -}}
-{{- range $c := list (dict "section" "config" "key" "laborCapacityConsumerGroup" "env" "LABOR_CAPACITY_CONSUMER_GROUP") (dict "section" "config" "key" "storageCapacityConsumerGroup" "env" "STORAGE_CAPACITY_CONSUMER_GROUP") (dict "section" "demand" "key" "consumerGroup" "env" "DEMAND_CONSUMER_GROUP") (dict "section" "dockAppointments" "key" "consumerGroup" "env" "DOCK_APPOINTMENT_CONSUMER_GROUP") (dict "section" "observed" "key" "consumerGroup" "env" "OBSERVED_CAPACITY_CONSUMER_GROUP") -}}
+{{- range $c := list (dict "section" "config" "key" "laborCapacityConsumerGroup" "env" "LABOR_CAPACITY_CONSUMER_GROUP") (dict "section" "config" "key" "storageCapacityConsumerGroup" "env" "STORAGE_CAPACITY_CONSUMER_GROUP") (dict "section" "demand" "key" "consumerGroup" "env" "DEMAND_CONSUMER_GROUP") (dict "section" "dockAppointments" "key" "consumerGroup" "env" "DOCK_APPOINTMENT_CONSUMER_GROUP") (dict "section" "observed" "key" "consumerGroup" "env" "OBSERVED_CAPACITY_CONSUMER_GROUP") (dict "section" "laborStandard" "key" "consumerGroup" "env" "LABOR_STANDARD_CONSUMER_GROUP") -}}
 {{- if not (index (index $.Values $c.section) $c.key) -}}
 {{- fail (printf "%s.%s is required (%s): the consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0016)." $c.section $c.key $c.env) -}}
 {{- end -}}
