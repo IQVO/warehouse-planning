@@ -149,6 +149,26 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'link',
+          label: '0013 Outbox relay attempt cap',
+          href: '/docs/adr/0013-outbox-relay-attempt-cap',
+        },
+        {
+          type: 'link',
+          label: '0014 Trace context crosses the outbox',
+          href: '/docs/adr/0014-trace-context-crosses-the-outbox',
+        },
+        {
+          type: 'link',
+          label: '0015 Projector telemetry and chart OTel env',
+          href: '/docs/adr/0015-projector-telemetry-and-chart-otel-env',
+        },
+        {
+          type: 'link',
+          label: '0016 Postgres and Kafka are the only runtime',
+          href: '/docs/adr/0016-postgres-and-kafka-are-the-only-runtime',
+        },
+        {
+          type: 'link',
           label: '0017 Inbound labour demand and observed capacity',
           href: '/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback',
         },
@@ -161,6 +181,36 @@ const sidebars: SidebarsConfig = {
           type: 'link',
           label: '0019 Adopt the fleet REST API guideline',
           href: '/docs/adr/0019-adopt-the-fleet-rest-api-guideline',
+        },
+        {
+          type: 'link',
+          label: '0020 Inbound demand from dock-scheduling',
+          href: '/docs/adr/0020-inbound-demand-from-dock-scheduling',
+        },
+        {
+          type: 'link',
+          label: '0021 Order demand and labour read the event site',
+          href: '/docs/adr/0021-order-demand-and-labour-read-the-events-own-site',
+        },
+        {
+          type: 'link',
+          label: '0022 Labour standards from labor-performance',
+          href: '/docs/adr/0022-labour-standards-from-labor-performance',
+        },
+        {
+          type: 'link',
+          label: '0023 Workload forecast and labour plan move here',
+          href: '/docs/adr/0023-workload-forecast-and-labour-plan-move-here',
+        },
+        {
+          type: 'link',
+          label: '0024 Forecast demand and what-if capacity plan scenarios',
+          href: '/docs/adr/0024-forecast-demand-and-plan-scenarios',
+        },
+        {
+          type: 'link',
+          label: '0025 Process flows come from process-path-management',
+          href: '/docs/adr/0025-process-flows-from-process-path-management',
         },
       ],
     },
