@@ -150,15 +150,22 @@ func freeAddr(t *testing.T) string {
 	return l.Addr().String()
 }
 
-// ownSignal keeps a SIGTERM handler registered from before run() starts, so
-// the test's stop signal can never kill the test binary itself in the window
-// before run()'s signal.NotifyContext attaches, and delivers it repeatedly
-// until run() returns.
-func ownSignal() chan os.Signal {
+// ownSIGTERM keeps a SIGTERM handler registered for the whole life of this
+// test binary, so the test's stop signal can never kill the binary itself:
+// not in the window before run()'s signal.NotifyContext attaches, and not
+// after run() returns either. It is registered once and NEVER stopped: the
+// last kill of stopWithSIGTERM can still be in flight when run() returns
+// (a slow telemetry shutdown widens that window), and with no handler left
+// the default action terminates the binary ("signal: terminated" in CI).
+// A full buffer drops later signals, which is harmless while it is registered.
+var ownSIGTERM = func() chan os.Signal {
 	sig := make(chan os.Signal, 8)
 	signal.Notify(sig, syscall.SIGTERM)
 	return sig
-}
+}()
+
+// ownSignal returns the process-lifetime SIGTERM handler (see ownSIGTERM).
+func ownSignal() chan os.Signal { return ownSIGTERM }
 
 func stopWithSIGTERM(t *testing.T, done <-chan error) error {
 	t.Helper()
@@ -244,8 +251,7 @@ func TestProjectorRunMigratesProjectsAndDrainsCleanly(t *testing.T) {
 	t.Setenv("ADMIN_ADDR", freeAddr(t))
 	t.Setenv("LOG_LEVEL", "error")
 
-	sig := ownSignal()
-	defer signal.Stop(sig)
+	_ = ownSignal() // registered for the binary's lifetime; never stopped
 	done := make(chan error, 1)
 	go func() { done <- run() }()
 
