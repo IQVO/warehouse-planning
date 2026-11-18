@@ -47,3 +47,5 @@ are flagged in the last column.
 | --- | --- | --- | --- |
 | **ProcessCapacityRegistered** | The aggregate's first (native) constraint was registered: it came into being. | `processcapacity.ProcessCapacityRegistered`; `ProcessCapacity.AddConstraint` | no |
 | **ProcessCapacityChanged** | A registration moved the effective rate — its value, its binding constraint, or both. | `processcapacity.ProcessCapacityChanged`; `ProcessCapacity.AddConstraint` | no |
+| **Planned capacity** | This context's capacity figure for a path and a window: the path capacity of a capacity plan (and, with ADR 0023, a shift's labour plan). Not wes-work-planning's live remaining admission capacity. | `CapacityPlan.PathCapacity`, `CapacityPlanPublished` | no |
+| **Remaining admission capacity** | wes-work-planning's live figure: how much more work a release-fed path admits before its WIP limit, per CPT cutoff (`PathCapacityChanged`). Read by order promising, never computed here. | none here (wes-work-planning `WorkPool.RemainingCapacity()`) | no |

@@ -2,6 +2,8 @@
 
 ## Status
 
+> Amended (2026-11-18): labour standards are consumed from labor-performance by [ADR 0022](0022-labour-standards-from-labor-performance.md), and the Separate Ways handling of process-path-management in the Addendum is superseded by [ADR 0025](0025-process-flows-from-process-path-management.md) once it is implemented.
+
 Accepted (2026-10-03). Amended (2026-10-03) — see Addendum. The Addendum's handling of `facility-layout` storage/station tallies as capacity constraints is superseded by [ADR 0002](0002-station-capacity-composition.md). The labour consumer's site attribution (`building_id`) is amended by [ADR 0021](0021-order-demand-and-labour-read-the-events-own-site.md): it reads `site_code` first.
 
 ## Context
