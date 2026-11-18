@@ -37,9 +37,10 @@ Study project: not production software.
    MCP at request time and never import its Go packages: capacity facts from
    `workforce-management` and `facility-layout`, and expected demand from
    `order-management` (ADR 0004), arrive as Kafka events and live in local read
-   models (ADR 0001). `process-path-management` is deliberately NOT consumed;
-   this context owns its `ProcessPath`. Stock from `inventory-storage` is not
-   capacity and is never read.
+   models (ADR 0001). Labour standards from `labor-performance` (ADR 0022) and
+   process flows from `process-path-management` (ADR 0025) arrive the same way;
+   until ADR 0025 is implemented this context owns its `ProcessPath`. Stock from
+   `inventory-storage` is not capacity and is never read.
 6. **Station capacity is composed at READ time** (`stationCount x
    StationStandard`, ADR 0002; nothing derived is stored as a
    `ProcessCapacity`) and a registered window applies when it COVERS the
@@ -49,7 +50,7 @@ Study project: not production software.
    bearer/JWT/API-key middleware (`TestNoAuthMiddlewareReintroduced`).
    **MCP is additive**: `cmd/mcp` and `internal/adapters/inbound/mcp/` depend
    only on application and domain, nothing depends on them, Streamable HTTP
-   only, tool surface capped at 11 (`maxTools` in
+   only, tool surface capped at 14 (`maxTools` in
    `internal/adapters/inbound/mcp/governance_test.go`; `.claude/rules/mcp.md`,
    `.claude/rules/fleet/no-auth-and-mcp.md`).
 8. **Frontend remote in `web/`.** `capacity_mfe` (Vite + React Module Federation
@@ -63,7 +64,7 @@ Study project: not production software.
    otherwise.
 10. **An ADR comes first** for a new cross-context contract, a custom
     CloudEvents extension attribute or any auth. ADRs live in `docs/adr/`
-    (0001-0021 today).
+    (0001-0025 today).
 
 ## Commands
 
