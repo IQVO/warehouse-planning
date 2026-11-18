@@ -521,6 +521,11 @@ func TestMigrations0009To0012_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 	if tables("observed_capacity") != 1 || tables("inbound_appointments") != 1 || tables("inbound_labour_standards") != 1 || planCols() != 3 {
 		t.Fatal("the up migrations did not create the 0009/0010 objects")
 	}
+	// Later migrations (0013, ADR 0022) are stepped down first so the steps
+	// below still start at 0012.
+	if err := m.Migrate(12); err != nil {
+		t.Fatalf("down to 0012: %v", err)
+	}
 	if err := m.Steps(-1); err != nil {
 		t.Fatalf("down 0012: %v", err)
 	}
@@ -577,7 +582,7 @@ func TestMigration0012_UpgradesRowsFromTheRetiredSourceAndRelaxesTheChecks(t *te
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	if err := m.Up(); err != nil {
+	if err := m.Migrate(12); err != nil {
 		t.Fatalf("up to 12: %v", err)
 	}
 	var (
