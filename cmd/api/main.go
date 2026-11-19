@@ -129,7 +129,7 @@ func run(ctx context.Context) error {
 	}
 
 	// The consumers are always on; their readers dial lazily inside Run.
-	consumers, closeConsumers := startConsumers(consumerSpecs(ad, rt, register, logger), rt, logger)
+	consumers, closeConsumers := startConsumers(consumerSpecs(ad, rt, register, encoder, logger), rt, logger)
 
 	// The outbox relay runs next to the consumers. It never dials Kafka at
 	// boot (the writer connects lazily on its first send), so a broker
@@ -262,9 +262,12 @@ type adapters struct {
 	pathLister ports.ProcessPathLister
 	planLister ports.CapacityPlanLister
 
-	// ADR 0023: the workload forecasts and the shift labour plans.
+	// ADR 0023: the workload forecasts and the shift labour plans, and the
+	// heads workforce-management committed for a plan's key (decision 3,
+	// the labour plan drift).
 	workloadForecasts ports.WorkloadForecastRepository
 	labourPlans       ports.LabourPlanRepository
+	committedHeads    ports.CommittedHeadsRepository
 
 	// pool is the Postgres pool (the readiness check pings it).
 	pool *pgxpool.Pool
@@ -326,6 +329,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		planLister:          planRepo,
 		workloadForecasts:   postgres.NewWorkloadForecastRepo(pool),
 		labourPlans:         postgres.NewLabourPlanRepo(pool),
+		committedHeads:      postgres.NewCommittedHeadsRepo(pool),
 		pool:                pool,
 	}, pool.Close, nil
 }

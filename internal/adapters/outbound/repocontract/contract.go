@@ -1,7 +1,9 @@
 // Package repocontract is the repository contract suite for the versioned
-// aggregates of docs/adr/0023 (WorkloadForecast, LabourPlan): the behaviour
-// every implementation of ports.WorkloadForecastRepository and
-// ports.LabourPlanRepository must show, run against the in-memory doubles
+// aggregates of docs/adr/0023 (WorkloadForecast, LabourPlan) and the
+// committed heads of its labour plan drift: the behaviour every
+// implementation of ports.WorkloadForecastRepository,
+// ports.LabourPlanRepository and ports.CommittedHeadsRepository must show,
+// run against the in-memory doubles
 // (internal/adapters/outbound/memory, always) and against Postgres
 // (internal/adapters/outbound/postgres, -tags=integration). It is test
 // support (it imports "testing") but not a _test.go file so that both adapter
@@ -19,11 +21,13 @@ import (
 )
 
 // Fixture is one implementation under test, empty at the start of each case.
-// UoW must be the unit of work the two repositories join.
+// UoW must be the unit of work the repositories join. Commitments is the
+// committed side of the labour plan drift (docs/adr/0023 decision 3).
 type Fixture struct {
-	UoW       ports.UnitOfWork
-	Forecasts ports.WorkloadForecastRepository
-	Plans     ports.LabourPlanRepository
+	UoW         ports.UnitOfWork
+	Forecasts   ports.WorkloadForecastRepository
+	Plans       ports.LabourPlanRepository
+	Commitments ports.CommittedHeadsRepository
 }
 
 type named struct {
@@ -42,6 +46,7 @@ func Run(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		{"labour plans", versionedCases(plans)},
 		{"labour plan list", listCases},
 		{"unit of work", unitOfWorkCases},
+		{"committed heads", committedHeadsCases},
 	}
 	for _, g := range groups {
 		for _, c := range g.cases {

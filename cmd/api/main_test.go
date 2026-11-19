@@ -139,7 +139,7 @@ func TestParsePublisherMode(t *testing.T) {
 // INTEGRATION topic and takes its group from LABOR_STANDARD_CONSUMER_GROUP;
 // every required group variable has exactly one consumer.
 func TestConsumerSpecs_OneConsumerPerRequiredGroup(t *testing.T) {
-	specs := consumerSpecs(adapters{}, runtimeEnv{}, nil, quietLogger())
+	specs := consumerSpecs(adapters{}, runtimeEnv{}, nil, nil, quietLogger())
 	if len(specs) != len(consumerGroupEnvs) {
 		t.Fatalf("%d consumers for %d required group variables", len(specs), len(consumerGroupEnvs))
 	}

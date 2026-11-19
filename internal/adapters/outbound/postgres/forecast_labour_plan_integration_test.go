@@ -19,24 +19,27 @@ import (
 var (
 	_ ports.WorkloadForecastRepository = (*postgres.WorkloadForecastRepo)(nil)
 	_ ports.LabourPlanRepository       = (*postgres.LabourPlanRepo)(nil)
+	_ ports.CommittedHeadsRepository   = (*postgres.CommittedHeadsRepo)(nil)
 )
 
 // The Postgres repositories show the behaviour the in-memory doubles show
 // (memory/forecast_labour_plan_repositories_test.go runs the same suite):
 // round trip, the version guard (duplicate first save and stale update are
-// ports.ErrVersionConflict), the List keyset paging and the unit of work.
-// One database serves the suite; every case starts from empty tables.
+// ports.ErrVersionConflict), the List keyset paging, the committed heads of
+// the labour plan drift and the unit of work. One database serves the suite;
+// every case starts from empty tables.
 func TestForecastAndLabourPlanRepos_SatisfyTheRepositoryContract(t *testing.T) {
 	pool := newMigratedPool(t)
 	repocontract.Run(t, func(t *testing.T) repocontract.Fixture {
 		t.Helper()
-		if _, err := pool.Exec(context.Background(), `TRUNCATE workload_forecasts, labour_plans`); err != nil {
+		if _, err := pool.Exec(context.Background(), `TRUNCATE workload_forecasts, labour_plans, labour_plan_commitments`); err != nil {
 			t.Fatal(err)
 		}
 		return repocontract.Fixture{
-			UoW:       postgres.NewUnitOfWork(pool),
-			Forecasts: postgres.NewWorkloadForecastRepo(pool),
-			Plans:     postgres.NewLabourPlanRepo(pool),
+			UoW:         postgres.NewUnitOfWork(pool),
+			Forecasts:   postgres.NewWorkloadForecastRepo(pool),
+			Plans:       postgres.NewLabourPlanRepo(pool),
+			Commitments: postgres.NewCommittedHeadsRepo(pool),
 		}
 	})
 }

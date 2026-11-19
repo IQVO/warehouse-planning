@@ -17,18 +17,22 @@ import (
 
 // wireRequirementSide adds the docs/adr/0023 use cases to the BDD server the
 // way cmd/api's wireRequirementSide does: in-memory forecast and labour-plan
-// repositories, the world's outbox and encoder, and the facility tally the
-// facility-layout consumer feeds (the station warning's reader).
-func wireRequirementSide(s *inboundhttp.Server, ob *memory.OutboxRepo, encoder ports.EventEncoder, stations ports.StorageTallyReader) {
+// repositories, the world's outbox and encoder, the facility tally the
+// facility-layout consumer feeds (the station warning's reader) and the
+// committed heads the labor consumer writes (the plan trigger of the labour
+// plan drift, decision 3). It returns the labour plans for wireDrift.
+func wireRequirementSide(s *inboundhttp.Server, ob *memory.OutboxRepo, encoder ports.EventEncoder, stations ports.StorageTallyReader, commitments *memory.CommittedHeadsRepo) *memory.LabourPlanRepo {
 	forecasts, plans := memory.NewWorkloadForecastRepo(), memory.NewLabourPlanRepo()
-	uow := memory.NewUnitOfWork(forecasts, plans, ob)
+	uow := memory.NewUnitOfWork(forecasts, plans, ob, commitments)
 	s.ReceiveWorkloadForecast = &usecases.ReceiveWorkloadForecast{Forecasts: forecasts, Outbox: ob, Encoder: encoder, UnitOfWork: uow}
 	s.GetWorkloadForecast = &usecases.GetWorkloadForecast{Forecasts: forecasts}
 	s.CommitLabourPlan = &usecases.CommitLabourPlan{
 		Plans: plans, Forecasts: forecasts, Outbox: ob, Encoder: encoder, UnitOfWork: uow, Stations: stations,
+		Commitments: commitments,
 	}
 	s.GetLabourPlan = &usecases.GetLabourPlan{Plans: plans, Stations: stations}
 	s.ListLabourPlans = &usecases.ListLabourPlans{Plans: plans, Stations: stations}
+	return plans
 }
 
 // iReceiveAWorkloadForecast PUTs the forecast; buckets is "cpt=quantity, ...".

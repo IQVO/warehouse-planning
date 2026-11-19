@@ -11,13 +11,17 @@ import (
 var (
 	_ ports.WorkloadForecastRepository = (*memory.WorkloadForecastRepo)(nil)
 	_ ports.LabourPlanRepository       = (*memory.LabourPlanRepo)(nil)
+	_ ports.CommittedHeadsRepository   = (*memory.CommittedHeadsRepo)(nil)
 )
 
 // The in-memory doubles show the behaviour the Postgres adapters show
 // (postgres/forecast_labour_plan_integration_test.go runs the same suite).
 func TestForecastAndLabourPlanDoublesSatisfyTheRepositoryContract(t *testing.T) {
 	repocontract.Run(t, func(*testing.T) repocontract.Fixture {
-		forecasts, plans := memory.NewWorkloadForecastRepo(), memory.NewLabourPlanRepo()
-		return repocontract.Fixture{UoW: memory.NewUnitOfWork(forecasts, plans), Forecasts: forecasts, Plans: plans}
+		forecasts, plans, commitments := memory.NewWorkloadForecastRepo(), memory.NewLabourPlanRepo(), memory.NewCommittedHeadsRepo()
+		return repocontract.Fixture{
+			UoW:       memory.NewUnitOfWork(forecasts, plans, commitments),
+			Forecasts: forecasts, Plans: plans, Commitments: commitments,
+		}
 	})
 }

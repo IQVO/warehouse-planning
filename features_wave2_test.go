@@ -41,6 +41,10 @@ type wave2State struct {
 	// labor is the REAL workforce-management consumer over the same
 	// in-memory ProcessCapacity repository the HTTP server reads.
 	labor *inboundkafka.LaborCapacityConsumer
+	// commitments is the committed side of the labour plan drift the labor
+	// consumer writes and the labour plan commit reads (ADR 0023 decision
+	// 3; see features_drift_test.go).
+	commitments *memory.CommittedHeadsRepo
 	// slotCodes remembers, per zone, the codes of the slots facility-layout
 	// registered, so a step can decommission "N slots of the zone".
 	slotCodes map[string][]string
@@ -50,9 +54,10 @@ type wave2State struct {
 // consumer's unit of work wraps (and the use case's Do joins it) the same
 // outbox the HTTP surface writes, so a ShiftPlanCommitted that registers
 // or changes a LABOR constraint also leaves its ProcessCapacity events
-// there.
+// there. Its labour plan drift step is wired once the labour plans exist
+// (wireDrift).
 func newWave2State(repo *memory.ProcessCapacityRepo, outboxRepo *memory.OutboxRepo, encoder ports.EventEncoder, uow ports.UnitOfWork) wave2State {
-	processed := memory.NewProcessedEventRepo()
+	processed, commitments := memory.NewProcessedEventRepo(), memory.NewCommittedHeadsRepo()
 	return wave2State{
 		labor: &inboundkafka.LaborCapacityConsumer{
 			Register: &usecases.RegisterProcessCapacityConstraint{
@@ -62,10 +67,11 @@ func newWave2State(repo *memory.ProcessCapacityRepo, outboxRepo *memory.OutboxRe
 				Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
 			},
 			ProcessedEvents: processed,
-			UoW:             memory.NewUnitOfWork(repo, processed),
+			UoW:             memory.NewUnitOfWork(repo, processed, commitments, outboxRepo),
 			Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		},
-		slotCodes: map[string][]string{},
+		commitments: commitments,
+		slotCodes:   map[string][]string{},
 	}
 }
 
