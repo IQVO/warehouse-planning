@@ -53,7 +53,7 @@ reference differs from `apis/openapi.yaml`).
 
 | Area | Pages |
 |---|---|
-| Overview | [Introduction](docs/docs/intro.md), [Bounded context](docs/docs/overview/context.md), [Runtime and binaries](docs/docs/overview/runtime.md), [Quickstart](docs/docs/overview/quickstart.md), [Aggregates](docs/docs/overview/aggregates.md), [Capacity composition](docs/docs/overview/capacity-composition.md) |
+| Overview | [Introduction](docs/docs/intro.md), [Bounded context](docs/docs/overview/context.md), [Runtime and binaries](docs/docs/overview/runtime.md), [Quickstart](docs/docs/overview/quickstart.md), [How-to: a planner's morning](docs/docs/overview/planners-morning.md) (forecast, labour plan, drift), [Aggregates](docs/docs/overview/aggregates.md), [Capacity composition](docs/docs/overview/capacity-composition.md) |
 | Operations | [Configuration](docs/docs/operations/configuration.md) (every env var per binary), [Runbook](docs/docs/operations/runbook.md), [Observability](docs/docs/operations/observability.md), [Troubleshooting](docs/docs/operations/troubleshooting.md) |
 | Development | [Testing](docs/docs/development/testing.md) (test pyramid, `make` targets, CI jobs) |
 | Domain-Driven Design | [Use cases](docs/docs/ddd/use-cases.md), [Subdomain classification](docs/docs/ddd/subdomain-classification.md), [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [DDD artifacts index](docs/docs/ddd/ddd-artifacts.md) |
@@ -375,7 +375,9 @@ a second conflict is `409 version-conflict`. The labour plan answer carries
 `warnings` (never stored, computed on every read): one when the
 facility-layout tally knows at least one but fewer stations of the activity
 named like the path than `installed_stations`. These routes are REST only:
-no MCP tool and no A2A skill (ADR 0023 decision 7).
+no MCP tool and no A2A skill (ADR 0023 decision 7). The walkthrough with
+request and response bodies is
+[How-to: a planner's morning](docs/docs/overview/planners-morning.md).
 
 Reports (`cmd/planning-reports`, `:8092`): `GET /reports/bottleneck-frequency`,
 `GET /reports/shortage-trend`, `GET /reports/plan-throughput`,

@@ -104,7 +104,8 @@ steps.
 
 ADR 0023. The planner sends the forecast and commits the labour plan here;
 workforce-management reads the published requirement, commits the supply, and
-this context compares the two.
+this context compares the two. The walkthrough with request and response
+bodies is [How-to: a planner's morning](/docs/overview/planners-morning).
 
 ```mermaid
 sequenceDiagram
