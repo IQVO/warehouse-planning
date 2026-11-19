@@ -9,7 +9,7 @@ sidebar_position: 16
 
 Notation from the ddd-crew
 [EventStorming glossary and cheat sheet](https://github.com/ddd-crew/eventstorming-glossary-cheat-sheet).
-Five processes, each read left to right. Hotspots are real, documented gaps
+Six processes, each read left to right. Hotspots are real, documented gaps
 (ADRs, code comments), not invented ones.
 
 ## Legend
@@ -35,7 +35,7 @@ flowchart LR
 ```
 
 Source: ddd-crew cheat-sheet colours as specified for the fleet.
-Omits: nothing; this is the key for the five diagrams below.
+Omits: nothing; this is the key for the six diagrams below.
 
 ## 1. Capacity facts arrive from upstream
 
@@ -229,6 +229,60 @@ Omits: the processed-event claim and DLQ mechanics and the required
 `OBSERVED_CAPACITY_CONSUMER_GROUP` / `DEMAND_SITE_ID` configuration. The
 variance never changes a planned capacity.
 
+## 6. The labour requirement: standards, forecast, labour plan, drift
+
+ADR 0022 and ADR 0023.
+
+```mermaid
+flowchart LR
+  LPF[labor-performance]:::external --> E1[LaborStandardDefined / Revised]:::event
+  E1 --> P1[Whenever a standard is defined or revised, keep it as a fact]:::policy
+  P1 --> R1[labor_standards copy, resolved at the window start]:::readmodel
+  R1 --> R2[Capacity plan labour requirement per step]:::readmodel
+  H1[Only PICK, PACK, SLAM have standards, other steps are unknown]:::hotspot -.- R2
+
+  PL([Planner]):::actor --> C1[ReceiveWorkloadForecast]:::command
+  C1 --> A1[WorkloadForecast]:::aggregate
+  A1 --> E2[WorkloadForecastReceived]:::event
+  A1 --> R3[Units due in the shift]:::readmodel
+  PL --> C2[CommitLabourPlan]:::command
+  R3 --> C2
+  C2 --> A2[LabourPlan]:::aggregate
+  A2 --> E3[LabourPlanCommitted]:::event
+  E3 --> WFM2[workforce-management keeps a requirement copy]:::external
+  H2[Zero forecast buckets in the shift is no data, never zero heads]:::hotspot -.- C2
+
+  WFM[workforce-management]:::external --> E4[ShiftPlanCommitted]:::event
+  E4 --> P2[Whenever a shift line with a shift_id is committed, record the committed heads]:::policy
+  P2 --> R4[Committed heads and last recorded drift]:::readmodel
+  A2 --> P3[Whenever the plan or the commitment changes, compare the heads]:::policy
+  R4 --> P3
+  P3 --> E5[LabourPlanDriftDetected]:::event
+  H3[Raised only when non-zero and new, never corrects either side]:::hotspot -.- P3
+  H4[Keys match exactly as sent, no stale-event guard on observed_at]:::hotspot -.- P2
+
+  classDef actor fill:#fff7a8,stroke:#b8a400,color:#000,font-size:11px
+  classDef command fill:#4aa3df,stroke:#1f6fa3,color:#fff
+  classDef aggregate fill:#f7d84a,stroke:#b39b12,color:#000
+  classDef event fill:#f6a04d,stroke:#b8661c,color:#000
+  classDef policy fill:#c39bd3,stroke:#7d4f91,color:#000
+  classDef readmodel fill:#7dcea0,stroke:#2f8a57,color:#000
+  classDef external fill:#f1948a,stroke:#a9483e,color:#000
+  classDef hotspot fill:#e74c3c,stroke:#8e1f14,color:#fff
+```
+
+Source: `internal/adapters/inbound/kafka/labor_standard_consumer.go`,
+`labor_capacity_consumer.go`, `internal/domain/laborstandard/standard.go`,
+`internal/domain/capacityplan/labour_requirement.go`,
+`internal/application/usecases/workload_forecast.go`, `labour_plan.go`,
+`labour_plan_drift.go`, `internal/domain/labourplan/*.go`,
+`internal/domain/workloadforecast/*.go`.
+Omits: the processed-event claims, the DLQ mechanics and the reads
+(`GET /workload-forecasts/...`, `GET /labour-plans...`). `WorkloadForecastReceived`
+and `LabourPlanDriftDetected` have no consumer yet; all three requirement
+events are also written to the analytics topic, where the projector
+acknowledges them without projecting them.
+
 ## Sticky inventory
 
 | Sticky | Kind | Code evidence |
@@ -241,11 +295,18 @@ variance never changes a planned capacity.
 | `RecordOrderDemand` | Command | `internal/application/usecases/expected_demand.go` |
 | `RecordInboundAppointment`, `DeclareInboundLabourStandard` | Command | `internal/application/usecases/inbound_demand.go` |
 | `RecordObservedCompletion` | Command | `internal/application/usecases/observed_capacity.go` |
+| `ReceiveWorkloadForecast` | Command | `internal/application/usecases/workload_forecast.go` |
+| `CommitLabourPlan` | Command | `internal/application/usecases/labour_plan.go` |
+| `RecordShiftCommitment` | Command | `internal/application/usecases/labour_plan_drift.go` |
 | `ProcessCapacity` | Aggregate | `internal/domain/processcapacity/process_capacity.go` |
 | `CapacityPlan` | Aggregate | `internal/domain/capacityplan/capacity_plan.go` |
+| `WorkloadForecast` | Aggregate | `internal/domain/workloadforecast/forecast.go` |
+| `LabourPlan` | Aggregate | `internal/domain/labourplan/plan.go` |
 | `CapacityPlanCreated`, `CapacityPlanPublished`, `CapacityShortageDetected`, `BottleneckDetected` | Domain event (published) | `internal/domain/capacityplan/events.go`, `internal/adapters/outbound/kafka/encoder.go` |
 | `ProcessCapacityRegistered`, `ProcessCapacityChanged` | Domain event (published, integration topic only) | `internal/domain/processcapacity/events.go`, `register_process_capacity_constraint.go` |
+| `WorkloadForecastReceived`, `LabourPlanCommitted`, `LabourPlanDriftDetected` | Domain event (published, both topics) | `internal/domain/workloadforecast/events.go`, `internal/domain/labourplan/events.go` |
 | `ShiftPlanCommitted` | Domain event (consumed) | `typeShiftPlanCommitted` in `labor_capacity_consumer.go` |
+| `LaborStandardDefined`, `LaborStandardRevised` | Domain event (consumed) | `labor_standard_consumer.go` |
 | `LocationSlotRegistered`, `LocationSlotDecommissioned` | Domain event (consumed) | `typeLocationSlotRegistered`, `typeLocationSlotDecommissioned` in `storage_capacity_consumer.go` |
 | `OrderAllocated`, `OrderPartiallyAllocated` | Domain event (consumed) | `typeOrderAllocated`, `typeOrderPartiallyAllocated` in `order_demand_consumer.go` |
 | `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow` | Domain event (consumed) | `typeDockAppointment*` in `dock_appointment_consumer.go` |
@@ -255,6 +316,9 @@ variance never changes a planned capacity.
 | Record order demand | Policy | `OrderDemandConsumer.HandleMessage` |
 | Apply a dock appointment event, version guarded | Policy | `DockAppointmentConsumer.HandleMessage` |
 | Count a completed task in its minute bucket | Policy | `ObservedCapacityConsumer.HandleMessage` |
+| Keep each labour standard as a fact | Policy | `LaborStandardConsumer.HandleMessage` |
+| Record the committed heads of a shift line | Policy | `LaborCapacityConsumer.recordCommitment` |
+| Compare planned and committed heads, raise only a new drift | Policy | `driftRecorder.record`, `labourplan.Drift.ShouldRaise` |
 | Fan out to both topics through the outbox | Policy | `FanoutEncoder.Encode`, `enqueue` in `create_capacity_plan.go` |
 | Path capacity, facility tally, StationStandard, expected demand, inbound demand, observed capacity and variance, `plan_facts`, reports | Read model | `GetProcessPathCapacity`, `location_slot_tally`, `station_standards`, `order_demand`, `inbound_appointments`, `inbound_labour_standards`, `observed_capacity`, `plan_facts`, `internal/analytics/report` |
 | workforce-management, facility-layout, order-management, dock-scheduling, fulfillment-execution, labor-performance | External system | the six consumer files above (`labor_capacity_consumer.go`, `storage_capacity_consumer.go`, `order_demand_consumer.go`, `dock_appointment_consumer.go`, `observed_capacity_consumer.go`, `labor_standard_consumer.go`) and order-management's `planned_capacity_consumer.go` |
@@ -265,3 +329,6 @@ variance never changes a planned capacity.
 | Unsited orders on one site, no cancellation netting | Hotspot | ADR 0004 §3, ADR 0021, `cmd/api/runtime.go` |
 | No inbound standard declared, appointments price at zero | Hotspot | `resolveInbound` in `create_capacity_plan.go` |
 | Observed capacity is advisory and single-site | Hotspot | `observed_capacity_consumer.go`, ADR 0017 |
+| Labour requirement unknown outside PICK, PACK, SLAM | Hotspot | `capacityplan.ReasonNoLaborStandard`, ADR 0022 decision 4 |
+| Zero forecast buckets in the shift is no data | Hotspot | `usecases.ErrMissingPlannedHeads`, ADR 0023 decision 2 |
+| Drift keys match as sent; no stale-event guard; a simultaneous first commitment and first plan can leave one drift unraised | Hotspot | `labour_plan_drift.go`, `labor_capacity_consumer.go` (`recordCommitment`) |

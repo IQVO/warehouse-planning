@@ -18,13 +18,14 @@ guessed.
 
 ```mermaid
 flowchart LR
-  WFM[workforce-management] -- "Kafka: ShiftPlanCommitted" --> API
+  WFM[workforce-management] -- "Kafka: ShiftPlanCommitted (LABOR + committed heads)" --> API
   FL[facility-layout] -- "Kafka: LocationSlotRegistered / Decommissioned" --> API
   OM1[order-management] -- "Kafka: OrderAllocated / OrderPartiallyAllocated" --> API
   DS[dock-scheduling] -- "Kafka: DockAppointmentBooked / Rescheduled / Cancelled / NoShow" --> API
   FE[fulfillment-execution] -- "Kafka: TaskCompleted" --> API
   LPF[labor-performance] -- "Kafka: LaborStandardDefined / Revised" --> API
   CON[warehouse-console remote capacity_mfe] -- "REST via Kong /api/warehouse-planning" --> API
+  SIM[e2e-tests warehouse-day simulation] -- "REST: PUT workload forecast, PUT labour plan" --> API
   AGT[warehouse-ops-agent] -- "MCP: 4 read-only tools" --> MCP
   subgraph WP[warehouse-planning]
     API[cmd/api]
@@ -32,18 +33,22 @@ flowchart LR
     PROJ[cmd/planning-projector]
     REP[cmd/planning-reports]
   end
-  API -- "Kafka: warehouse.warehouse-planning.events" --> OM2[order-management]
+  API -- "Kafka: capacity-plan events" --> OM2[order-management]
+  API -- "Kafka: CapacityPlanPublished" --> NIP[network-inventory-planning]
+  API -- "Kafka: LabourPlanCommitted" --> WFM2[workforce-management]
   API -- "Kafka: warehouse.warehouse-planning.analytics" --> PROJ
 ```
 
-Source: `cmd/api/main.go`, `cmd/api/runtime.go`, `cmd/mcp/main.go`,
+Source: `cmd/api/main.go`, `cmd/api/runtime.go`, `cmd/api/requirement.go`, `cmd/mcp/main.go`,
 `cmd/planning-projector/main.go`, `internal/adapters/inbound/kafka/*_consumer.go`,
-`internal/adapters/outbound/kafka/encoder.go`, `web/src/api.ts`.
-Omits: the DLQ topics, Postgres and the OTel Collector.
+`internal/adapters/outbound/kafka/encoder.go`, `web/src/api.ts`; on the sibling side
+workforce-management `cmd/workforce/labour_plan.go` and e2e-tests `cmd/warehouse-day/sim.go`.
+Omits: the DLQ topics, Postgres and the OTel Collector. workforce-management is drawn
+twice only to keep the upstream and downstream edges readable.
 
 | Direction | Counterpart | Protocol | Contract | Failure behaviour |
 | --- | --- | --- | --- | --- |
-| upstream | `workforce-management` | Kafka, `warehouse.workforce.events` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | transient errors retried 5 times, then `warehouse.workforce.events.dlq` |
+| upstream | `workforce-management` | Kafka, `warehouse.workforce.events` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` (the LABOR constraint, and the committed heads of the labour plan drift, ADR 0023) | transient errors retried 5 times, then `warehouse.workforce.events.dlq` |
 | upstream | `facility-layout` | Kafka, `warehouse.facility.events` | `...facility-layout.locationslot.LocationSlotRegistered`, `...LocationSlotDecommissioned` | same, `warehouse.facility.events.dlq` |
 | upstream | `order-management` | Kafka, `warehouse.order-management.events` | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` | same, `warehouse.order-management.events.dlq`; consumer always on |
 | upstream | `dock-scheduling` | Kafka, `warehouse.dock-scheduling.events` | `...dock-scheduling.dockappointment.DockAppointmentBooked`, `...DockAppointmentRescheduled`, `...DockAppointmentCancelled`, `...DockAppointmentNoShow` | transient: retried 5 times; deterministic: dead-lettered at once; `warehouse.dock-scheduling.events.dlq`; consumer always on |
@@ -51,8 +56,11 @@ Omits: the DLQ topics, Postgres and the OTel Collector.
 | upstream | `labor-performance` | Kafka, `warehouse.labor-performance.events` (its integration topic) | `...labor-performance.standard.LaborStandardDefined`, `...LaborStandardRevised` (ADR 0022) | a deterministic failure goes to `warehouse.labor-performance.events.dlq` at once; transient errors retried 5 times, then the same DLQ; every other type ignored; consumer always on |
 | inbound caller | `warehouse-console` (remote `capacity_mfe` from `web/`) | REST through Kong at `/api/warehouse-planning` | `apis/openapi.yaml` ([API reference](/docs/api-reference)) | RFC 7807 problem responses (`application/problem+json`); the call fails, nothing is retried by this service |
 | inbound caller | `warehouse-ops-agent` | MCP (Streamable HTTP, `cmd/mcp` on `:8090`) | `get_process_path_capacity`, `get_capacity_plan`, `get_storage_capacity`, `list_station_standards` ([MCP tools](/docs/mcp/tools)) | the tool returns an error result; how the agent degrades is that repo's concern |
+| inbound caller | planners; today the `e2e-tests` warehouse-day simulation (`cmd/warehouse-day/sim.go`) | REST `PUT /workload-forecasts/{site_id}/{path_id}`, `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` and their reads (ADR 0023; REST only, no MCP tool or A2A skill) | `apis/openapi.yaml` | RFC 7807; the `PUT`s are idempotent, so a caller retries the same body safely |
 | downstream | `order-management` | Kafka, `warehouse.warehouse-planning.events` | the four `com.warehouse.wes.warehouse-planning.capacityplan.*` types ([event catalogue](/docs/api-reference/events)) | outbox: the row stays unpublished and is retried every relay pass |
-| internal | `cmd/planning-projector` | Kafka, `warehouse.warehouse-planning.analytics` | the same four types ([ADR 0005](/docs/adr/0005-analytics-read-side)) | outbox as above; projector DLQ `warehouse.warehouse-planning.analytics.dlq` |
+| downstream | `network-inventory-planning` | Kafka, `warehouse.warehouse-planning.events` | `...capacityplan.CapacityPlanPublished` (with `site_id`, ADR 0012) | outbox as above |
+| downstream | `workforce-management` | Kafka, `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted` (its ADR 0043, group `workforce-management-labour-plans`) | outbox as above; it applies a message only when `version` is greater than its stored one |
+| internal | `cmd/planning-projector` | Kafka, `warehouse.warehouse-planning.analytics` | the four plan types are projected ([ADR 0005](/docs/adr/0005-analytics-read-side)); the three requirement-side types are acknowledged and not projected | outbox as above; projector DLQ `warehouse.warehouse-planning.analytics.dlq` |
 
 There are **no outbound REST or MCP calls**: no adapter under
 `internal/adapters/outbound` opens an HTTP client to a sibling context. Every
@@ -76,13 +84,17 @@ logged and skipped.
 | Topic | `warehouse.workforce.events` |
 | Consumer group | `LABOR_CAPACITY_CONSUMER_GROUP` (default `warehouse-planning-labor-capacity`) |
 | Fan-out | one message per PathPlan line of a committed ShiftPlan |
-| Fields used | `site_code` (else the deprecated `building_id`), `path_id`, `planned_heads`, `planned_rate`, `planned_hours` |
-| Effect | a `LABOR` constraint on the ProcessCapacity of ProcessType = upper-case(`path_id`) at Location = `site_code`, or `building_id` when `site_code` is absent ([ADR 0021](/docs/adr/0021-order-demand-and-labour-read-the-events-own-site)) |
+| Fields used | `site_code` (else the deprecated `building_id`), `path_id`, `planned_heads`, `planned_rate`, `planned_hours`, `shift_id` |
+| Effect | a `LABOR` constraint on the ProcessCapacity of ProcessType = upper-case(`path_id`) at Location = `site_code`, or `building_id` when `site_code` is absent ([ADR 0021](/docs/adr/0021-order-demand-and-labour-read-the-events-own-site)); then, in the same unit of work and only for a line with a `shift_id`, the committed heads of `(site, shift_id, path_id)` in `labour_plan_commitments` and the labour plan drift against the stored labour plan ([ADR 0023](/docs/adr/0023-workload-forecast-and-labour-plan-move-here) decision 3) |
 | Rate | `planned_heads * planned_rate`, registered as `UNIT/HOUR` (a documented default; the native unit of `planned_rate` is not specified upstream) |
 | Window | `[event.time, event.time + planned_hours)` (a documented assumption: no real shift-start field exists upstream yet) |
 
 This is the **only** thing the consumers register as a ProcessCapacity
-constraint.
+constraint. The drift step keeps `path_id` as sent (trimmed); only the LABOR
+step upper-cases it. It never changes the labour plan, and the commitment is
+recorded whatever the LABOR registration decided (a line the LABOR step
+skips as invalid still records its heads). There is no stale-event guard on
+the event `time`: the per-key order of the producer's topic is relied on.
 
 ## Upstream: facility-layout
 
@@ -150,6 +162,24 @@ The event carries no labour: the minutes per appointment (and per ASN) are an op
 
 Observed throughput is in tasks, not orders. It is read only by the advisory `GET /capacity-plans/{id}/variance` (and MCP `get_capacity_plan_variance`), which needs a caller-supplied `tasks_per_order` and never changes a plan or a planned capacity.
 
+## Upstream: labor-performance
+
+[ADR 0022](/docs/adr/0022-labour-standards-from-labor-performance) (producer side: labor-performance ADR 0038, which put both types on its integration topic). Always on; `LABOR_STANDARD_CONSUMER_GROUP` is required.
+
+| | |
+| --- | --- |
+| Types | `com.warehouse.wes.labor-performance.standard.LaborStandardDefined` and `...LaborStandardRevised` |
+| Topic | `warehouse.labor-performance.events` (never its analytics topic: that belongs to its own projector) |
+| Consumer group | `LABOR_STANDARD_CONSUMER_GROUP` (chart default and warehouse-infra pin `warehouse-planning-labor-standards`) |
+| Fields used | `standard_id`, `task_type`, `expected_seconds` (> 0), `effective_from` (required); `travel_component_seconds`, `handling_unit` (`EACH`, `CASE`, `PALLET`), `site_code` (optional); the CloudEvents `time` as `as_of` |
+| Effect | one immutable `labor_standards` row per `standard_id` (a known id changes nothing); the standard in force for a plan's site, task type and window start is resolved at read time (site-scoped over fleet-wide, then the latest `effective_from`, then the latest `as_of`) |
+| Ignored | every other type on the topic; `previous_expected_seconds` and the team-lift fields |
+
+A message missing a required field, or with `expected_seconds <= 0`, is
+dead-lettered at once (a retry cannot fix it). The copy prices the labour
+requirement of a capacity plan (`PICK`, `PACK`, `SLAM` steps); it is never
+called live (`GET /standards/{taskType}` in labor-performance is not used).
+
 ## Consumer failure behaviour and dead-letter topics
 
 Each consumed message's idempotency claim (`processed_events`, keyed on the
@@ -158,7 +188,8 @@ message is a no-op. A message whose handling keeps failing transiently
 (database begin, claim, upsert or commit) is retried up to 5 times with
 backoff and then published to `<topic>.dlq` (`warehouse.workforce.events.dlq`,
 `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`,
-`warehouse.dock-scheduling.events.dlq`, `warehouse.fulfillment.events.dlq`) with
+`warehouse.dock-scheduling.events.dlq`, `warehouse.fulfillment.events.dlq`,
+`warehouse.labor-performance.events.dlq`) with
 `x-dlq-*` headers ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers)).
 For the labor, storage and order consumers, deterministic problems (not a CloudEvent, unknown type, malformed payload,
 missing fields) are logged and skipped, never dead-lettered; the dock-appointment and
@@ -207,6 +238,23 @@ The same four types are also written to `warehouse.warehouse-planning.analytics`
 consumed only by this repo's own `cmd/planning-projector` (consumer group
 `ANALYTICS_CONSUMER_GROUP`, default `warehouse-planning-analytics`).
 
+## Downstream: the labour plan and its drift
+
+[ADR 0023](/docs/adr/0023-workload-forecast-and-labour-plan-move-here). Three
+types, on both `warehouse.warehouse-planning.events` and `.analytics`, through
+the same outbox and relay as the plan events:
+
+| Type | Key / `subject` | Consumer |
+| --- | --- | --- |
+| `...workloadforecast.WorkloadForecastReceived` | `<site_id>/<path_id>` | none yet |
+| `...labourplan.LabourPlanCommitted` | `<site_id>/<shift_id>/<path_id>` | `workforce-management` (its ADR 0043): a `labour_requirements` copy keyed by `(site_code, shift_id, path_id)`, applied only when `version` is greater than the stored one; `ProposePathPlan` without a `charge` but with a `shiftId` proposes the copy's `planned_heads` (`rateSource` `labour-plan`), and the staffing-gap and committed shift-plan lines show it as `requiredHeads`. Group `workforce-management-labour-plans` (env `LABOUR_PLAN_CONSUMER_GROUP` there) |
+| `...labourplan.LabourPlanDriftDetected` | `<site_id>/<shift_id>/<path_id>` | none yet: surfaced to planners |
+
+The loop closes through workforce-management: it reads the requirement,
+commits the supply (`ShiftPlanCommitted`), and this context compares the two.
+workforce-management does not refuse a commitment below the requirement (its
+ADR 0043 decision 4); the difference comes back as `LabourPlanDriftDetected`.
+
 ## Absent edges
 
 - **process-path-management: deliberately not consumed.** Its `ProcessPath`
@@ -214,8 +262,13 @@ consumed only by this repo's own `cmd/planning-projector` (consumer group
   ordered physical step sequence, so there is nothing structural to sync. This
   context owns its own `ProcessPath`, declared via `POST /process-paths`; the
   two share the `path_id` string only as a loose cross-reference.
-- **inventory-storage, wes-work-planning, labor-performance and the other
-  contexts:** no edge in either direction. Of `dock-scheduling` only the four appointment types are consumed, and of `fulfillment-execution` only `TaskCompleted`.
+- **inventory-storage and the other contexts:** no edge in either
+  direction. This context never reads stock. Of `dock-scheduling` only the four appointment types are consumed, and of `fulfillment-execution` only `TaskCompleted`.
+- **wes-work-planning: no runtime edge.** It handed its charge forecast and
+  path plan over (ADR 0023; its ADR 0049): its `/paths/{pathId}/charge` and
+  `/paths/{pathId}/plan` routes answer `410` and nothing here reads its
+  topic. Execution (release, balancing, remaining admission capacity) stays
+  there.
 - **No synchronous calls out.** Nothing here calls another context over REST
   or MCP, so no circuit breaker or HTTP retry policy exists in this repo.
 

@@ -228,3 +228,28 @@ Full phased delivery plan, worked examples (reproduced here as test
 fixtures) and acceptance criteria: the maintainer's out-of-repo
 `warehouse-planning-bc-plan.md` design doc (cited in ADR 0001; it is not
 checked in here).
+
+## Requirement side (ADR 0022, ADR 0023)
+
+- **WorkloadForecast** (`internal/domain/workloadforecast`): CPT buckets `{cpt, quantity}` per
+  `(site_id, path_id)`, at least one bucket, replaced whole; equal buckets change nothing (no
+  version bump, no event); event `WorkloadForecastReceived`.
+- **LabourPlan** (`internal/domain/labourplan`): heads per `(site_id, shift_id, path_id)`;
+  `planned_heads <= installed_stations`, `hours > 0`, rate > 0, `rate x heads x hours` finite.
+  Omitted heads = `ceil(units with cpt in [shift_start, shift_start + hours) / (rate x hours))`
+  (`heads_source` forecast); zero buckets in the shift is `422 missing-planned-heads`, never zero
+  heads. Event `LabourPlanCommitted`. The station warning is computed on every read, never stored,
+  and only when the tally knows at least one but fewer stations.
+- **Labour plan drift** = `committed_heads - planned_heads`, raised as `LabourPlanDriftDetected`
+  only when non-zero and different from `last_drift_heads`. Both triggers
+  (`RecordShiftCommitment` from the labor consumer, `CommitLabourPlan` on a CHANGED plan) go
+  through the shared `driftRecorder` inside the caller's unit of work, and record every computed
+  drift, zero included, so a drift that clears and returns is raised again. Never change the plan
+  or the committed heads because of a drift. Committed heads are a read model
+  (`labourplan.Commitment`, table `labour_plan_commitments`), not an aggregate.
+- **Labour standard**: a local copy of labor-performance's facts (`labor_standards`), resolved at
+  read time by `laborstandard.Resolve` (site-specific beats site-wide, then the latest
+  `effective_from`); a missing standard makes the requirement "unknown", never guessed. The code
+  spells it `labor`, the prose `labour`.
+- Value types used by a port live in the domain (e.g. `labourplan.Commitment`):
+  `TestHexagonalArchitecture` rejects structs in `internal/application/ports`.

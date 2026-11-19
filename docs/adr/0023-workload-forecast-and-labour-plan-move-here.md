@@ -97,6 +97,25 @@ required heads are its inputs and outputs.
 7. **MCP and A2A.** No tool or skill is added by this ADR: the MCP surface is capped by
    `governance_test.go` and a new tool is a charter decision of its own.
 
+### Implementation notes (2026-11-19)
+
+Recorded after PRs #142-#148, so the decision text and the code say the same thing.
+
+- **Decision 2, station warning.** A facility tally that knows NO station of the activity is
+  no data, not a shortfall: the warning is raised only when the tally knows at least one but
+  fewer stations than `installed_stations`, the same rule the capacity plan applies to its
+  station standards. It is computed on every write and read and never stored.
+- **Decision 3, storage.** The committed heads are not columns on the LABOR constraint
+  tables: they live in their own table `labour_plan_commitments` (migration `0015`:
+  `committed_heads`, `observed_at`, `last_drift_heads`), so the LABOR registration stays
+  byte-identical. The consumer writes it as a second step of the same unit of work as the
+  processed-event claim and the LABOR registration.
+- **Decision 3, raise rule.** "Differs from the last one" means the last drift RECORDED, and
+  every computed drift is recorded, zero included. A drift that clears and comes back is
+  therefore raised again; the same drift twice in a row is not. Only a changed labour plan
+  (trigger B) or a new commitment (trigger A) computes a drift; an unchanged PUT and a
+  redelivered event compute nothing.
+
 ## Consequences
 
 - The planner's morning is two calls in this context (forecast, labour plan) plus the supply

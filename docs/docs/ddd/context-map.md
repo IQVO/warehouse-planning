@@ -17,7 +17,8 @@ on the sibling's side or partly unused, and the grey nodes are deliberately abse
 flowchart LR
   WP(("warehouse-planning<br/>Core"))
 
-  WFM["workforce-management<br/>Supporting"]
+  WFM["workforce-management<br/>Supporting<br/>as labour supply"]
+  WFMD["workforce-management<br/>Supporting<br/>as requirement consumer"]
   FL["facility-layout<br/>Generic"]
   OMU["order-management<br/>Generic/Supporting<br/>as demand source"]
   OMD["order-management<br/>Generic/Supporting<br/>as plan consumer"]
@@ -32,7 +33,7 @@ flowchart LR
   NIP["network-inventory-planning<br/>Core<br/>as plan consumer"]
   LATER["wes-work-planning Core<br/>network-fulfillment Supporting"]
 
-  WFM -- "U: OHS+PL / D: ACL<br/>Kafka ShiftPlanCommitted" --> WP
+  WFM -- "U: OHS+PL / D: ACL<br/>Kafka ShiftPlanCommitted (LABOR, committed heads)" --> WP
   FL -- "U: OHS+PL / D: ACL<br/>Kafka LocationSlotRegistered, LocationSlotDecommissioned" --> WP
   OMU -. "U: OHS+PL / D: ACL<br/>Kafka OrderAllocated, OrderPartiallyAllocated" .-> WP
   DSC -- "U: OHS+PL / D: ACL<br/>Kafka DockAppointmentBooked, Rescheduled, Cancelled, NoShow (ADR 0017, 0020)" --> WP
@@ -40,6 +41,7 @@ flowchart LR
   LPF -- "U: OHS+PL / D: ACL<br/>Kafka LaborStandardDefined, Revised (ADR 0022)" --> WP
   WP -. "U: OHS+PL / D: ACL, opt-in<br/>Kafka CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected" .-> OMD
   WP -- "U: OHS+PL / D: ACL<br/>Kafka CapacityPlanPublished (with site_id, ADR 0012)" --> NIP
+  WP -- "U: OHS+PL / D: ACL<br/>Kafka LabourPlanCommitted (ADR 0023)" --> WFMD
   WP -- "U: OHS / D: Customer, ACL<br/>MCP get_process_path_capacity, 3 more read tools wired" --> OPS
   WP -- "U: OHS / D: hosts the remote<br/>REST via capacity_mfe" --> CON
   PPM ~~~ WP
@@ -62,14 +64,16 @@ ADR 0001 and its Addendum, ADR 0004; on the sibling side
 and `warehouse-console` `src/App.tsx` (all on `develop`).
 Omits: this context's own analytics topic and projector (internal, not a
 context relationship), the dead-letter topics, and the Kafka broker, Kong and
-Nginx infrastructure. `order-management` is drawn twice only to keep the
-upstream and downstream edges readable; it is one context.
+Nginx infrastructure. `order-management` and `workforce-management` are drawn
+twice only to keep the upstream and downstream edges readable; each is one
+context. wes-work-planning has no runtime edge: it handed its charge forecast
+and path plan to this context (ADR 0023, its ADR 0049) and keeps execution.
 
 ## Relationships
 
 | # | Upstream | Downstream | Patterns (U / D) | Technology | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `workforce-management` | `warehouse-planning` | OHS + Published Language / Anti-Corruption Layer: the payload is hand-mirrored (`shiftPlanCommittedData`) and translated into a LABOR `CapacityConstraint` with an assumed UNIT/HOUR unit and a derived window | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | **Live** (group `LABOR_CAPACITY_CONSUMER_GROUP`) | `internal/adapters/inbound/kafka/labor_capacity_consumer.go` |
+| 1 | `workforce-management` | `warehouse-planning` | OHS + Published Language / Anti-Corruption Layer: the payload is hand-mirrored (`shiftPlanCommittedData`) and translated into a LABOR `CapacityConstraint` with an assumed UNIT/HOUR unit and a derived window, and, for a line with a `shift_id`, into the committed heads of `(site, shift, path)` that the labour plan drift compares (ADR 0023 decision 3) | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | **Live** (group `LABOR_CAPACITY_CONSUMER_GROUP`) | `internal/adapters/inbound/kafka/labor_capacity_consumer.go`, `internal/application/usecases/labour_plan_drift.go` |
 | 2 | `facility-layout` | `warehouse-planning` | OHS + PL / ACL: slots are folded into a tally, never into a capacity (ADR 0002) | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` and `...LocationSlotDecommissioned` | **Live** (group `STORAGE_CAPACITY_CONSUMER_GROUP`) | `internal/adapters/inbound/kafka/storage_capacity_consumer.go` |
 | 3 | `order-management` | `warehouse-planning` | OHS + PL / ACL: an order becomes a `demand.Order` attributed to its event's `site_id`, else to the fallback `DEMAND_SITE_ID` (ADR 0021) | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` and `...OrderPartiallyAllocated` | **Wired, always on** (ADR 0004; ADR 0016 removed the off switch): `DEMAND_CONSUMER_GROUP` and `DEMAND_SITE_ID` are required at boot | `internal/adapters/inbound/kafka/order_demand_consumer.go`, `cmd/api/runtime.go` |
 | 4 | `warehouse-planning` | `order-management` | OHS + PL / ACL (local read model, per order-management's own context map) | Kafka `warehouse.warehouse-planning.events`, `com.warehouse.wes.warehouse-planning.capacityplan.*` | **Wired, opt-in** on the consumer side (`PLANNED_CAPACITY_CONSUMER_GROUP` in order-management); it acts on Created, Published and ShortageDetected and ignores `BottleneckDetected` | this repo: `internal/adapters/outbound/kafka/encoder.go`; order-management: `planned_capacity_consumer.go` (its ADR 0031) |
@@ -83,6 +87,8 @@ upstream and downstream edges readable; it is one context.
 | 10 | `product-master` | none | No relationship: SKU master data (handling classification, unit dimensions and weight) is not a capacity input; `product-master` publishes `warehouse.product-master.events` and calls no sibling | none | **Absent** | no consumer of `warehouse.product-master.events` and no client in this repo; `product-master` (its ADR 0001) has no outbound client and consumes nothing from this context |
 | 11 | `warehouse-planning` | `network-inventory-planning` | OHS + PL / ACL on NIP's side (it folds each published plan into its own `PublishedCapacityPlan` read model and refuses to plan from a stale or missing one) | Kafka `warehouse.warehouse-planning.events`, `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished`; NIP needs the additive canonical `site_id` this context adds in ADR 0012 | **Live** on NIP's side (its `CAPACITY_PLAN_CONSUMER_GROUP`); exercised by the e2e inter-warehouse-transfer scenario, where plans created through this service's REST API and relayed by its outbox are what let NIP approve a transfer | this context: `capacityplan.CapacityPlanPublished` and its `site_id` (ADR 0012); NIP: `internal/adapters/inbound/kafka/consumers.go` (capacity-plan consumer) |
 | 12 | `labor-performance` | `warehouse-planning` | OHS + PL / ACL: each standard event becomes an immutable labour-standard fact (one per `standard_id`); the standard in force for a plan's site, step and window is resolved at read time; only labor-performance's INTEGRATION topic is read | Kafka `warehouse.labor-performance.events`, `com.warehouse.wes.labor-performance.standard.LaborStandardDefined` and `...LaborStandardRevised` | **Live, always on** (ADR 0022; producer side labor-performance ADR 0038): `LABOR_STANDARD_CONSUMER_GROUP` required at boot | `internal/adapters/inbound/kafka/labor_standard_consumer.go`, `cmd/api/runtime.go` |
+| 13 | `warehouse-planning` | `workforce-management` | OHS + PL / ACL on workforce-management's side (a `labour_requirements` copy, applied only when `version` is greater; it proposes heads from it and shows them as `requiredHeads`, its ADR 0043). Requirement here, supply there: workforce-management does not refuse a commitment below the requirement, this context surfaces the difference as `LabourPlanDriftDetected` | Kafka `warehouse.warehouse-planning.events`, `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted` | **Live** on workforce-management's side (group `workforce-management-labour-plans`, env `LABOUR_PLAN_CONSUMER_GROUP` there) | this context: `internal/domain/labourplan/events.go`, `internal/application/usecases/labour_plan.go`; workforce-management: `cmd/workforce/labour_plan.go` |
+| 14 | `wes-work-planning` | none | No runtime relationship: its `ChargeForecast` and `PathPlan` were handed over (this context's ADR 0023, its ADR 0049; its `/paths/{pathId}/charge` and `/paths/{pathId}/plan` answer `410`). No importer: both facts are shift-scoped and sent again every shift | none | **Absent** (hand-over done) | `internal/domain/workloadforecast`, `internal/domain/labourplan` |
 
 There is no Shared Kernel, no Partnership and no Conformist relationship: no
 sibling Go package is imported (hard rule 5 in `CLAUDE.md`) and every upstream
