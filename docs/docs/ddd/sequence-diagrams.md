@@ -12,9 +12,10 @@ bodies in `internal/application/usecases`, the inbound adapters and the
 Postgres adapters. REST and MCP call the **same** use cases; where both exist
 the diagram shows REST and names the MCP tool. The four REST POSTs sit behind
 the `Idempotency-Key` middleware (ADR 0019; the diagrams below omit it: the key
-row, the aggregate change and the outbox rows commit in one unit of work). There
-is **no** optimistic version column: concurrent publishes serialize on a row
-lock instead.
+row, the aggregate change and the outbox rows commit in one unit of work). The
+capacity aggregates have **no** optimistic version column: concurrent publishes
+serialize on a row lock instead. The requirement-side `PUT`s (ADR 0023, sections
+10 and 11) take no Idempotency-Key and use a `version` column instead.
 
 ## 1. Register a process capacity constraint (REST / MCP)
 
@@ -88,6 +89,9 @@ sequenceDiagram
       U->>UC: Handle(LABOR, upper(path_id), site_code or building_id, window from event time, heads x rate UNIT per hour)
       alt domain validation error
         UC-->>U: skipped with a WARN, claim kept
+      end
+      opt the line carries a shift_id
+        U->>U: RecordShiftCommitment, the drift's commitment trigger (section 12)
       end
     end
     U-->>L: commit
@@ -369,4 +373,171 @@ Source: `internal/adapters/inbound/kafka/analytics_consumer.go`,
 `internal/adapters/outbound/analyticsstore/postgres_projection.go`,
 `cmd/planning-projector/main.go`, ADR 0005.
 Omits: not-CloudEvents and other-type messages (skipped with a rate-limited
-WARN) and the read side (`cmd/planning-reports`), which only queries.
+WARN) and the read side (`cmd/planning-reports`), which only queries. The three
+requirement-side types (ADR 0023) reach this consumer too and are acknowledged
+without being projected.
+
+## 10. Planner's morning, step 1: receive the workload forecast (REST)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Planner
+  participant H as HTTP handler
+  participant UC as ReceiveWorkloadForecast
+  participant U as UnitOfWork
+  participant R as WorkloadForecastRepository
+  participant F as Forecast
+  participant OB as OutboxRepository
+  Planner->>H: PUT /workload-forecasts/{site_id}/{path_id} with buckets
+  H->>H: decode, parse every cpt as RFC 3339
+  alt not JSON, fractional quantity, bad cpt, bucket without cpt or quantity
+    H-->>Planner: 400 malformed-json or malformed-cpt, 422 missing-cpt or missing-bucket-quantity
+  end
+  H->>UC: Handle(site_id, path_id, buckets)
+  UC->>U: Do
+  U->>R: Get(site_id, path_id)
+  alt no stored forecast
+    U->>F: New(site, path, buckets, now) version 1
+  else stored
+    U->>F: Receive(site, path, buckets, now)
+    Note over F: equal buckets in the same order change nothing
+  end
+  alt validation error
+    F-->>H: no-forecast-buckets, missing-cpt or negative-bucket-quantity
+    H-->>Planner: 422
+  else nothing changed
+    U-->>H: Created false, Changed false, nothing written
+    H-->>Planner: 200 stored forecast, version and received_at unchanged
+  else created or changed
+    U->>R: Save(forecast) guarded on the previous version
+    U->>OB: Insert WorkloadForecastReceived on the events and analytics topics
+    U-->>H: commit
+    H-->>Planner: 201 version 1, or 200 version + 1
+  end
+  opt the version moved between Get and Save
+    UC->>U: re-run the whole unit once
+    UC-->>H: a second conflict is ErrVersionConflict
+    H-->>Planner: 409 version-conflict
+  end
+```
+
+Source: `internal/adapters/inbound/http/workload_forecast_handler.go`,
+`internal/application/usecases/workload_forecast.go`,
+`internal/domain/workloadforecast/forecast.go`,
+`internal/adapters/outbound/postgres/workload_forecast_repository.go`.
+Omits: the read (`GET /workload-forecasts/{site_id}/{path_id}`, a plain
+`Get`, `404 workload-forecast-not-found`) and the relay hop to Kafka.
+
+## 11. Planner's morning, step 2: commit the labour plan (REST, drift trigger B)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Planner
+  participant H as HTTP handler
+  participant UC as CommitLabourPlan
+  participant U as UnitOfWork
+  participant FR as WorkloadForecastRepository
+  participant PR as LabourPlanRepository
+  participant P as Plan
+  participant T as StorageTallyReader
+  participant CR as CommittedHeadsRepository
+  participant OB as OutboxRepository
+  Planner->>H: PUT /labour-plans/{site_id}/{shift_id}/{path_id}
+  H->>UC: Handle(command, planned_heads maybe omitted)
+  UC->>U: Do
+  opt planned_heads omitted
+    UC->>UC: check rate and hours first
+    U->>FR: Get(site_id, path_id)
+    UC->>UC: QuantityDueIn(shift_start, shift_start + hours)
+    alt no shift_start, no forecast or zero buckets in the shift
+      UC-->>H: ErrMissingPlannedHeads
+      H-->>Planner: 422 missing-planned-heads
+    else data in the shift
+      UC->>UC: DeriveHeads = ceil(units / (rate x hours)), heads_source forecast
+    end
+  end
+  U->>PR: Get(site_id, shift_id, path_id)
+  alt no stored plan
+    U->>P: New(spec, now) version 1
+  else stored
+    U->>P: Revise(spec, now)
+  end
+  alt invariant broken
+    P-->>H: heads-exceed-stations, invalid-count, non-positive-rate, non-positive-hours or throughput-not-finite
+    H-->>Planner: 422
+  end
+  U->>T: StationCount(site_id, upper(path_id))
+  Note over UC,T: warning only when the tally knows at least one but fewer stations than installed_stations
+  alt nothing changed
+    H-->>Planner: 200 stored plan, version unchanged, no event, no drift check
+  else created or changed
+    U->>PR: Save(plan) guarded on the previous version
+    U->>OB: Insert LabourPlanCommitted on the events and analytics topics
+    U->>CR: Get(site_id, shift_id, path_id)
+    opt a commitment is stored
+      UC->>UC: CompareHeads(planned, committed), ShouldRaise(last drift)
+      opt the drift is non-zero and differs from the last recorded one
+        U->>OB: Insert LabourPlanDriftDetected
+      end
+      U->>CR: RecordDrift(drift, zero included)
+    end
+    U-->>H: commit
+    H-->>Planner: 201 version 1, or 200 version + 1, with warnings
+  end
+```
+
+Source: `internal/adapters/inbound/http/labour_plan_handler.go`,
+`internal/application/usecases/labour_plan.go` (`spec`, `deriveHeads`,
+`stationWarnings`), `labour_plan_drift.go` (`surfaceDrift`, `driftRecorder`),
+`internal/domain/labourplan/plan.go`, `drift.go`, `cmd/api/requirement.go`.
+Omits: the `409 version-conflict` path (as in section 10), the `400` decoding
+errors (`malformed-json`, `malformed-shift-start`) and the reads
+(`GET /labour-plans/...`, which recompute the warning on every call).
+
+## 12. Labour plan drift, trigger A: a ShiftPlanCommitted line (Kafka)
+
+The second step of the labor consumer's unit of work (section 2), after the
+LABOR registration, whatever that registration decided.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant L as LaborCapacityConsumer
+  participant U as UnitOfWork
+  participant UC as RecordShiftCommitment
+  participant CR as CommittedHeadsRepository
+  participant PR as LabourPlanRepository
+  participant OB as OutboxRepository
+  L->>UC: Handle(site, shift_id, path_id as sent, planned_heads as committed heads, event time)
+  alt blank id, or heads below 0 or above 2147483647
+    UC-->>L: rejection, logged and skipped, the LABOR step stays
+  else valid
+    UC->>U: Do, joining the consumer's open unit of work
+    U->>CR: Get(site, shift, path), keeps the last recorded drift
+    U->>CR: SaveCommitment(committed heads, observed_at)
+    U->>PR: Get(site, shift, path)
+    alt no labour plan for the key
+      Note over U,PR: nothing compared, last drift stays unset until a plan is committed
+    else plan stored
+      UC->>UC: CompareHeads(planned, committed), ShouldRaise(last drift)
+      opt the drift is non-zero and differs from the last recorded one
+        U->>OB: Insert LabourPlanDriftDetected
+      end
+      U->>CR: RecordDrift(drift, zero included)
+    end
+  end
+  Note over L,OB: the claim, the LABOR constraint, the commitment and the drift commit together
+```
+
+Source: `internal/adapters/inbound/kafka/labor_capacity_consumer.go`
+(`recordCommitment`), `internal/application/usecases/labour_plan_drift.go`,
+`internal/domain/labourplan/drift.go`, `commitment.go`,
+`internal/adapters/outbound/postgres/committed_heads_repository.go`.
+Omits: a line without `shift_id` (it records nothing here) and a redelivered
+event (its claim fails first, so nothing runs). Accepted limits: there is no
+stale-event guard on `observed_at` (per-key Kafka order is relied on), and if
+the very first commitment and the very first plan of a key commit at the same
+instant, neither trigger sees the other and one drift can go unraised until
+the next change.

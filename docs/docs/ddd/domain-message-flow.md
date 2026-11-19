@@ -99,3 +99,41 @@ and its ADR 0013.
 Omits: the agent's other wired-but-unused read tools (`get_capacity_plan`,
 `get_storage_capacity`, `list_station_standards`) and the agent's own LLM
 steps.
+
+## 4. The planner's morning: requirement here, supply in workforce-management
+
+ADR 0023. The planner sends the forecast and commits the labour plan here;
+workforce-management reads the published requirement, commits the supply, and
+this context compares the two.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Planner as Planner or warehouse-day simulation
+  participant WP as warehouse-planning
+  participant WFM as workforce-management
+  Planner->>WP: cmd: PUT /workload-forecasts/SIM1/PICK with CPT buckets
+  Note over WP: evt WorkloadForecastReceived published, no consumer today
+  Planner->>WP: cmd: PUT /labour-plans/SIM1/S1/PICK without planned_heads
+  Note over WP: heads derived from the forecast due in the shift, heads_source forecast
+  WP-->>WFM: evt: LabourPlanCommitted on warehouse.warehouse-planning.events
+  Note over WFM: labour_requirements copy, applied only when version is greater
+  Planner->>WFM: qry and cmd: plan proposal and shift plan commit in workforce-management
+  WFM->>WP: evt: ShiftPlanCommitted on warehouse.workforce.events
+  Note over WP: LABOR constraint, then committed heads compared with planned heads
+  alt committed heads differ and the drift is new
+    WP-->>Planner: evt: LabourPlanDriftDetected, surfaced, nothing corrected
+  else equal, or the same drift as last time
+    Note over WP: drift recorded, nothing raised
+  end
+  Planner->>WP: qry: GET /labour-plans with site_id SIM1 and shift_id S1
+```
+
+Source: `internal/application/usecases/workload_forecast.go`, `labour_plan.go`,
+`labour_plan_drift.go`, `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
+`features/labour_plan.feature`, `features/labour_plan_drift.feature`;
+workforce-management's ADR 0043 and `cmd/workforce/labour_plan.go`; e2e-tests
+`cmd/warehouse-day/sim.go`.
+Omits: the outbox relay hop, the analytics copies, the planner revising the
+plan after a drift (which re-runs the comparison, trigger B), and
+workforce-management's own proposal and staffing-gap routes (its API).

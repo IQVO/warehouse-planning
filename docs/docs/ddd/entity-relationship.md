@@ -11,7 +11,7 @@ The final schemas after applying every migration in order. This service has
 **two** Postgres databases:
 
 - the **OLTP** database (`DATABASE_URL`), migrated by `cmd/api` and `cmd/mcp`
-  from `internal/adapters/outbound/postgres/migrations/0001` to `0010`;
+  from `internal/adapters/outbound/postgres/migrations/0001` to `0015`;
 - the separate **analytical** database (`ANALYTICS_DATABASE_URL`,
   `warehouse_planning_analytics`), migrated and written only by
   `cmd/planning-projector` from `analytics/migrations/0001` (ADR 0005).
@@ -65,6 +65,7 @@ erDiagram
     integer inbound_appointments "0009, dock-appointment demand the plan was created against"
     double_precision inbound_labour_minutes "0009"
     boolean inbound_standard_missing "0009"
+    jsonb labour_requirement "0013, per step: standard_seconds, tasks, required_labour_hours, known, reason; default empty array"
   }
   process_paths {
     text id PK
@@ -130,6 +131,43 @@ erDiagram
     text event_id PK
     timestamptz processed_at
   }
+  labor_standards {
+    text standard_id PK "labor-performance's id, 0013"
+    text task_type "CHECK not empty"
+    text handling_unit "empty = task-type-only, else EACH, CASE or PALLET"
+    text site_code "empty = every site"
+    bigint expected_seconds "CHECK above 0"
+    bigint travel_component_seconds "nullable, CHECK at least 0"
+    timestamptz effective_from
+    timestamptz as_of "CloudEvents time"
+  }
+  workload_forecasts {
+    text site_id PK "0014"
+    text path_id PK
+    jsonb buckets "cpt and quantity per bucket, at least one"
+    timestamptz received_at
+    bigint version "CHECK at least 1"
+  }
+  labour_plans {
+    text site_id PK "0014"
+    text shift_id PK
+    text path_id PK "COLLATE C for keyset paging"
+    integer planned_heads "CHECK at least 0 and at most installed_stations"
+    double_precision rate_units_per_hour "CHECK above 0 and finite"
+    double_precision hours "CHECK above 0 and finite"
+    integer installed_stations "CHECK at least 0"
+    timestamptz shift_start "nullable"
+    text heads_source "request or forecast"
+    bigint version "CHECK at least 1"
+  }
+  labour_plan_commitments {
+    text site_id PK "0015"
+    text shift_id PK
+    text path_id PK "as sent, not upper-cased"
+    integer committed_heads "CHECK at least 0"
+    timestamptz observed_at "CloudEvents time of ShiftPlanCommitted"
+    integer last_drift_heads "nullable until a drift was computed"
+  }
   outbox_events {
     bigserial id PK
     text event_id UK "UNIQUE with topic, 0007"
@@ -152,11 +190,12 @@ erDiagram
 ```
 
 Source: `internal/adapters/outbound/postgres/migrations/0001_process_capacity.up.sql`
-through `0010_observed_capacity.up.sql`, `internal/adapters/outbound/postgres/migrate.go`.
+through `0015_labour_plan_drift.up.sql`, `internal/adapters/outbound/postgres/migrate.go`.
 Omits: the indexes (`idx_capacity_plans_warehouse_window`,
 `idx_outbox_events_unpublished` partial on `published_at IS NULL`,
 `idx_order_demand_location_promise`, `idx_inbound_appointments_location_window`
-partial on `status = 'BOOKED'`) and column defaults. Types are drawn in
+partial on `status = 'BOOKED'`, `idx_labor_standards_task_site_effective`
+partial on `handling_unit = ''`) and column defaults. Types are drawn in
 lower case with `_` instead of spaces (`double_precision`, `text_array` for
 `TEXT[]`) because Mermaid types cannot contain spaces or brackets.
 
@@ -177,12 +216,25 @@ logical and deliberately has no foreign key:
 - `location_slot_registration.(zone_id, tally_type, tally_keys)` remembers
   which `location_slot_tally` buckets a slot incremented, so a decommission
   knows what to decrement.
-- `outbox_events.subject` and `key` are the capacity plan id.
+- `outbox_events.subject` and `key` are the raising aggregate's id: the
+  capacity plan id, the ProcessCapacity identity, `<site_id>/<path_id>` for a
+  workload forecast, `<site_id>/<shift_id>/<path_id>` for a labour plan and
+  its drift.
 - `processed_events.event_id` is the CloudEvents id of a consumed message;
   `consumer` is `labor-capacity-consumer`, `storage-capacity-consumer`,
   `order-demand-consumer`, `dock-appointment-consumer` (it was
-  `inbound-demand-consumer`) or
-  `observed-capacity-consumer`.
+  `inbound-demand-consumer`),
+  `observed-capacity-consumer` or `labor-standard-consumer`.
+- The three requirement-side tables of ADR 0023 share the key
+  `(site_id, [shift_id,] path_id)` but have no foreign key between them:
+  `labour_plans` reads `workload_forecasts` only when heads are derived (and
+  keeps the number, not a reference), and `labour_plan_commitments` may hold a
+  key no plan has yet (a commitment that arrived first) or a plan may have no
+  commitment. The keys match exactly as sent; `path_id` is not upper-cased on
+  this side (only the LABOR constraint upper-cases it).
+- `labor_standards` holds facts, not a current value: the standard a plan uses
+  is resolved at read time; `capacity_plans.labour_requirement` stores the
+  result, so a later revision never rewrites a stored plan (ADR 0022).
 - `inbound_appointments.appointment_id` names dock-scheduling's appointment
   (ADR 0017, source switched by ADR 0020); `location` is the `site_id` of its
   events. Rows written under the retired inbound-receiving source are INBOUND
@@ -240,6 +292,10 @@ transaction as the `plan_facts` upsert.
 | `inbound_appointments` | Read model of dock-scheduling's dock appointments (ADR 0017, ADR 0020) | inbound labour demand (`internal/application`) |
 | `inbound_labour_standards` | Operator-declared labour standard per site and path (ADR 0017) | none (read at plan creation) |
 | `observed_capacity` | Read model of fulfillment-execution's completed tasks (ADR 0017) | none (advisory variance input) |
+| `labor_standards` | Local copy of labor-performance's engineered standards (ADR 0022) | `laborstandard.Standard` (resolved at read time) |
+| `workload_forecasts` | Aggregate state (ADR 0023) | `WorkloadForecast` aggregate |
+| `labour_plans` | Aggregate state (ADR 0023) | `LabourPlan` aggregate |
+| `labour_plan_commitments` | Read model of workforce-management's committed heads, plus the last recorded drift (ADR 0023 decision 3) | `labourplan.Commitment` |
 | `processed_events` | **Infrastructure**: consumer idempotency claims | none |
 | `outbox_events` | **Infrastructure**: transactional outbox (two rows per domain event since `0007`) | none |
 | `schema_migrations` | **Infrastructure**: golang-migrate bookkeeping | none |
