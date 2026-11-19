@@ -28,7 +28,7 @@ ports with their adapters.
 
 | Binary | Role | Port (default) | Probes | Data store |
 | --- | --- | --- | --- | --- |
-| `cmd/api` | REST API, the five domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`, required) and Kafka (`KAFKA_BROKERS`, required) |
+| `cmd/api` | REST API, the six domain Kafka consumers, the outbox relay | `HTTP_ADDR` `:8080` | `/healthz`, `/readyz` | OLTP Postgres (`DATABASE_URL`, required) and Kafka (`KAFKA_BROKERS`, required) |
 | `cmd/mcp` | MCP server (Streamable HTTP, 14 tools); writes outbox rows but never relays them | `MCP_ADDR` `:8090` (`/` and `/mcp`) | `/healthz` | the same OLTP Postgres (`DATABASE_URL`, required) |
 | `cmd/a2a` | A2A agent ([ADR 0018](/docs/adr/0018-a2a-inbound-adapter); JSON-RPC over HTTP, 2 skills: `path_capacity` read, `evaluate_capacity_plan` write); writes outbox rows but never relays them | `A2A_ADDR` `:8093` (`/` and `/a2a`; card at `/.well-known/agent-card.json`) | `/healthz` | the same OLTP Postgres (`DATABASE_URL`, required) |
 | `cmd/planning-projector` | the only writer of the analytical database, fed by `warehouse.warehouse-planning.analytics` | `ADMIN_ADDR` `:8091` (admin only) | `/healthz`, `/readyz` (analytical Postgres ping and Kafka metadata) | analytical Postgres (`ANALYTICS_DATABASE_URL`, read-write) |
@@ -121,13 +121,14 @@ non-zero when the relay or a consumer stops on its own, so the pod restarts.
   boot error too ([ADR 0020](/docs/adr/0020-inbound-demand-from-dock-scheduling)).
 
 Dead-lettering ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers) §3,
-`internal/adapters/inbound/kafka/deadletter.go`): the five domain consumers
+`internal/adapters/inbound/kafka/deadletter.go`): the six domain consumers
 retry a transient failure on the same message up to 5 times, then publish it to
 `<topic>.dlq` (`warehouse.workforce.events.dlq`,
 `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`,
-`warehouse.dock-scheduling.events.dlq`, `warehouse.fulfillment.events.dlq`) with
+`warehouse.dock-scheduling.events.dlq`, `warehouse.fulfillment.events.dlq`,
+`warehouse.labor-performance.events.dlq`) with
 `x-dlq-*` headers and commit past it. The two ADR 0017 consumers (dock
-appointments, task completions) also dead-letter a *deterministic* failure (not
+appointments, task completions) and the labour-standard consumer (ADR 0022) also dead-letter a *deterministic* failure (not
 CloudEvents 1.0, malformed or unusable payload) at once instead of skipping it. The DLQ publish itself is retried until it
 succeeds, so nothing is silently dropped. The analytics projector is different
 by design ([ADR 0005](/docs/adr/0005-analytics-read-side)): a transient failure

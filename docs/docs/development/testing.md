@@ -21,7 +21,7 @@ sub-tests.
 | Adapter tests (httptest, fake Kafka reader/writer, in-memory stores) | `internal/adapters/...` (http 57, kafka inbound 65, mcp 19, outbound kafka 22, memory 16, outbox 12, cloudevents 6, analyticsstore 3) | 200 tests | `make test` | nothing |
 | Composition-root tests | `cmd/*/main_test.go`, `cmd/api/{readiness,logger_level,outbox_relay_config}_test.go`, `cmd/planning-projector/telemetry_test.go` (boot errors that name the variable, `/readyz`, the relay) | 35 tests | `make test` | nothing |
 | BDD acceptance (godog) | `features/*.feature`, driven by `features_test.go`, `features_demand_test.go`, `features_list_test.go` at the repo root | 18 features, 146 scenarios (186 executed) | `make bdd` (`go test ./... -run TestFeatures -v`), also part of `make test` | nothing |
-| Integration (`-tags=integration`) | 27 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the five Kafka consumers, the analytics store, `cmd/mcp`, `cmd/api/e2e_integration_test.go` (boots the real `run()`) and `analytics_e2e_integration_test.go` | 84 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
+| Integration (`-tags=integration`) | 37 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the six Kafka consumers, the analytics store, `cmd/mcp`, `cmd/api/e2e_integration_test.go` (boots the real `run()`) and `analytics_e2e_integration_test.go` | 84 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
 | Architecture fitness | `internal/architecture` | 18 tests | `make arch-test` | nothing |
 | Mutation | `.gremlins.yaml` | see below | `make mutation-fast`, `make mutation-full` | `gremlins` v0.6.0 |
 | Frontend remote | `web/src/**/*.test.ts(x)` (8 files, vitest + Testing Library) | | `cd web && npm test` | Node, a built `../../warehouse-ui-kit` |
@@ -171,7 +171,7 @@ Triggers: push and pull request on `main` and `develop`, a weekly schedule
 | `test` | build, vet, then `make coverage` (race tests with the Makefile's coverage scope and 90 % gate) | every push/PR |
 | `bdd` | `go test ./... -run TestFeatures -v` | every push/PR |
 | `integration` | `go test -tags=integration ./... -race -count=1` on the runner's Docker | every push/PR |
-| `mutation-fast` | gremlins on the five packages | every push/PR |
+| `mutation-fast` | gremlins on the six packages of `MUTATION_FAST_PKGS` | every push/PR |
 | `mutation` | gremlins on `./internal/domain`; opens or closes a `harness:red` issue on schedule | schedule, dispatch |
 | `drift` | `deadcode`, `go mod tidy -diff`, coverage-quality (high-coverage functions with a surviving mutant); advisory | schedule, dispatch |
 | `api-lint` | Spectral on `apis/openapi.yaml` and `apis/asyncapi.yaml` (`--fail-severity=warn`) | every push/PR |

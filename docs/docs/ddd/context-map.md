@@ -23,6 +23,7 @@ flowchart LR
   OMD["order-management<br/>Generic/Supporting<br/>as plan consumer"]
   DSC["dock-scheduling<br/>Supporting<br/>as inbound demand source"]
   FEX["fulfillment-execution<br/>Core<br/>as observed capacity source"]
+  LPF["labor-performance<br/>Supporting<br/>as labour standard source"]
   OPS["warehouse-ops-agent<br/>Supporting"]
   CON["warehouse-console<br/>frontend shell"]
   PPM["process-path-management<br/>Generic"]
@@ -36,6 +37,7 @@ flowchart LR
   OMU -. "U: OHS+PL / D: ACL<br/>Kafka OrderAllocated, OrderPartiallyAllocated" .-> WP
   DSC -- "U: OHS+PL / D: ACL<br/>Kafka DockAppointmentBooked, Rescheduled, Cancelled, NoShow (ADR 0017, 0020)" --> WP
   FEX -- "U: OHS+PL / D: ACL<br/>Kafka TaskCompleted (ADR 0017)" --> WP
+  LPF -- "U: OHS+PL / D: ACL<br/>Kafka LaborStandardDefined, Revised (ADR 0022)" --> WP
   WP -. "U: OHS+PL / D: ACL, opt-in<br/>Kafka CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected" .-> OMD
   WP -- "U: OHS+PL / D: ACL<br/>Kafka CapacityPlanPublished (with site_id, ADR 0012)" --> NIP
   WP -- "U: OHS / D: Customer, ACL<br/>MCP get_process_path_capacity, 3 more read tools wired" --> OPS
@@ -80,7 +82,7 @@ upstream and downstream edges readable; it is one context.
 | 9 | `fulfillment-execution`, `wes-work-planning` (observed capacity), `network-fulfillment` (demand) | `warehouse-planning` | Published Language intended | Kafka (intended) | **Planned, not implemented** (ADR 0001 context map) | none |
 | 10 | `product-master` | none | No relationship: SKU master data (handling classification, unit dimensions and weight) is not a capacity input; `product-master` publishes `warehouse.product-master.events` and calls no sibling | none | **Absent** | no consumer of `warehouse.product-master.events` and no client in this repo; `product-master` (its ADR 0001) has no outbound client and consumes nothing from this context |
 | 11 | `warehouse-planning` | `network-inventory-planning` | OHS + PL / ACL on NIP's side (it folds each published plan into its own `PublishedCapacityPlan` read model and refuses to plan from a stale or missing one) | Kafka `warehouse.warehouse-planning.events`, `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished`; NIP needs the additive canonical `site_id` this context adds in ADR 0012 | **Live** on NIP's side (its `CAPACITY_PLAN_CONSUMER_GROUP`); exercised by the e2e inter-warehouse-transfer scenario, where plans created through this service's REST API and relayed by its outbox are what let NIP approve a transfer | this context: `capacityplan.CapacityPlanPublished` and its `site_id` (ADR 0012); NIP: `internal/adapters/inbound/kafka/consumers.go` (capacity-plan consumer) |
-| — | `labor-performance` | none | No relationship | none | **Absent** | no consumer, no client, in either direction |
+| 12 | `labor-performance` | `warehouse-planning` | OHS + PL / ACL: each standard event becomes an immutable labour-standard fact (one per `standard_id`); the standard in force for a plan's site, step and window is resolved at read time; only labor-performance's INTEGRATION topic is read | Kafka `warehouse.labor-performance.events`, `com.warehouse.wes.labor-performance.standard.LaborStandardDefined` and `...LaborStandardRevised` | **Live, always on** (ADR 0022; producer side labor-performance ADR 0038): `LABOR_STANDARD_CONSUMER_GROUP` required at boot | `internal/adapters/inbound/kafka/labor_standard_consumer.go`, `cmd/api/runtime.go` |
 
 There is no Shared Kernel, no Partnership and no Conformist relationship: no
 sibling Go package is imported (hard rule 5 in `CLAUDE.md`) and every upstream
