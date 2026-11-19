@@ -1,0 +1,71 @@
+---
+id: commit-labour-plan
+title: "Commit the labour plan of a process path for a shift at a site"
+description: "Stores the heads a process path needs for one shift at one site, at a planned rate for a number of hours (docs/adr/0023 decision 2; it was wes-work-planning's path plan). planned_heads must not exceed installed_stations, hours and the rate must be positive and rate x heads x hours finite. When planned_heads is omitted it is DERIVED: ceil(forecast units with a cpt in [shift_start, shift_start + hours) / (rate x hours)), which needs shift_start and a stored workload forecast for (site_id, path_id) with at least one bucket in the shift; otherwise 422 missing-planned-heads (zero buckets in the shift is no data, never zero heads). heads_source says which happened. When the facility tally knows at least one but fewer stations of the activity named like the path (the path id upper-cased) than installed_stations, the plan is still stored with the number as sent and the answer carries a warning. 201 with version 1 for a first commit; 200 with version + 1 for a revision; 200 with the stored plan and version unchanged when the plan equals the stored one (no event). A change raises LabourPlanCommitted (integration and analytics topics, asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no Idempotency-Key."
+sidebar_label: "Commit the labour plan of a process path for a shift at a site"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "put api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Commit the labour plan of a process path for a shift at a site"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"put"}
+  path={"/labour-plans/{site_id}/{shift_id}/{path_id}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Stores the heads a process path needs for one shift at one site, at a planned rate for a number of hours (docs/adr/0023 decision 2; it was wes-work-planning's path plan). planned_heads must not exceed installed_stations, hours and the rate must be positive and rate x heads x hours finite. When planned_heads is omitted it is DERIVED: ceil(forecast units with a cpt in [shift_start, shift_start + hours) / (rate x hours)), which needs shift_start and a stored workload forecast for (site_id, path_id) with at least one bucket in the shift; otherwise 422 missing-planned-heads (zero buckets in the shift is no data, never zero heads). heads_source says which happened. When the facility tally knows at least one but fewer stations of the activity named like the path (the path id upper-cased) than installed_stations, the plan is still stored with the number as sent and the answer carries a warning. 201 with version 1 for a first commit; 200 with version + 1 for a revision; 200 with the stored plan and version unchanged when the plan equals the stored one (no event). A change raises LabourPlanCommitted (integration and analytics topics, asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no Idempotency-Key.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./commit-labour-plan.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./commit-labour-plan.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./commit-labour-plan.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

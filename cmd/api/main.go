@@ -160,7 +160,7 @@ func buildServer(
 ) *inboundhttp.Server {
 	// ADR 0017: the same use case prices the plan's inbound demand and backs GET /inbound-demand.
 	inboundDemand := &usecases.GetInboundDemand{Appointments: ad.inboundAppointments, Standards: ad.inboundStandards}
-	return &inboundhttp.Server{
+	server := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
 		ProcessCapacities:                 ad.processCapacities,
 		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: ad.processPaths},
@@ -213,6 +213,9 @@ func buildServer(
 
 		Readiness: readiness,
 	}
+	// ADR 0023: the workload forecast and the shift labour plan.
+	wireRequirementSide(server, ad, encoder)
+	return server
 }
 
 // adapters is the set of outbound adapters the composition root wires.
@@ -258,6 +261,10 @@ type adapters struct {
 	// GET /capacity-plans.
 	pathLister ports.ProcessPathLister
 	planLister ports.CapacityPlanLister
+
+	// ADR 0023: the workload forecasts and the shift labour plans.
+	workloadForecasts ports.WorkloadForecastRepository
+	labourPlans       ports.LabourPlanRepository
 
 	// pool is the Postgres pool (the readiness check pings it).
 	pool *pgxpool.Pool
@@ -317,6 +324,8 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		laborStandards:      postgres.NewLaborStandardRepo(pool),
 		pathLister:          pathRepo,
 		planLister:          planRepo,
+		workloadForecasts:   postgres.NewWorkloadForecastRepo(pool),
+		labourPlans:         postgres.NewLabourPlanRepo(pool),
 		pool:                pool,
 	}, pool.Close, nil
 }

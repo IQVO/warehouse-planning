@@ -1,0 +1,71 @@
+---
+id: receive-workload-forecast
+title: "Receive the workload forecast of a process path at a site"
+description: "Stores the volume a process path is expected to receive at a site, as CPT buckets (docs/adr/0023 decision 1; it was wes-work-planning's charge forecast). One forecast per (site_id, path_id); a receipt replaces the buckets as a whole. 201 with version 1 for a first receipt; 200 with version + 1 when the buckets changed; 200 with the stored forecast, its version and received_at unchanged, when the buckets equal the stored ones (same order): nothing is written and no event is raised. A receipt that changed something raises WorkloadForecastReceived (integration and analytics topics, asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no Idempotency-Key."
+sidebar_label: "Receive the workload forecast of a process path at a site"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "put api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Receive the workload forecast of a process path at a site"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"put"}
+  path={"/workload-forecasts/{site_id}/{path_id}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Stores the volume a process path is expected to receive at a site, as CPT buckets (docs/adr/0023 decision 1; it was wes-work-planning's charge forecast). One forecast per (site_id, path_id); a receipt replaces the buckets as a whole. 201 with version 1 for a first receipt; 200 with version + 1 when the buckets changed; 200 with the stored forecast, its version and received_at unchanged, when the buckets equal the stored ones (same order): nothing is written and no event is raised. A receipt that changed something raises WorkloadForecastReceived (integration and analytics topics, asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no Idempotency-Key.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./receive-workload-forecast.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./receive-workload-forecast.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./receive-workload-forecast.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

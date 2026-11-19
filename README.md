@@ -288,7 +288,7 @@ gate plus a Postgres ping plus a Kafka broker check).
 
 Errors are **RFC 7807** (`application/problem+json`) throughout. Every route
 below is declared at the same path in `apis/openapi.yaml`. Every `POST`
-requires an `Idempotency-Key` header (ADR 0019, `internal/adapters/inbound/http/idempotency.go`):
+(the `PUT`s are idempotent by design and take none) requires an `Idempotency-Key` header (ADR 0019, `internal/adapters/inbound/http/idempotency.go`):
 a missing key is `400 idempotency-key-required`, a malformed one
 `400 idempotency-key-invalid`, the same key with a different method, path or
 body `409 idempotency-key-reused`, and a replay carries
@@ -305,6 +305,8 @@ Write side:
 | `POST` | `/capacity-plans/{id}/publications` | PublishCapacityPlan | `200` |
 | `PUT` | `/station-standards/{location}/{process_type}` | DeclareStationStandard | `200` |
 | `PUT` | `/inbound-labour-standards/{location}/{path_id}` | DeclareInboundLabourStandard | `200` |
+| `PUT` | `/workload-forecasts/{site_id}/{path_id}` | ReceiveWorkloadForecast (ADR 0023; replaces the buckets; identical = no event) | `201` new / `200` |
+| `PUT` | `/labour-plans/{site_id}/{shift_id}/{path_id}` | CommitLabourPlan (ADR 0023; omitted `planned_heads` derived from the forecast, else `422 missing-planned-heads`) | `201` new / `200` |
 
 Read side (`cmd/api`, `:8080`):
 
@@ -321,6 +323,9 @@ Read side (`cmd/api`, `:8080`):
 | `GET` | `/demand` | GetExpectedDemand (order-fed read model) |
 | `GET` | `/inbound-labour-standards` | ListInboundLabourStandards |
 | `GET` | `/inbound-demand` | GetInboundDemand (dock-appointment fed) |
+| `GET` | `/workload-forecasts/{site_id}/{path_id}` | GetWorkloadForecast |
+| `GET` | `/labour-plans/{site_id}/{shift_id}/{path_id}` | GetLabourPlan (with the station warning) |
+| `GET` | `/labour-plans?site_id=&shift_id=` | ListLabourPlans (by path id, keyset page `{items,nextCursor}`) |
 | `GET` | `/healthz` / `/readyz` | liveness / readiness |
 
 Reports (`cmd/planning-reports`, `:8092`): `GET /reports/bottleneck-frequency`,
