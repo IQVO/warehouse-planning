@@ -289,13 +289,16 @@ func TestProjectorRunMigratesProjectsAndDrainsCleanly(t *testing.T) {
 		gotWarehouse, gotLocation, step, constraint string
 		shortage, gotCreated, gotPublished          sql.NullFloat64
 	)
-	waitUntil(t, "the plan projected into plan_facts", func() bool {
+	// The four events land one by one, so the row exists (from
+	// CapacityPlanCreated) before CapacityPlanPublished fills published_at and
+	// binding_constraint: wait for the published columns, not just the row.
+	waitUntil(t, "the published plan projected into plan_facts", func() bool {
 		err := reader.QueryRow(context.Background(), `
 			SELECT warehouse_id, location, bottleneck_step, binding_constraint, shortage,
 			       extract(epoch from created_at), extract(epoch from published_at)
 			FROM plan_facts WHERE plan_id = $1`, planID).
 			Scan(&gotWarehouse, &gotLocation, &step, &constraint, &shortage, &gotCreated, &gotPublished)
-		return err == nil
+		return err == nil && gotPublished.Valid
 	})
 	if gotWarehouse != warehouseID || gotLocation != location {
 		t.Errorf("plan_facts site = %s/%s, want %s/%s", gotWarehouse, gotLocation, warehouseID, location)
