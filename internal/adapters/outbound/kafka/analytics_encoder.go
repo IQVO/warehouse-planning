@@ -35,12 +35,17 @@ type analyticsPublishedData struct {
 // messages of one occurrence share one id. The analytics stream is plan
 // facts only (ADR 0005): EncodeProcessCapacityEvents refuses, loudly,
 // rather than silently dropping or duplicating a ProcessCapacity event.
+// The requirement-side events of ADR 0023 (WorkloadForecastReceived,
+// LabourPlanCommitted, LabourPlanDriftDetected) also have an analytics copy,
+// with the integration payload unchanged (encoder_forecast_labour.go).
 type AnalyticsEncoder struct {
 	// NewID mints a CloudEvents id (uuid.NewString when nil).
 	NewID func() string
 	// Topic overrides AnalyticsTopic (integration tests use a unique one).
 	Topic string
 }
+
+var _ ports.EventEncoder = (*AnalyticsEncoder)(nil)
 
 // EncodeCapacityPlanEvents implements ports.EventEncoder for CapacityPlan
 // events: each becomes one analytics message under a freshly minted id.
@@ -113,7 +118,8 @@ func analyticsPayloadFor(ev capacityplan.Event) (any, error) {
 // the use case's single UnitOfWork, so they commit or roll back together
 // with the aggregate; a relay retry republishes each row's persisted bytes.
 // A ProcessCapacity event becomes ONE message, the integration one: the
-// analytics stream stays plan facts only (ADR 0005).
+// analytics stream stays plan facts only (ADR 0005). The ADR 0023 events
+// fan out like the CapacityPlan ones (two messages, one id).
 type FanoutEncoder struct {
 	Integration *Encoder
 	Analytics   *AnalyticsEncoder
