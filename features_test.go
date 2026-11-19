@@ -68,6 +68,9 @@ type world struct {
 	// planID is the id of the capacity plan the last successful create
 	// returned; the publish/get steps act on it.
 	planID string
+	// scenarioIDs maps a scenario label to the id of the plan created with
+	// it (docs/adr/0024), so the comparison steps can name plans by label.
+	scenarioIDs map[string]string
 
 	// facility is the REAL facility-layout consumer over the in-memory tally:
 	// the Given steps feed it LocationSlotRegistered CloudEvents through
@@ -162,6 +165,8 @@ func (w *world) start() {
 		CapacityPlans:       planRepo,
 		ListProcessPaths:    &usecases.ListProcessPaths{Paths: pathRepo},
 		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: planRepo},
+		// ADR 0024 decision 4, as cmd/api wires it.
+		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: planRepo},
 
 		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
 		StationStandards:       standards,
@@ -184,6 +189,7 @@ func (w *world) start() {
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
 	w.planID = ""
+	w.scenarioIDs = map[string]string{}
 	w.status = 0
 	w.body = nil
 }

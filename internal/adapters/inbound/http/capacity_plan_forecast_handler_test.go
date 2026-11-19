@@ -36,8 +36,9 @@ func newForecastPlanServer(t *testing.T) (*httptest.Server, *memory.WorkloadFore
 			// One minute apart, so "newest first" never hangs on a clock tie.
 			Now: func() time.Time { clock = clock.Add(time.Minute); return clock },
 		},
-		CapacityPlans:     plans,
-		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: plans},
+		CapacityPlans:        plans,
+		ListCapacityPlans:    &usecases.ListCapacityPlans{Plans: plans},
+		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: plans},
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)

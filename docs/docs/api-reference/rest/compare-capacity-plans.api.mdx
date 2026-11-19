@@ -1,0 +1,71 @@
+---
+id: compare-capacity-plans
+title: "Lay 2 to 5 capacity plan scenarios of one site and window side by side"
+description: "docs/adr/0024 decision 4. ids names 2 to 5 distinct stored plans, all of one site_id and one window (same window_start and window_end); their paths, locations and statuses may differ. Per plan, in the order of ids, it returns the scenario, status, assigned demand and its source, path capacity, capacity over the window, shortage, bottleneck step and constraint and the ADR 0022 labour requirement exactly as stored when the plan was created: nothing is recomputed, so a comparison is reproducible. Read-only; REST only (no MCP tool)."
+sidebar_label: "Lay 2 to 5 capacity plan scenarios of one site and window side by side"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Lay 2 to 5 capacity plan scenarios of one site and window side by side"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/capacity-plans/comparisons"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+docs/adr/0024 decision 4. ids names 2 to 5 distinct stored plans, all of one site_id and one window (same window_start and window_end); their paths, locations and statuses may differ. Per plan, in the order of ids, it returns the scenario, status, assigned demand and its source, path capacity, capacity over the window, shortage, bottleneck step and constraint and the ADR 0022 labour requirement exactly as stored when the plan was created: nothing is recomputed, so a comparison is reproducible. Read-only; REST only (no MCP tool).
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./compare-capacity-plans.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./compare-capacity-plans.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./compare-capacity-plans.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

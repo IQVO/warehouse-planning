@@ -73,7 +73,50 @@ func (w *world) theCapacityPlanReadTheForecastOfPath(want string) error {
 func (w *world) iCreateALabelledPlan(ctx context.Context, warehouse, site, location, pathID, start, end string, demand float64, label string) error {
 	body := planRequest(warehouse, site, location, pathID, start, end)
 	body["assigned_demand"], body["units_per_order"], body["scenario"] = demand, 1, label
-	return w.createPlan(ctx, body)
+	if err := w.createPlan(ctx, body); err != nil {
+		return err
+	}
+	if w.status == http.StatusCreated {
+		w.scenarioIDs[label] = w.planID
+	}
+	return nil
+}
+
+// iCompareThePlans GETs the comparison of the plans named by their scenario
+// labels ("a, b"); a label no plan was created with is sent as an id as is.
+func (w *world) iCompareThePlans(ctx context.Context, labels string) error {
+	ids := make([]string, 0)
+	for _, label := range strings.Split(labels, ",") {
+		label = strings.TrimSpace(label)
+		if id, ok := w.scenarioIDs[label]; ok {
+			label = id
+		}
+		ids = append(ids, label)
+	}
+	return w.record(ctx, http.MethodGet, "/capacity-plans/comparisons?ids="+strings.Join(ids, ","), nil)
+}
+
+// theComparisonHolds checks the scenario labels and shortages of a
+// comparison, in order ("a, b" and "2, 0").
+func (w *world) theComparisonHolds(labels, shortages string) error {
+	var body struct {
+		Items []struct {
+			Scenario string  `json:"scenario"`
+			Shortage float64 `json:"shortage"`
+		} `json:"items"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	gotLabels, gotShortages := make([]string, 0), make([]string, 0)
+	for _, item := range body.Items {
+		gotLabels = append(gotLabels, item.Scenario)
+		gotShortages = append(gotShortages, strconv.FormatFloat(item.Shortage, 'f', -1, 64))
+	}
+	if strings.Join(gotLabels, ", ") != labels || strings.Join(gotShortages, ", ") != shortages {
+		return fmt.Errorf("comparison = %q with shortages %q, want %q with %q", strings.Join(gotLabels, ", "), strings.Join(gotShortages, ", "), labels, shortages)
+	}
+	return nil
 }
 
 // theCapacityPlanListHoldsTheScenarios checks the scenario labels of a list
@@ -110,4 +153,6 @@ func registerScenarioSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^the capacity plan read the forecast of path `+ts+`$`, w.theCapacityPlanReadTheForecastOfPath)
 	sc.Step(plan+` with assigned demand (\d+(?:\.\d+)?) labelled `+ts+`$`, w.iCreateALabelledPlan)
 	sc.Step(`^the capacity plan list holds the scenarios `+ts+`$`, w.theCapacityPlanListHoldsTheScenarios)
+	sc.Step(`^I compare the capacity plans `+ts+`$`, w.iCompareThePlans)
+	sc.Step(`^the comparison holds the scenarios `+ts+` with shortages `+ts+`$`, w.theComparisonHolds)
 }

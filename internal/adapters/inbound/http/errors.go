@@ -133,15 +133,19 @@ func problemCatalog() []struct {
 		{capacityplan.ErrMissingUnitsPerOrder, problemInfo{"missing-units-per-order", "units_per_order is required with demand_source forecast"}},
 		{capacityplan.ErrDemandSourceConflict, problemInfo{"demand-source-conflict", "The request names an input its demand_source does not read"}},
 		{capacityplan.ErrInvalidScenario, problemInfo{"invalid-scenario", "scenario must be 1 to 64 characters"}},
+		{capacityplan.ErrInvalidComparison, problemInfo{"invalid-comparison-ids", "ids must name 2 to 5 distinct capacity plans"}},
+		{capacityplan.ErrComparisonSiteMismatch, problemInfo{"comparison-site-mismatch", "The compared capacity plans are not all of one site"}},
+		{capacityplan.ErrComparisonWindowMismatch, problemInfo{"comparison-window-mismatch", "The compared capacity plans are not all of one window"}},
 	}
 }
 
 // isPlanScenarioValidation reports the 422 validation errors of forecast
-// demand and plan scenarios (docs/adr/0024).
+// demand, plan scenarios and the comparison read (docs/adr/0024).
 func isPlanScenarioValidation(err error) bool {
 	for _, target := range []error{
 		capacityplan.ErrUnknownDemandSource, capacityplan.ErrMissingUnitsPerOrder, capacityplan.ErrDemandSourceConflict,
 		capacityplan.ErrInvalidScenario,
+		capacityplan.ErrInvalidComparison, capacityplan.ErrComparisonSiteMismatch, capacityplan.ErrComparisonWindowMismatch,
 	} {
 		if errors.Is(err, target) {
 			return true

@@ -73,6 +73,11 @@ type Server struct {
 	ListProcessPaths  *usecases.ListProcessPaths
 	ListCapacityPlans *usecases.ListCapacityPlans
 
+	// CompareCapacityPlans backs GET /capacity-plans/comparisons
+	// (docs/adr/0024 decision 4; REST only, no MCP tool). Nil leaves the
+	// route unregistered.
+	CompareCapacityPlans *usecases.CompareCapacityPlans
+
 	// The requirement side of docs/adr/0023. ReceiveWorkloadForecast and
 	// GetWorkloadForecast back PUT and GET /workload-forecasts/{site_id}/
 	// {path_id}; each left nil leaves its route unregistered (the router's
@@ -147,6 +152,12 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/process-paths/{id}/capacity", s.handleGetProcessPathCapacity)
 	r.Post("/capacity-plans", s.idempotent(s.handleCreateCapacityPlan))
 	r.Post("/capacity-plans/{id}/publications", s.idempotent(s.handlePublishCapacityPlan))
+	// The static comparisons route is registered before /capacity-plans/{id};
+	// chi matches a static segment before a parameter in any case, so the
+	// word "comparisons" is never read as a plan id.
+	if s.CompareCapacityPlans != nil {
+		r.Get("/capacity-plans/comparisons", s.handleCompareCapacityPlans)
+	}
 	r.Get("/capacity-plans/{id}", s.handleGetCapacityPlan)
 	r.Put("/station-standards/{location}/{process_type}", s.handleDeclareStationStandard)
 	r.Get("/station-standards", s.handleListStationStandards)

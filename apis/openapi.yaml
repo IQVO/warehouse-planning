@@ -529,6 +529,60 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
         "500":
           $ref: "#/components/responses/InternalError"
+  /capacity-plans/comparisons:
+    get:
+      operationId: compareCapacityPlans
+      x-pagination-exempt: view
+      summary: Lay 2 to 5 capacity plan scenarios of one site and window side by side
+      tags: [capacity-plans]
+      description: >
+        docs/adr/0024 decision 4. ids names 2 to 5 distinct stored plans, all
+        of one site_id and one window (same window_start and window_end); their
+        paths, locations and statuses may differ. Per plan, in the order of
+        ids, it returns the scenario, status, assigned demand and its source,
+        path capacity, capacity over the window, shortage, bottleneck step and
+        constraint and the ADR 0022 labour requirement exactly as stored when
+        the plan was created: nothing is recomputed, so a comparison is
+        reproducible. Read-only; REST only (no MCP tool).
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          description: 2 to 5 distinct plan ids, comma-separated.
+          schema:
+            type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10,5e963738-f2d6-494f-b88d-8ef73365e4a3
+      responses:
+        "200":
+          description: The plans side by side.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanComparisonResponse"
+        "400":
+          description: A query parameter other than ids (unknown-query-parameter).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: One of the ids names no CapacityPlan (capacity-plan-not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            ids does not name 2 to 5 distinct, non-blank plans
+            (invalid-comparison-ids), or the plans are not all of one site
+            (comparison-site-mismatch) or of one window
+            (comparison-window-mismatch).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /capacity-plans/{id}:
     get:
       operationId: getCapacityPlan
@@ -2245,6 +2299,78 @@ components:
             Additive (docs/adr/0022). The labour each step of the plan's path
             requires, in path order (never null; [] for plans stored before
             migration 0013).
+          items:
+            $ref: "#/components/schemas/LabourRequirement"
+    PlanComparisonResponse:
+      type: object
+      description: The plans of one site and window side by side (docs/adr/0024), in the order of ids.
+      required: [site_id, window_start, window_end, items]
+      properties:
+        site_id:
+          type: string
+          example: SIM1
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        items:
+          type: array
+          minItems: 2
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/ComparedPlan"
+    ComparedPlan:
+      type: object
+      description: One plan of a comparison, exactly as stored (nothing is recomputed).
+      required: [plan_id, status, path_id, assigned_demand, demand_source, path_capacity, capacity_over_window, shortage, bottleneck_step, bottleneck_constraint, labour_requirement]
+      properties:
+        plan_id:
+          type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+        scenario:
+          type: string
+          description: The plan's what-if label; absent when it carries none.
+          example: second pack line open
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED]
+        path_id:
+          type: string
+          description: The ProcessPath the plan evaluates (scenarios may evaluate different paths).
+          example: pick-rebin-pack
+        assigned_demand:
+          type: number
+          format: double
+          description: Orders the plan was evaluated against.
+          example: 12000
+        demand_source:
+          type: string
+          enum: [request, orders, forecast]
+          example: forecast
+        path_capacity:
+          type: number
+          format: double
+          description: ORDER per HOUR.
+          example: 1000
+        capacity_over_window:
+          type: number
+          format: double
+          example: 8000
+        shortage:
+          type: number
+          format: double
+          example: 4000
+        bottleneck_step:
+          type: string
+          example: REBIN
+        bottleneck_constraint:
+          type: string
+          example: STATION
+        labour_requirement:
+          type: array
+          description: The ADR 0022 labour requirement per path step, as stored (never null).
           items:
             $ref: "#/components/schemas/LabourRequirement"
     DeclareInboundLabourStandardRequest:

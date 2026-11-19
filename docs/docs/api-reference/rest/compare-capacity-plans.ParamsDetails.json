@@ -1,0 +1,1 @@
+{"parameters":[{"name":"ids","in":"query","required":true,"description":"2 to 5 distinct plan ids, comma-separated.","schema":{"type":"string"},"example":"0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10,5e963738-f2d6-494f-b88d-8ef73365e4a3"}]}
