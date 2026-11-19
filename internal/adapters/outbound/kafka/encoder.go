@@ -97,6 +97,22 @@ type bottleneckDetectedData struct {
 	PathCapacity   float64   `json:"path_capacity"`
 }
 
+// planSupersededData is CapacityPlanSuperseded (docs/adr/0024 decision 3):
+// plan_id is the OLDER plan (also the subject and the key), superseded_by
+// the newer one. warehouse_id and location are the same fields every other
+// capacityplan event carries (order-management lists its rows by location);
+// site_id is always present, "" for a plan stored before migration 0008.
+type planSupersededData struct {
+	PlanID       string    `json:"plan_id"`
+	SupersededBy string    `json:"superseded_by"`
+	WarehouseID  string    `json:"warehouse_id"`
+	SiteID       string    `json:"site_id"`
+	Location     string    `json:"location"`
+	PathID       string    `json:"path_id"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+}
+
 // processCapacityRegisteredData: identity + the native constraint that
 // created the aggregate (whose rate IS the effective rate at that moment).
 // quantity/unit/period_seconds mirror the REST GET's constraint shape.
@@ -286,6 +302,11 @@ func payloadFor(ev capacityplan.Event) (any, error) {
 			PlanID: e.PlanID, WarehouseID: e.WarehouseID, Location: e.Location, PathID: e.PathID,
 			WindowStart: e.WindowStart.UTC(), WindowEnd: e.WindowEnd.UTC(),
 			BottleneckStep: string(e.BottleneckStep), PathCapacity: e.PathCapacity,
+		}, nil
+	case capacityplan.CapacityPlanSuperseded:
+		return planSupersededData{
+			PlanID: e.PlanID, SupersededBy: e.SupersededBy, WarehouseID: e.WarehouseID, SiteID: e.SiteID,
+			Location: e.Location, PathID: e.PathID, WindowStart: e.WindowStart.UTC(), WindowEnd: e.WindowEnd.UTC(),
 		}, nil
 	default:
 		return nil, fmt.Errorf("kafka encoder: %s is not a published event", ev.EventName())

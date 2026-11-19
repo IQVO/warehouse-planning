@@ -19,10 +19,13 @@ import (
 // Status is a CapacityPlan's lifecycle state.
 type Status string
 
-// The two lifecycle states.
+// The three lifecycle states. SUPERSEDED is terminal: a PUBLISHED plan moves
+// there when a newer plan of its SupersedeKey is published (docs/adr/0024
+// decision 3).
 const (
-	StatusDraft     Status = "DRAFT"
-	StatusPublished Status = "PUBLISHED"
+	StatusDraft      Status = "DRAFT"
+	StatusPublished  Status = "PUBLISHED"
+	StatusSuperseded Status = "SUPERSEDED"
 )
 
 // DemandSource says where a plan's assigned demand came from.
@@ -133,6 +136,10 @@ type CapacityPlan struct {
 	status      Status
 	createdAt   time.Time
 	publishedAt time.Time
+
+	// supersededBy is the id of the plan whose publication superseded this
+	// one (docs/adr/0024 decision 3); empty unless the status is SUPERSEDED.
+	supersededBy string
 
 	events []Event
 }
@@ -276,6 +283,10 @@ type RehydrateParams struct {
 	CreatedAt          time.Time
 	PublishedAt        time.Time
 
+	// SupersededBy: the newer plan's id when Status is SUPERSEDED; empty
+	// otherwise and for rows stored before migration 0017.
+	SupersededBy string
+
 	// DemandSource: empty reads back as DemandSourceRequest.
 	// ForecastPathID and Scenario: empty for rows stored before migration 0016.
 	DemandSource   DemandSource
@@ -313,6 +324,7 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 		status:             p.Status,
 		createdAt:          p.CreatedAt,
 		publishedAt:        p.PublishedAt,
+		supersededBy:       p.SupersededBy,
 
 		bottleneckConstraint: p.BottleneckConstraint,
 		warnings:             append([]string(nil), p.Warnings...),
@@ -324,10 +336,14 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 // Publish transitions DRAFT -> PUBLISHED at now and records
 // CapacityPlanPublished, plus CapacityShortageDetected and
 // BottleneckDetected when (and only when) Shortage > 0. It returns
-// ErrAlreadyPublished if the plan is already PUBLISHED, recording nothing.
+// ErrAlreadyPublished if the plan is already PUBLISHED and ErrSuperseded if
+// it is SUPERSEDED (terminal), recording nothing either way.
 func (c *CapacityPlan) Publish(now time.Time) error {
-	if c.status == StatusPublished {
+	switch c.status {
+	case StatusPublished:
 		return ErrAlreadyPublished
+	case StatusSuperseded:
+		return ErrSuperseded
 	}
 	c.status = StatusPublished
 	c.publishedAt = now
@@ -443,7 +459,7 @@ func (c *CapacityPlan) CapacityOverWindow() float64 { return c.capacityOverWindo
 // Shortage returns max(0, demand - capacityOverWindow), in orders.
 func (c *CapacityPlan) Shortage() float64 { return c.shortage }
 
-// Status returns DRAFT or PUBLISHED.
+// Status returns DRAFT, PUBLISHED or SUPERSEDED.
 func (c *CapacityPlan) Status() Status { return c.status }
 
 // CreatedAt returns when the plan was created.

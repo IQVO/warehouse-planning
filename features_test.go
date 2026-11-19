@@ -718,6 +718,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerLabourSteps(sc, w)
 	registerRequirementSteps(sc, w)
 	registerScenarioSteps(sc, w)
+	registerSupersedeSteps(sc, w)
 	registerDriftSteps(sc, w)
 	registerDocRulesSteps(sc, w)
 }

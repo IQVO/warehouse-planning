@@ -154,6 +154,7 @@ func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {
 		ForecastPathID:     p.ForecastPathID(),
 		Scenario:           p.Scenario(),
 		Status:             string(p.Status()),
+		SupersededBy:       p.SupersededBy(),
 		PathCapacity:       p.PathCapacity(),
 		BottleneckStep:     string(p.BottleneckStep()),
 		CapacityOverWindow: p.CapacityOverWindow(),

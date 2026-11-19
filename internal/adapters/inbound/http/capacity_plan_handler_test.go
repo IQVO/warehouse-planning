@@ -304,6 +304,9 @@ func (brokenPlans) Save(context.Context, *capacityplan.CapacityPlan) error {
 func (brokenPlans) FindByID(context.Context, string) (*capacityplan.CapacityPlan, error) {
 	return nil, errors.New("db down")
 }
+func (brokenPlans) FindPublished(context.Context, capacityplan.SupersedeKey, string) (*capacityplan.CapacityPlan, error) {
+	return nil, errors.New("db down")
+}
 
 // An infrastructure failure is a 500 problem+json, never a 404/409.
 func TestHandler_CapacityPlan_StorageFailureIs500(t *testing.T) {

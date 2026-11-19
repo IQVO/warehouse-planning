@@ -21,7 +21,8 @@ Feature: CapacityPlan rules, events and validation
     When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "PLAN-RULES" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 8001, units_per_order 4 and packages_per_order 1
     Then the capacity plan is DRAFT with path capacity 1000 ORDER per HOUR, capacity over window 8000, shortage 1 and bottleneck PICK
     When I publish the capacity plan
-    Then the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
+    # Same site, location, path and window: it supersedes the first (docs/adr/0024 decision 3).
+    Then the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanPublished, CapacityPlanCreated, CapacityPlanSuperseded, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
     When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "PLAN-RULES" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 0, units_per_order 4 and packages_per_order 1
     Then the response status is 201
     And the capacity plan uses demand 0 from request with shortage 0

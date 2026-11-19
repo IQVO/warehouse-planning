@@ -388,6 +388,9 @@ func (f findFailsPlans) Save(context.Context, *capacityplan.CapacityPlan) error 
 func (f findFailsPlans) FindByID(context.Context, string) (*capacityplan.CapacityPlan, error) {
 	return nil, f.err
 }
+func (f findFailsPlans) FindPublished(context.Context, capacityplan.SupersedeKey, string) (*capacityplan.CapacityPlan, error) {
+	return nil, f.err
+}
 
 func TestPublishCapacityPlan_DefaultsClock(t *testing.T) {
 	f := newPlanFixture(t)

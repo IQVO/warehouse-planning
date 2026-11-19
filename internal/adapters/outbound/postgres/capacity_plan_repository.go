@@ -80,6 +80,32 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 	return plan, nil
 }
 
+// FindPublished returns the PUBLISHED plan of key whose id is not excludeID
+// (the newest by published_at, then id), or (nil, nil). Inside a UnitOfWork
+// the row is locked (FOR UPDATE): a concurrent publish of the same key waits
+// for this transaction, then no longer sees the row as PUBLISHED and loses
+// on the partial unique index instead (ports.ErrVersionConflict from Save).
+func (r *CapacityPlanRepo) FindPublished(ctx context.Context, key capacityplan.SupersedeKey, excludeID string) (*capacityplan.CapacityPlan, error) {
+	query := `SELECT ` + planColumns + ` FROM capacity_plans
+		WHERE site_id = $1 AND location = $2 AND process_path_id = $3
+		  AND window_start = $4 AND window_end = $5
+		  AND status = 'PUBLISHED' AND id <> $6
+		ORDER BY published_at DESC NULLS LAST, id DESC
+		LIMIT 1`
+	q := queryFor(ctx, r.pool)
+	if _, inTx := q.(pgx.Tx); inTx {
+		query += " FOR UPDATE"
+	}
+	plan, err := scanPlan(q.QueryRow(ctx, query, key.SiteID, key.Location, key.PathID, key.WindowStart, key.WindowEnd, excludeID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return plan, nil
+}
+
 // ListRecent returns up to limit plans matching filter, newest first
 // (created_at DESC, id DESC so the order is total); every filter field that
 // is set must match. It never locks a row: a list is a plain read, in or out

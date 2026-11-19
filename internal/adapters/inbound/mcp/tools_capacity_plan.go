@@ -52,6 +52,9 @@ type capacityPlanOutput struct {
 	Shortage           float64 `json:"shortage"`
 	CreatedAt          string  `json:"created_at"`
 	PublishedAt        *string `json:"published_at,omitempty"`
+	// SupersededBy: the id of the plan whose publication superseded this one;
+	// present only when status is SUPERSEDED (docs/adr/0024). Additive.
+	SupersededBy string `json:"superseded_by,omitempty"`
 
 	// DemandSource: "request" (assigned_demand stated by the caller),
 	// "orders" (defaulted from the order-management read model) or
@@ -125,6 +128,7 @@ func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
 		ForecastPathID:     p.ForecastPathID(),
 		Scenario:           p.Scenario(),
 		Status:             string(p.Status()),
+		SupersededBy:       p.SupersededBy(),
 		PathCapacity:       p.PathCapacity(),
 		BottleneckStep:     string(p.BottleneckStep()),
 		CapacityOverWindow: p.CapacityOverWindow(),

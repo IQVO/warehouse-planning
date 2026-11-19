@@ -35,6 +35,8 @@ Feature: CapacityPlan lifecycle, arithmetic and published events, as the aggrega
 
   # --------------------------------------------------------------- lifecycle
 
+  # Publishing the second supersedes the first (docs/adr/0024 decision 3): both
+  # have the same site, location, path and window.
   Scenario: Creating the same plan twice makes two plans, and publishing one leaves the other a draft
     When I create a capacity plan for warehouse "WH-1" at site "SIM1" in location "PLAN-DOC" on path "pick-only" for the window "2026-10-05T08:00:00Z" to "2026-10-05T16:00:00Z" with assigned demand 9000, units_per_order 1 and packages_per_order 1
     And I note the capacity plan as "first"
@@ -52,7 +54,9 @@ Feature: CapacityPlan lifecycle, arithmetic and published events, as the aggrega
     And the problem detail type is "capacity-plan-already-published"
     When I publish the noted capacity plan "second"
     Then the response status is 200
-    And the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
+    And the noted capacity plan "first" is SUPERSEDED
+    And the noted capacity plan "second" is PUBLISHED
+    And the outbox event types are ProcessCapacityRegistered, CapacityPlanCreated, CapacityPlanCreated, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected, CapacityPlanSuperseded, CapacityPlanPublished, CapacityShortageDetected, BottleneckDetected
 
   Scenario: Retrying a plan creation with the same Idempotency-Key answers the first answer and creates no second plan
     When I send POST "/capacity-plans" with the Idempotency-Key "plan-retry-1" and body:
