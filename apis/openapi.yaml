@@ -1352,7 +1352,10 @@ components:
       name: path_id
       in: path
       required: true
-      description: The process path. Upper-cased, it names the facility-tally activity whose stations the labour plan's warning compares with.
+      description: >-
+        The process path code: case-insensitive; stored and published in upper case (trimmed), so
+        "pick" and "PICK" name the same forecast and labour plan. Upper-cased, it also names the
+        facility-tally activity whose stations the labour plan's warning compares with.
       schema:
         type: string
       example: PICK
@@ -2382,6 +2385,7 @@ components:
           example: SIM1
         path_id:
           type: string
+          description: The process path code in its canonical form (trimmed, upper case), whatever case the request used.
           example: PICK
         buckets:
           type: array
@@ -2454,6 +2458,7 @@ components:
           example: 2026-11-19-early
         path_id:
           type: string
+          description: The process path code in its canonical form (trimmed, upper case), whatever case the request used.
           example: PICK
         planned_heads:
           type: integer

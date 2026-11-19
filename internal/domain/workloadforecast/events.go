@@ -23,9 +23,9 @@ type Received struct {
 // EventName returns EventWorkloadForecastReceived.
 func (Received) EventName() string { return EventWorkloadForecastReceived }
 
-// AggregateID is "site_id/path_id": the Kafka key and the CloudEvents
-// subject.
-func (e Received) AggregateID() string { return e.SiteID + "/" + e.PathID }
+// AggregateID is "site_id/path_id", the path id in its canonical form: the
+// Kafka key and the CloudEvents subject.
+func (e Received) AggregateID() string { return e.SiteID + "/" + CanonicalPathID(e.PathID) }
 
 // OccurredAt is the receipt time.
 func (e Received) OccurredAt() time.Time { return e.ReceivedAt }

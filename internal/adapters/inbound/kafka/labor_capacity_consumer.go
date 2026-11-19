@@ -13,6 +13,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/labourplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
@@ -229,17 +230,19 @@ func (c *LaborCapacityConsumer) registerLabor(ctx context.Context, cmd usecases.
 // (docs/adr/0023 decision 3), the second step of the claim's unit of work: it
 // upserts the heads committed for (site, shift_id, path_id) and raises a
 // LabourPlanDriftDetected when the drift against the stored labour plan is
-// news. It runs whatever the LABOR registration decided (the commitment is
-// workforce-management's, not the constraint's). A line without shift_id, or
-// no Commitments wired, records nothing; a rejected commitment (negative
-// heads) is logged and skipped.
+// news. The path_id passes through labourplan.CanonicalPathID (trimmed, upper
+// case), the form the labour plan is keyed on, so a line for "PICK" meets a
+// plan PUT as "pick". It runs whatever the LABOR registration decided (the
+// commitment is workforce-management's, not the constraint's). A line without
+// shift_id, or no Commitments wired, records nothing; a rejected commitment
+// (negative heads) is logged and skipped.
 func (c *LaborCapacityConsumer) recordCommitment(ctx context.Context, data shiftPlanCommittedData, site string, observedAt time.Time, eventID string) error {
 	shift := strings.TrimSpace(data.ShiftID)
 	if c.Commitments == nil || shift == "" {
 		return nil
 	}
 	err := c.Commitments.Handle(ctx, usecases.RecordShiftCommitmentCommand{
-		SiteID: site, ShiftID: shift, PathID: strings.TrimSpace(data.PathID),
+		SiteID: site, ShiftID: shift, PathID: labourplan.CanonicalPathID(data.PathID),
 		CommittedHeads: data.PlannedHeads, ObservedAt: observedAt,
 	})
 	if usecases.IsCommitmentRejection(err) {

@@ -37,8 +37,10 @@ func page(t *testing.T, fx Fixture, after string, limit int) string {
 }
 
 // mixedPaths sort differently by bytes than by a natural-language collation
-// ("B1" < "a2") and by number ("path-10" < "path-2").
-var mixedPaths = []string{"pick-pack", "a2", "path-10", "B1", "path-2"}
+// ("PICK-PACK" < "PICKA": a collation skips the hyphen) and by number
+// ("PATH-10" < "PATH-2"). They are canonical path codes (upper case), the
+// only form the domain stores.
+var mixedPaths = []string{"PICK-PACK", "PICKA", "PATH-10", "B1", "PATH-2"}
 
 var listCases = []named{
 	{"an empty shift lists nothing", func(t *testing.T, fx Fixture) {
@@ -47,9 +49,9 @@ var listCases = []named{
 	}},
 	{"plans list by path id in byte order, only those of the site and shift", func(t *testing.T, fx Fixture) {
 		savePlans(t, fx, siteA, shift1, mixedPaths...)
-		savePlans(t, fx, siteA, shift2, "a1")
-		savePlans(t, fx, siteB, shift1, "a0")
-		eq(t, "whole shift", page(t, fx, "", 10), "[B1 a2 path-10 path-2 pick-pack] more=false")
+		savePlans(t, fx, siteA, shift2, "A1")
+		savePlans(t, fx, siteB, shift1, "A0")
+		eq(t, "whole shift", page(t, fx, "", 10), "[B1 PATH-10 PATH-2 PICK-PACK PICKA] more=false")
 	}},
 	{"after is exclusive, limit caps the page and more says whether rows follow", func(t *testing.T, fx Fixture) {
 		savePlans(t, fx, siteA, shift1, mixedPaths...)
@@ -58,12 +60,12 @@ var listCases = []named{
 			limit int
 			want  string
 		}{
-			{"", 2, "[B1 a2] more=true"},
-			{"a2", 2, "[path-10 path-2] more=true"},
-			{"path-2", 2, "[pick-pack] more=false"},
-			{"pick-pack", 2, "[] more=false"},
-			{"b", 2, "[path-10 path-2] more=true"}, // an after id nobody stored
-			{"", 5, "[B1 a2 path-10 path-2 pick-pack] more=false"},
+			{"", 2, "[B1 PATH-10] more=true"},
+			{"B1", 2, "[PATH-10 PATH-2] more=true"},
+			{"PATH-2", 2, "[PICK-PACK PICKA] more=false"},
+			{"PICKA", 2, "[] more=false"},
+			{"C", 2, "[PATH-10 PATH-2] more=true"}, // an after id nobody stored
+			{"", 5, "[B1 PATH-10 PATH-2 PICK-PACK PICKA] more=false"},
 			{"", 0, "[] more=true"},
 			{"", -1, "[] more=true"},
 		} {
@@ -71,7 +73,7 @@ var listCases = []named{
 		}
 	}},
 	{"a walk visits every plan once, in order", func(t *testing.T, fx Fixture) {
-		paths := []string{"p-0", "p-1", "p-2", "p-3", "p-4", "p-5", "p-6"}
+		paths := []string{"P-0", "P-1", "P-2", "P-3", "P-4", "P-5", "P-6"}
 		savePlans(t, fx, siteA, shift1, paths...)
 		seen, pages := walk(t, fx, 3)
 		eq(t, "walk", fmt.Sprint(seen), fmt.Sprint(paths))

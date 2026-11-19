@@ -115,6 +115,10 @@ Recorded after PRs #142-#148, so the decision text and the code say the same thi
   therefore raised again; the same drift twice in a row is not. Only a changed labour plan
   (trigger B) or a new commitment (trigger A) computes a drift; an unchanged PUT and a
   redelivered event compute nothing.
+- **Identity, path code.** `path_id` is a process-path code in one canonical form, trimmed
+  and upper case, in the forecast, the labour plan, the committed heads and every published
+  `path_id` (PR #150), the rule the LABOR constraint already applied. `site_id` and `shift_id`
+  are matched as sent. Nothing had been released with the as-sent form, so no data migration.
 
 ## Consequences
 

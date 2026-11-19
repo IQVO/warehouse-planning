@@ -61,4 +61,5 @@ func (e DriftDetected) AggregateID() string { return key(e.SiteID, e.ShiftID, e.
 // OccurredAt is the detection time.
 func (e DriftDetected) OccurredAt() time.Time { return e.At }
 
-func key(site, shift, path string) string { return site + "/" + shift + "/" + path }
+// key is the labour plan's key, the path id in its canonical form.
+func key(site, shift, path string) string { return site + "/" + shift + "/" + CanonicalPathID(path) }

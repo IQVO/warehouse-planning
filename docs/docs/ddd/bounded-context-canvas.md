@@ -266,8 +266,8 @@ heads**, **Heads source**, **Committed heads**, **Labour plan drift**.
   order-management ADR 0050), or to the fallback site `DEMAND_SITE_ID` when it
   names none (ADR 0021). Task completions carry no site and always use it.
 - The WorkloadProfile factors are supplied on each request (no persistence).
-- The labour plan drift matches `(site, shift, path)` exactly as sent on both
-  sides, and relies on the per-key order of workforce-management's topic (no
+- The labour plan drift matches site and shift exactly as sent on both sides
+  (the path code is canonical, trimmed and upper case), and relies on the per-key order of workforce-management's topic (no
   stale-event guard on the event time).
 
 ## Verification Metrics

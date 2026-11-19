@@ -15,13 +15,13 @@ import (
 // to prove every instant is emitted in UTC.
 
 const (
-	goldenForecastKey = "SIM1/pick"
-	goldenPlanKey     = "SIM1/SHIFT-AM/pick"
+	goldenForecastKey = "SIM1/PICK"
+	goldenPlanKey     = "SIM1/SHIFT-AM/PICK"
 )
 
 func goldenForecastReceived() workloadforecast.Received {
 	return workloadforecast.Received{
-		SiteID: "SIM1", PathID: "pick", TotalQuantity: 12000, BucketCount: 3,
+		SiteID: "SIM1", PathID: "PICK", TotalQuantity: 12000, BucketCount: 3,
 		ReceivedAt: goldenAt, Version: 2,
 	}
 }
@@ -31,7 +31,7 @@ func goldenForecastReceived() workloadforecast.Received {
 func goldenLabourPlanCommitted() labourplan.Committed {
 	start := time.Date(2026, 10, 5, 5, 0, 0, 0, time.FixedZone("BRT", -3*3600))
 	return labourplan.Committed{
-		SiteID: "SIM1", ShiftID: "SHIFT-AM", PathID: "pick",
+		SiteID: "SIM1", ShiftID: "SHIFT-AM", PathID: "PICK",
 		PlannedHeads: 15, RateUnitsPerHour: 112.5, Hours: 7.5, InstalledStations: 16,
 		ShiftStart: &start, HeadsSource: labourplan.HeadsFromForecast, Version: 3, At: goldenAt,
 	}
@@ -41,7 +41,7 @@ func goldenLabourPlanCommitted() labourplan.Committed {
 // heads and no shift start: shift_start is absent from the payload.
 func goldenLabourPlanCommittedWithoutShiftStart() labourplan.Committed {
 	return labourplan.Committed{
-		SiteID: "SIM1", ShiftID: "SHIFT-AM", PathID: "pick",
+		SiteID: "SIM1", ShiftID: "SHIFT-AM", PathID: "PICK",
 		PlannedHeads: 12, RateUnitsPerHour: 112.5, Hours: 7.5, InstalledStations: 16,
 		HeadsSource: labourplan.HeadsFromRequest, Version: 1, At: goldenAt,
 	}
@@ -49,7 +49,7 @@ func goldenLabourPlanCommittedWithoutShiftStart() labourplan.Committed {
 
 // goldenLabourPlanDrift: workforce committed 12 heads against a plan of 15.
 func goldenLabourPlanDrift() labourplan.DriftDetected {
-	return labourplan.CompareHeads(15, 12).Event("SIM1", "SHIFT-AM", "pick", goldenAt)
+	return labourplan.CompareHeads(15, 12).Event("SIM1", "SHIFT-AM", "PICK", goldenAt)
 }
 
 // requirementEncoder is the three ADR 0023 methods behind one call shape.

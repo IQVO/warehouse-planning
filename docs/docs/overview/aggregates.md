@@ -96,7 +96,7 @@ wes-work-planning's path plan).
 
 | Field | Notes |
 | --- | --- |
-| `site_id`, `shift_id`, `path_id` | the identity; matched exactly as sent |
+| `site_id`, `shift_id`, `path_id` | the identity; `site_id` and `shift_id` matched exactly as sent, `path_id` trimmed and upper-cased |
 | `planned_heads` | the requirement; `0..2147483647` and never above `installed_stations` |
 | `rate_units_per_hour`, `hours` | above zero; `rate x heads x hours` must be finite |
 | `installed_stations` | caller-supplied, stored as sent |

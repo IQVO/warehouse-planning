@@ -8,14 +8,27 @@
 // version bump. The drift between this plan and the heads workforce-management
 // committed (drift.go) moved here with it.
 //
-// The package performs NO I/O and imports nothing from this module.
+// The path id of a plan, of a commitment and of every event is held in its
+// canonical form (CanonicalPathID: trimmed, upper case), the form the
+// workload forecast keys on, so a plan PUT as "pick", a commitment for "PICK"
+// and a forecast for " Pick " name one path.
+//
+// The package performs NO I/O and imports nothing from this module but the
+// workloadforecast package's canonical path code.
 package labourplan
 
 import (
 	"errors"
 	"math"
 	"time"
+
+	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
+
+// CanonicalPathID is workloadforecast.CanonicalPathID, the one form of a
+// process-path code on the requirement side: trimmed, upper case. A code
+// blank after trimming stays blank and is refused with ErrRequiredField.
+func CanonicalPathID(pathID string) string { return workloadforecast.CanonicalPathID(pathID) }
 
 // HeadsSource says where planned_heads came from.
 type HeadsSource string
@@ -33,7 +46,8 @@ const (
 const MaxCount = math.MaxInt32
 
 var (
-	// ErrRequiredField is returned when the site, shift or path id is blank.
+	// ErrRequiredField is returned when the site, shift or path id is blank
+	// (the path id after trimming).
 	ErrRequiredField = errors.New("labourplan: site id, shift id and path id are required")
 
 	// ErrInvalidCount is returned for planned heads or installed stations
@@ -89,8 +103,10 @@ type Plan struct {
 }
 
 // New validates a first plan and returns it at version 1 with its
-// LabourPlanCommitted event.
+// LabourPlanCommitted event. The path id is stored and published in its
+// canonical form.
 func New(s Spec, at time.Time) (*Plan, Committed, error) {
+	s = s.canonical()
 	if err := s.validate(); err != nil {
 		return nil, Committed{}, err
 	}
@@ -98,8 +114,10 @@ func New(s Spec, at time.Time) (*Plan, Committed, error) {
 	return p, p.committed(at), nil
 }
 
-// Rehydrate rebuilds a stored plan, re-checking every invariant.
+// Rehydrate rebuilds a stored plan, re-checking every invariant and holding
+// the path id in its canonical form.
 func Rehydrate(s Spec, version int64) (*Plan, error) {
+	s = s.canonical()
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
@@ -109,10 +127,12 @@ func Rehydrate(s Spec, version int64) (*Plan, error) {
 	return &Plan{spec: s.clone(), version: version}, nil
 }
 
-// Revise applies a new spec for the same (site, shift, path). A spec equal
-// to the stored one changes nothing (changed=false, no event, same version);
-// any other valid spec replaces it and bumps the version.
+// Revise applies a new spec for the same (site, shift, path), the path ids
+// compared in their canonical form. A spec equal to the stored one changes
+// nothing (changed=false, no event, same version); any other valid spec
+// replaces it and bumps the version.
 func (p *Plan) Revise(s Spec, at time.Time) (Committed, bool, error) {
+	s = s.canonical()
 	if err := s.validate(); err != nil {
 		return Committed{}, false, err
 	}
@@ -216,6 +236,12 @@ func (s Spec) validate() error {
 
 func (s Spec) throughput() float64 {
 	return s.RateUnitsPerHour * float64(s.PlannedHeads) * s.Hours
+}
+
+// canonical returns s with its path id in the canonical form.
+func (s Spec) canonical() Spec {
+	s.PathID = CanonicalPathID(s.PathID)
+	return s
 }
 
 func (s Spec) clone() Spec {

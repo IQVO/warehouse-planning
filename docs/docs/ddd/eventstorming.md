@@ -259,7 +259,7 @@ flowchart LR
   R4 --> P3
   P3 --> E5[LabourPlanDriftDetected]:::event
   H3[Raised only when non-zero and new, never corrects either side]:::hotspot -.- P3
-  H4[Keys match exactly as sent, no stale-event guard on observed_at]:::hotspot -.- P2
+  H4[Site and shift match exactly as sent, no stale-event guard on observed_at]:::hotspot -.- P2
 
   classDef actor fill:#fff7a8,stroke:#b8a400,color:#000,font-size:11px
   classDef command fill:#4aa3df,stroke:#1f6fa3,color:#fff
@@ -331,4 +331,4 @@ acknowledges them without projecting them.
 | Observed capacity is advisory and single-site | Hotspot | `observed_capacity_consumer.go`, ADR 0017 |
 | Labour requirement unknown outside PICK, PACK, SLAM | Hotspot | `capacityplan.ReasonNoLaborStandard`, ADR 0022 decision 4 |
 | Zero forecast buckets in the shift is no data | Hotspot | `usecases.ErrMissingPlannedHeads`, ADR 0023 decision 2 |
-| Drift keys match as sent; no stale-event guard; a simultaneous first commitment and first plan can leave one drift unraised | Hotspot | `labour_plan_drift.go`, `labor_capacity_consumer.go` (`recordCommitment`) |
+| Drift site and shift keys match as sent (the path code is canonical); no stale-event guard; a simultaneous first commitment and first plan can leave one drift unraised | Hotspot | `labour_plan_drift.go`, `labor_capacity_consumer.go` (`recordCommitment`) |

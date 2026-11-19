@@ -118,7 +118,7 @@ func (uc *CommitLabourPlan) commit(ctx context.Context, cmd CommitLabourPlanComm
 		if err != nil {
 			return err
 		}
-		stored, found, err := uc.Plans.Get(ctx, cmd.SiteID, cmd.ShiftID, cmd.PathID)
+		stored, found, err := uc.Plans.Get(ctx, cmd.SiteID, cmd.ShiftID, labourplan.CanonicalPathID(cmd.PathID))
 		if err != nil {
 			return err
 		}
@@ -187,7 +187,7 @@ func (uc *CommitLabourPlan) deriveHeads(ctx context.Context, cmd CommitLabourPla
 	if cmd.ShiftStart == nil || uc.Forecasts == nil {
 		return 0, ErrMissingPlannedHeads
 	}
-	forecast, found, err := uc.Forecasts.Get(ctx, cmd.SiteID, cmd.PathID)
+	forecast, found, err := uc.Forecasts.Get(ctx, cmd.SiteID, labourplan.CanonicalPathID(cmd.PathID))
 	if err != nil {
 		return 0, err
 	}
@@ -202,7 +202,8 @@ func (uc *CommitLabourPlan) deriveHeads(ctx context.Context, cmd CommitLabourPla
 }
 
 // GetLabourPlan reads the stored plan of (site, shift, path) with its station
-// warning. A pure read.
+// warning, the path id in its canonical form (any spelling finds it). A pure
+// read.
 type GetLabourPlan struct {
 	Plans ports.LabourPlanRepository
 	// Stations: see CommitLabourPlan.Stations.
@@ -211,7 +212,7 @@ type GetLabourPlan struct {
 
 // Handle returns the plan, or ErrLabourPlanNotFound.
 func (uc *GetLabourPlan) Handle(ctx context.Context, siteID, shiftID, pathID string) (LabourPlanView, error) {
-	p, found, err := uc.Plans.Get(ctx, siteID, shiftID, pathID)
+	p, found, err := uc.Plans.Get(ctx, siteID, shiftID, labourplan.CanonicalPathID(pathID))
 	if err != nil {
 		return LabourPlanView{}, err
 	}

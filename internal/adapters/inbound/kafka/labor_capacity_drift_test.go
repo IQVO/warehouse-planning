@@ -59,7 +59,8 @@ func newLaborDriftHarness() laborDriftHarness {
 	return h
 }
 
-// plan stores the WH1/SHIFT-1/pick labour plan with n planned heads.
+// plan stores the WH1/SHIFT-1/PICK labour plan with n planned heads, PUT as
+// "pick": the domain stores the canonical path code.
 func (h laborDriftHarness) plan(t *testing.T, n int) {
 	t.Helper()
 	p, _, err := labourplan.New(labourplan.Spec{
@@ -107,7 +108,7 @@ func (h laborDriftHarness) driftData(t *testing.T) []map[string]any {
 
 func (h laborDriftHarness) commitment(t *testing.T) (labourplan.Commitment, bool) {
 	t.Helper()
-	c, found, err := h.commitments.Get(context.Background(), "WH1", "SHIFT-1", "pick")
+	c, found, err := h.commitments.Get(context.Background(), "WH1", "SHIFT-1", "PICK")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func TestLaborConsumerDrift_ACommitmentAgainstAPlanRaisesTheDriftOnBothTopics(t 
 	if len(drifts) != 2 {
 		t.Fatalf("%d LabourPlanDriftDetected rows, want 2 (integration + analytics)", len(drifts))
 	}
-	want := map[string]any{"site_id": "WH1", "shift_id": "SHIFT-1", "path_id": "pick", "planned_heads": 7.0, "committed_heads": 10.0, "drift_heads": 3.0}
+	want := map[string]any{"site_id": "WH1", "shift_id": "SHIFT-1", "path_id": "PICK", "planned_heads": 7.0, "committed_heads": 10.0, "drift_heads": 3.0}
 	for _, d := range drifts {
 		for k, v := range want {
 			if d[k] != v {
@@ -148,7 +149,7 @@ func TestLaborConsumerDrift_ACommitmentAgainstAPlanRaisesTheDriftOnBothTopics(t 
 	wantCommitment(t, h, 10, 3)
 }
 
-// wantCommitment checks the stored WH1/SHIFT-1/pick commitment: heads
+// wantCommitment checks the stored WH1/SHIFT-1/PICK commitment: heads
 // observed at the event time with lastDrift recorded.
 func wantCommitment(t *testing.T, h laborDriftHarness, heads, lastDrift int) {
 	t.Helper()
@@ -156,6 +157,28 @@ func wantCommitment(t *testing.T, h laborDriftHarness, heads, lastDrift int) {
 	if !found || c.Heads != heads || !c.ObservedAt.Equal(driftEventAt) || !c.HasLastDrift || c.LastDriftHeads != lastDrift {
 		t.Fatalf("commitment = %+v (found %v), want %d heads with drift %d recorded", c, found, heads, lastDrift)
 	}
+}
+
+func TestLaborConsumerDrift_ACommitmentMeetsThePlanWhateverTheCaseOfItsPath(t *testing.T) {
+	h := newLaborDriftHarness()
+	h.plan(t, 7) // PUT as "pick"
+	if err := h.deliver(t, "evt-1", 10, func(d map[string]any) { d["path_id"] = "PICK" }); err != nil {
+		t.Fatal(err)
+	}
+	// The same commitment under another spelling is the same key: no news.
+	if err := h.deliver(t, "evt-2", 10, func(d map[string]any) { d["path_id"] = " Pick " }); err != nil {
+		t.Fatal(err)
+	}
+	drifts := h.driftData(t)
+	if len(drifts) != 2 {
+		t.Fatalf("%d LabourPlanDriftDetected rows, want one drift (integration + analytics)", len(drifts))
+	}
+	for _, d := range drifts {
+		if d["path_id"] != "PICK" || d["drift_heads"] != 3.0 {
+			t.Fatalf("drift data = %v, want path_id PICK and drift_heads 3", d)
+		}
+	}
+	wantCommitment(t, h, 10, 3)
 }
 
 func TestLaborConsumerDrift_ARedeliveredEventRaisesNothing(t *testing.T) {

@@ -3,7 +3,6 @@ package usecases
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
@@ -41,35 +40,31 @@ type RecordShiftCommitment struct {
 	Now func() time.Time
 }
 
-// Handle records the commitment. Errors: labourplan.ErrRequiredField (a blank
-// site, shift or path id) and labourplan.ErrInvalidCount (heads below zero or
-// above labourplan.MaxCount), both before anything is read or written (see
+// Handle records the commitment, its path id in the canonical form
+// (labourplan.NewCommitment), so it meets the plan of any spelling of the
+// same path. Errors: labourplan.ErrRequiredField (a blank site, shift or
+// path id) and labourplan.ErrInvalidCount (heads below zero or above
+// labourplan.MaxCount), both before anything is read or written (see
 // IsCommitmentRejection), and any store, encoder or outbox failure.
 func (uc *RecordShiftCommitment) Handle(ctx context.Context, cmd RecordShiftCommitmentCommand) error {
-	if strings.TrimSpace(cmd.SiteID) == "" || strings.TrimSpace(cmd.ShiftID) == "" || strings.TrimSpace(cmd.PathID) == "" {
-		return labourplan.ErrRequiredField
-	}
-	if cmd.CommittedHeads < 0 || cmd.CommittedHeads > labourplan.MaxCount {
-		return labourplan.ErrInvalidCount
+	c, err := labourplan.NewCommitment(cmd.SiteID, cmd.ShiftID, cmd.PathID, cmd.CommittedHeads, cmd.ObservedAt)
+	if err != nil {
+		return err
 	}
 	now := uc.Now
 	if now == nil {
 		now = utcNow
 	}
 	return uc.UnitOfWork.Do(ctx, func(ctx context.Context) error {
-		stored, _, err := uc.Commitments.Get(ctx, cmd.SiteID, cmd.ShiftID, cmd.PathID)
+		stored, _, err := uc.Commitments.Get(ctx, c.SiteID, c.ShiftID, c.PathID)
 		if err != nil {
 			return err
 		}
-		c := labourplan.Commitment{
-			SiteID: cmd.SiteID, ShiftID: cmd.ShiftID, PathID: cmd.PathID,
-			Heads: cmd.CommittedHeads, ObservedAt: cmd.ObservedAt,
-			LastDriftHeads: stored.LastDriftHeads, HasLastDrift: stored.HasLastDrift,
-		}
+		c.LastDriftHeads, c.HasLastDrift = stored.LastDriftHeads, stored.HasLastDrift
 		if err := uc.Commitments.SaveCommitment(ctx, c); err != nil {
 			return err
 		}
-		plan, found, err := uc.Plans.Get(ctx, cmd.SiteID, cmd.ShiftID, cmd.PathID)
+		plan, found, err := uc.Plans.Get(ctx, c.SiteID, c.ShiftID, c.PathID)
 		if err != nil || !found {
 			return err
 		}

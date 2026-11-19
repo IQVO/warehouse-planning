@@ -251,5 +251,9 @@ checked in here).
   read time by `laborstandard.Resolve` (site-specific beats site-wide, then the latest
   `effective_from`); a missing standard makes the requirement "unknown", never guessed. The code
   spells it `labor`, the prose `labour`.
+- **Process-path code**: `path_id` is canonical (trimmed, upper case) in every requirement-side
+  key, row and published event (`workloadforecast.CanonicalPathID`; `labourplan.CanonicalPathID`
+  delegates to it). Apply it in the domain constructors and key functions, never in a handler.
+  `site_id` and `shift_id` are matched as sent.
 - Value types used by a port live in the domain (e.g. `labourplan.Commitment`):
   `TestHexagonalArchitecture` rejects structs in `internal/application/ports`.

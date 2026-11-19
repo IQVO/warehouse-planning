@@ -67,3 +67,19 @@ Feature: The drift between the labour plan and the heads workforce-management co
     When I send GET "/labour-plans/SIM1/S1/PICK"
     Then the response status is 200
     And the labour plan has 7 planned heads from "request" at version 1
+
+  # One canonical process-path code (trimmed, upper case) keys the plan and the committed
+  # heads, so a plan and a commitment that differ only in case meet.
+  Scenario: A plan PUT as "pick" and a commitment for "PICK" raise one drift
+    Given I commit a labour plan for path "pick" in shift "S1" at site "SIM1" with 7 planned heads, rate 10 units per hour, 8 hours and 12 installed stations
+    When workforce-management committed 10 heads for path "PICK" in shift "S1" at site "SIM1" as event "wfm-1"
+    Then the outbox holds 1 LabourPlanDriftDetected event
+    And the last LabourPlanDriftDetected has 7 planned heads, 10 committed heads and a drift of 3
+    And the last LabourPlanDriftDetected is for path "PICK"
+
+  Scenario: A commitment for "pick" meets the plan later PUT as "PICK"
+    Given workforce-management committed 10 heads for path "pick" in shift "S1" at site "SIM1" as event "wfm-1"
+    When I commit a labour plan for path "PICK" in shift "S1" at site "SIM1" with 7 planned heads, rate 10 units per hour, 8 hours and 12 installed stations
+    Then the response status is 201
+    And the outbox holds 1 LabourPlanDriftDetected event
+    And the last LabourPlanDriftDetected is for path "PICK"
