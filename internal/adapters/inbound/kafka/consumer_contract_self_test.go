@@ -25,7 +25,9 @@ import (
 	outkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/analytics/report"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/labourplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
 
 // selfAnalyticsTopic is the projector twin's topic (its DLQ is this name +
@@ -69,9 +71,9 @@ func selfGoldenExamples(t *testing.T, message string) []pinnedExample {
 }
 
 // E1-self (integration stream): the events channel documents every type
-// the outbound encoder emits — the four CapacityPlan facts and the two
-// ProcessCapacity facts, built with the same cloudevents.Type the encoder
-// calls.
+// the outbound encoder emits — the four CapacityPlan facts, the two
+// ProcessCapacity facts and the three ADR 0023 facts, built with the same
+// cloudevents.Type the encoder calls.
 func TestPinnedAsyncAPICoversSubscriptions_SelfEvents(t *testing.T) {
 	documented := selfDocumentedTypes(t, outkafka.Topic)
 	emitted := append(
@@ -79,9 +81,35 @@ func TestPinnedAsyncAPICoversSubscriptions_SelfEvents(t *testing.T) {
 		cloudevents.Type(outkafka.ProcessCapacityEntity, processcapacity.EventProcessCapacityRegistered),
 		cloudevents.Type(outkafka.ProcessCapacityEntity, processcapacity.EventProcessCapacityChanged),
 	)
+	emitted = append(emitted, requirementEventTypes()...)
 	for _, typ := range emitted {
 		if _, ok := documented[typ]; !ok {
 			t.Errorf("own pinned spec does not document emitted type %s on %s (documented: %v)", typ, outkafka.Topic, keysOf(documented))
+		}
+	}
+}
+
+// requirementEventTypes lists the three ADR 0023 types, published on BOTH
+// own topics.
+func requirementEventTypes() []string {
+	return []string{
+		cloudevents.Type(outkafka.WorkloadForecastEntity, workloadforecast.EventWorkloadForecastReceived),
+		cloudevents.Type(outkafka.LabourPlanEntity, labourplan.EventLabourPlanCommitted),
+		cloudevents.Type(outkafka.LabourPlanEntity, labourplan.EventLabourPlanDriftDetected),
+	}
+}
+
+// E1-self (analytics stream, ADR 0023): the analytics channel documents the
+// analytics copy of the three requirement-side types too, though the
+// projector does not route them (they are acknowledged unprojected).
+func TestPinnedAsyncAPICoversSubscriptions_SelfAnalyticsRequirementTypes(t *testing.T) {
+	documented := selfDocumentedTypes(t, selfAnalyticsTopic)
+	for _, typ := range requirementEventTypes() {
+		if _, ok := documented[typ]; !ok {
+			t.Errorf("own pinned spec does not document analytics type %s on %s", typ, selfAnalyticsTopic)
+		}
+		if _, routed := analyticsKinds[typ]; routed {
+			t.Errorf("%s is routed by the projector; this wave acknowledges it unprojected", typ)
 		}
 	}
 }
@@ -169,7 +197,9 @@ func TestGoldenEventsDecode_SelfAnalytics(t *testing.T) {
 // the integration event name with their .vN suffix).
 func TestCloudEventsEnvelopeInvariants_Self(t *testing.T) {
 	doc := loadPinnedAsyncAPI(t, pinnedSelfSpec)
-	for _, message := range []string{"CapacityPlanCreated", "ProcessCapacityRegistered", "CapacityPlanCreatedAnalytics"} {
+	for _, message := range []string{"CapacityPlanCreated", "ProcessCapacityRegistered", "CapacityPlanCreatedAnalytics",
+		"WorkloadForecastReceived", "LabourPlanCommitted", "LabourPlanDriftDetected",
+		"WorkloadForecastReceivedAnalytics", "LabourPlanCommittedAnalytics", "LabourPlanDriftDetectedAnalytics"} {
 		msg := doc.message(t, message)
 		wantSchema := doc.documentedConst(t, msg, "dataschema")
 		for _, ex := range selfGoldenExamples(t, message) {
