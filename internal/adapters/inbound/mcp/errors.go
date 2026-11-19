@@ -45,6 +45,10 @@ func slugFor(err error) (slug string, ok bool) {
 		{inbound.ErrNonFiniteMinutes, "non-finite-minutes"},
 		{observed.ErrNonPositiveTasksPerOrder, "non-positive-tasks-per-order"},
 		{capacityplan.ErrNonPositiveTasksPerOrder, "non-positive-tasks-per-order"},
+		// Forecast demand (docs/adr/0024).
+		{capacityplan.ErrUnknownDemandSource, "unknown-demand-source"},
+		{capacityplan.ErrMissingUnitsPerOrder, "missing-units-per-order"},
+		{capacityplan.ErrDemandSourceConflict, "demand-source-conflict"},
 	}
 	for _, entry := range catalog {
 		if errors.Is(err, entry.target) {

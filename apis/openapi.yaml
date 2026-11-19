@@ -415,6 +415,11 @@ paths:
         response is that figure. When the read model has no order for that
         location and window the request is rejected with 422
         missing-assigned-demand: absence never silently means zero demand.
+        demand_source (docs/adr/0024) may name the source instead:
+        "forecast" derives assigned_demand from the workload forecast of
+        (site_id, forecast_path_id, default path_id) -- the units of the
+        buckets whose cpt is in the window over units_per_order, rounded up
+        to orders -- and the plan returns forecast_path_id.
         labour_requirement (docs/adr/0022) states, per path step, the labour
         its demand requires: tasks x the standard seconds of the step's task
         type, read from the local copy of labor-performance's labour
@@ -466,7 +471,12 @@ paths:
             order for this location and window (missing-assigned-demand);
             a tasks_per_order value is not positive
             (non-positive-tasks-per-order); site_id is absent/blank; or
-            warehouse_id/location/path_id is blank.
+            warehouse_id/location/path_id is blank. demand_source
+            (docs/adr/0024): an unknown value (unknown-demand-source), an
+            input the source does not read (demand-source-conflict),
+            demand_source forecast without units_per_order
+            (missing-units-per-order) or with no forecast bucket in the window
+            (missing-assigned-demand).
           content:
             application/problem+json:
               schema:
@@ -1976,6 +1986,32 @@ components:
           example:
             PICK: 3
             PACK: 1
+        demand_source:
+          type: string
+          enum: [request, orders, forecast]
+          description: >
+            OPTIONAL (docs/adr/0024). Where assigned_demand comes from.
+            Omitted: "request" when assigned_demand is given, "orders" when it
+            is omitted (the pre-ADR-0024 behaviour). "forecast": the units of
+            the workload forecast of (site_id, forecast_path_id) whose bucket
+            cpt is in [window_start, window_end) (start in, end out), divided
+            by units_per_order and rounded UP to orders. units_per_order is
+            then REQUIRED (422 missing-units-per-order); no bucket in the
+            window is 422 missing-assigned-demand, never zero demand.
+            "orders" and "forecast" derive assigned_demand and refuse a stated
+            one, "request" requires it (422 demand-source-conflict /
+            missing-assigned-demand); any other value is 422
+            unknown-demand-source.
+          example: forecast
+        forecast_path_id:
+          type: string
+          description: >
+            OPTIONAL, with demand_source "forecast" only (422
+            demand-source-conflict otherwise). The process path whose workload
+            forecast is read at site_id -- the path the volume enters (e.g. the
+            wes path PICK), which need not be path_id. Defaults to path_id.
+            Read in its canonical form (trimmed, upper case).
+          example: PICK
     LabourRequirement:
       type: object
       description: >
@@ -2065,13 +2101,21 @@ components:
           example: 12000
         demand_source:
           type: string
-          enum: [request, orders]
+          enum: [request, orders, forecast]
           description: >
             Additive (docs/adr/0004). "request": assigned_demand was stated by
             the caller (also every plan created before demand ingestion);
             "orders": it was omitted and defaulted from the order-management
-            read model.
+            read model; "forecast": it was derived from the workload forecast
+            of forecast_path_id (docs/adr/0024).
           example: request
+        forecast_path_id:
+          type: string
+          description: >
+            Additive (docs/adr/0024). The canonical path code of the workload
+            forecast the demand was read from; present only when
+            demand_source is "forecast".
+          example: PICK
         status:
           type: string
           enum: [DRAFT, PUBLISHED]

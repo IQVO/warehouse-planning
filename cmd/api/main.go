@@ -178,6 +178,8 @@ func buildServer(
 			Metrics:      planMetrics,
 			// ADR 0022: each step priced with the labour standards copy.
 			LaborStandards: ad.laborStandards,
+			// ADR 0024: demand_source forecast reads the workload forecasts.
+			Forecasts: ad.workloadForecasts,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans:      ad.capacityPlans,

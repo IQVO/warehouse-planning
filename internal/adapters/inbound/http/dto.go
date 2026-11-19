@@ -96,6 +96,11 @@ type createCapacityPlanRequest struct {
 	// (docs/adr/0022): the step's tasks are assigned_demand x the factor.
 	// Every value must be positive (422 non-positive-tasks-per-order).
 	TasksPerOrder map[string]float64 `json:"tasks_per_order"`
+	// DemandSource (request, orders or forecast) and ForecastPathID are
+	// OPTIONAL (docs/adr/0024 decision 1); see
+	// usecases.CreateCapacityPlanCommand.
+	DemandSource   string `json:"demand_source"`
+	ForecastPathID string `json:"forecast_path_id"`
 }
 
 // capacityPlanResponse is the CapacityPlan representation returned by all
@@ -121,10 +126,13 @@ type capacityPlanResponse struct {
 	PublishedAt        *string `json:"published_at,omitempty"`
 
 	// DemandSource says where assigned_demand came from: "request" (stated
-	// by the caller; also every plan created before demand ingestion) or
-	// "orders" (defaulted from the order-management read model). Additive,
+	// by the caller; also every plan created before demand ingestion),
+	// "orders" (defaulted from the order-management read model) or
+	// "forecast" (derived from the workload forecast of ForecastPathID,
+	// docs/adr/0024; the path is present only then). Additive,
 	// docs/adr/0004.
-	DemandSource string `json:"demand_source"`
+	DemandSource   string `json:"demand_source"`
+	ForecastPathID string `json:"forecast_path_id,omitempty"`
 	// BottleneckConstraint (the constraint type binding the bottleneck
 	// step, e.g. LABOR or STATION; empty for plans created before it was
 	// recorded) and Warnings (never null) are additive, see ADR 0002.

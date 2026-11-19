@@ -26,6 +26,8 @@ func wireRequirementSide(s *inboundhttp.Server, ob *memory.OutboxRepo, encoder p
 	uow := memory.NewUnitOfWork(forecasts, plans, ob, commitments)
 	s.ReceiveWorkloadForecast = &usecases.ReceiveWorkloadForecast{Forecasts: forecasts, Outbox: ob, Encoder: encoder, UnitOfWork: uow}
 	s.GetWorkloadForecast = &usecases.GetWorkloadForecast{Forecasts: forecasts}
+	// ADR 0024: demand_source forecast reads the same forecasts, as cmd/api wires it.
+	s.CreateCapacityPlan.Forecasts = forecasts
 	s.CommitLabourPlan = &usecases.CommitLabourPlan{
 		Plans: plans, Forecasts: forecasts, Outbox: ob, Encoder: encoder, UnitOfWork: uow, Stations: stations,
 		Commitments: commitments,
