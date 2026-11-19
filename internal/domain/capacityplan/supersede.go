@@ -52,10 +52,10 @@ func (k SupersedeKey) Matches(p *CapacityPlan) bool {
 // blank by or by equal to the plan's own id, recording nothing. The plan
 // keeps its published_at and every computed figure: only the status moves.
 func (c *CapacityPlan) Supersede(by string, at time.Time) error {
-	switch {
-	case c.status == StatusSuperseded:
+	if c.status == StatusSuperseded {
 		return ErrSuperseded
-	case c.status != StatusPublished, by == "", by == c.id:
+	}
+	if c.status != StatusPublished || by == "" || by == c.id {
 		return ErrNotSupersedable
 	}
 	c.status = StatusSuperseded
