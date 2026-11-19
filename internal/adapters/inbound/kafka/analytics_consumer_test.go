@@ -20,7 +20,10 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/analyticsstore"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/analytics/report"
+	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/labourplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
 
 const (
@@ -243,6 +246,48 @@ func TestAnalyticsConsumer_UnknownTypeIsIgnoredNotDeadLettered(t *testing.T) {
 	h.run(t, other, foreign)
 	if proj.callCount() != 0 || len(h.dlq.written()) != 0 {
 		t.Fatalf("projection calls = %d, dlq = %d; unknown types are acknowledged untouched", proj.callCount(), len(h.dlq.written()))
+	}
+}
+
+// The ADR 0023 types share the analytics topic but are not projected in
+// this wave: the real AnalyticsEncoder's bytes for each are acknowledged
+// (offset committed) without a projection call, a dead letter or a WARN.
+func TestAnalyticsConsumer_RequirementTypesAreAcknowledgedUnprojected(t *testing.T) {
+	enc := &outboundkafka.AnalyticsEncoder{}
+	start := anCreatedAt
+	var values [][]byte
+	for _, encode := range []func() ([]outbox.Message, error){
+		func() ([]outbox.Message, error) {
+			return enc.EncodeWorkloadForecastEvents(workloadforecast.Received{SiteID: "SIM1", PathID: "pick", TotalQuantity: 12000, BucketCount: 3, ReceivedAt: anCreatedAt, Version: 1})
+		},
+		func() ([]outbox.Message, error) {
+			return enc.EncodeLabourPlanCommitted(
+				labourplan.Committed{SiteID: "SIM1", ShiftID: "AM", PathID: "pick", PlannedHeads: 15, RateUnitsPerHour: 112.5, Hours: 7.5, InstalledStations: 16, ShiftStart: &start, HeadsSource: labourplan.HeadsFromForecast, Version: 1, At: anCreatedAt},
+				labourplan.Committed{SiteID: "SIM1", ShiftID: "AM", PathID: "pick", PlannedHeads: 12, RateUnitsPerHour: 112.5, Hours: 7.5, InstalledStations: 16, HeadsSource: labourplan.HeadsFromRequest, Version: 2, At: anPublishedAt})
+		},
+		func() ([]outbox.Message, error) {
+			return enc.EncodeLabourPlanDriftDetected(labourplan.CompareHeads(15, 12).Event("SIM1", "AM", "pick", anPublishedAt))
+		},
+	} {
+		msgs, err := encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range msgs {
+			values = append(values, m.Value)
+		}
+	}
+	proj := &recordingProjection{}
+	h := newAnHarness(proj)
+	reader := h.run(t, values...)
+	if proj.callCount() != 0 || len(h.dlq.written()) != 0 {
+		t.Fatalf("projection calls = %d, dlq = %d; the ADR 0023 types are acknowledged unprojected", proj.callCount(), len(h.dlq.written()))
+	}
+	if got := reader.log(); len(got) != 2*len(values) || got[len(got)-1] != "commit:3" {
+		t.Fatalf("reader events = %v: every one of the %d messages must be fetched and committed", got, len(values))
+	}
+	if warns := h.logs.lines(`"level":"WARN"`) + h.logs.lines(`"level":"ERROR"`); warns != 0 {
+		t.Fatalf("%d WARN/ERROR lines for valid events of an unprojected type: %s", warns, h.logs.String())
 	}
 }
 
