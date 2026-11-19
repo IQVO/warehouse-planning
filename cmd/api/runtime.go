@@ -14,6 +14,7 @@ import (
 	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	outboxrelay "github.com/claudioed/warehouse-planning/internal/adapters/outbound/outbox"
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
 
@@ -154,11 +155,19 @@ type consumerSpec struct {
 	build                 func(brokers []string, group string) runner
 }
 
-// consumerSpecs lists the six consumers; they are always on.
-func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProcessCapacityConstraint, logger *slog.Logger) []consumerSpec {
+// consumerSpecs lists the six consumers; they are always on. encoder is the
+// fan-out encoder the labor consumer's labour plan drift outboxes with.
+func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProcessCapacityConstraint, encoder ports.EventEncoder, logger *slog.Logger) []consumerSpec {
 	return []consumerSpec{
+		// ADR 0023 decision 3: the same ShiftPlanCommitted line also upserts
+		// the committed heads and raises LabourPlanDriftDetected, in the
+		// claim's unit of work.
 		{"labor-capacity", inboundkafka.LaborTopic, envLaborGroup, func(brokers []string, group string) runner {
-			return inboundkafka.NewLaborCapacityConsumer(brokers, group, register, ad.processedEvents, ad.uow, logger)
+			commitments := &usecases.RecordShiftCommitment{
+				Commitments: ad.committedHeads, Plans: ad.labourPlans,
+				Outbox: ad.outbox, Encoder: encoder, UnitOfWork: ad.uow,
+			}
+			return inboundkafka.NewLaborCapacityConsumer(brokers, group, register, commitments, ad.processedEvents, ad.uow, logger)
 		}},
 		{"storage-capacity", inboundkafka.FacilityTopic, envStorageGroup, func(brokers []string, group string) runner {
 			return inboundkafka.NewStorageCapacityConsumer(brokers, group, ad.storageTally, ad.processedEvents, ad.uow, logger)
