@@ -20,6 +20,7 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'overview/context'},
       items: [
         'overview/quickstart',
+        'overview/planners-morning',
         'overview/aggregates',
         'overview/capacity-composition',
         'overview/runtime',

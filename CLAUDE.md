@@ -5,7 +5,10 @@
 `github.com/claudioed/warehouse-planning`). It answers: *can this warehouse
 process the demand assigned to it, given its labor, location, equipment,
 station, conveyor and buffer constraints?* It owns the `ProcessCapacity` and
-`CapacityPlan` aggregates, station-capacity composition and window coverage.
+`CapacityPlan` aggregates, station-capacity composition and window coverage,
+and the requirement side: the `WorkloadForecast` and `LabourPlan` aggregates
+(ADR 0023; REST only, no MCP tool or A2A skill, decision 7) and a local copy
+of labor-performance's labour standards (ADR 0022).
 Study project: not production software.
 
 ## Hard rules (each one cost an incident or is fitness-tested)

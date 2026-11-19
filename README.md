@@ -12,10 +12,18 @@ capacity shortages.
 
 It owns the `ProcessPath` and `ProcessCapacity` aggregates (the registered
 capacity facts), the `CapacityPlan` aggregate (draft/publish, shortage,
-bottleneck), station and inbound-labour standards, storage-capacity tallies
-and the demand read models. It does **not** own execution (`fulfillment-execution`,
-`wes-work-planning`), not the warehouse map (`facility-layout` — consumed),
-not workforce scheduling (`workforce-management` — consumed), not inventory.
+bottleneck, and the labour each step requires), station and inbound-labour
+standards, storage-capacity tallies and the demand read models. Since ADR 0022
+and ADR 0023 it also owns the **requirement side** of labour planning: the
+`WorkloadForecast` (volume due per path, by CPT) and the shift `LabourPlan`
+(the heads a path needs for a shift, published as `LabourPlanCommitted`), plus
+the drift between that plan and the heads workforce-management committed.
+It does **not** own execution (`fulfillment-execution`, `wes-work-planning`),
+not the warehouse map (`facility-layout` — consumed), not labour supply
+(`workforce-management` — it commits the heads; consumed), not the engineered
+labour standards (`labor-performance` — a local copy is consumed), not the
+process-flow topology (`process-path-management`), not inventory. It never
+reads stock and has no solver.
 It is an **Open Host Service** with a **Published Language**: its REST API,
 its 14 MCP tools and its events on `warehouse.warehouse-planning.events`;
 its downstream conformists today are `warehouse-console`'s capacity remote
@@ -45,7 +53,7 @@ reference differs from `apis/openapi.yaml`).
 
 | Area | Pages |
 |---|---|
-| Overview | [Introduction](docs/docs/intro.md), [Bounded context](docs/docs/overview/context.md), [Runtime and binaries](docs/docs/overview/runtime.md), [Quickstart](docs/docs/overview/quickstart.md), [Aggregates](docs/docs/overview/aggregates.md), [Capacity composition](docs/docs/overview/capacity-composition.md) |
+| Overview | [Introduction](docs/docs/intro.md), [Bounded context](docs/docs/overview/context.md), [Runtime and binaries](docs/docs/overview/runtime.md), [Quickstart](docs/docs/overview/quickstart.md), [How-to: a planner's morning](docs/docs/overview/planners-morning.md) (forecast, labour plan, drift), [Aggregates](docs/docs/overview/aggregates.md), [Capacity composition](docs/docs/overview/capacity-composition.md) |
 | Operations | [Configuration](docs/docs/operations/configuration.md) (every env var per binary), [Runbook](docs/docs/operations/runbook.md), [Observability](docs/docs/operations/observability.md), [Troubleshooting](docs/docs/operations/troubleshooting.md) |
 | Development | [Testing](docs/docs/development/testing.md) (test pyramid, `make` targets, CI jobs) |
 | Domain-Driven Design | [Use cases](docs/docs/ddd/use-cases.md), [Subdomain classification](docs/docs/ddd/subdomain-classification.md), [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [DDD artifacts index](docs/docs/ddd/ddd-artifacts.md) |
@@ -68,7 +76,10 @@ internal/
   domain/                     pure business logic
     processpath/              ProcessPath aggregate (steps, standards)
     processcapacity/          ProcessCapacity aggregate (registered capacity constraints)
-    capacityplan/             CapacityPlan aggregate (DRAFT -> PUBLISHED, shortage, bottleneck)
+    capacityplan/             CapacityPlan aggregate (DRAFT -> PUBLISHED, shortage, bottleneck, labour requirement per step)
+    laborstandard/            local copy of labor-performance's labour standards + Resolve (ADR 0022)
+    workloadforecast/         WorkloadForecast aggregate (CPT buckets per site and path, ADR 0023)
+    labourplan/               LabourPlan aggregate, DeriveHeads, the commitment and the drift (ADR 0023)
     demand/                   expected-demand read model (order events)
     inbound/                  inbound labour standards + inbound demand (dock appointments, ADR 0017)
     observed/                 observed-capacity feedback (task completions, ADR 0017)
@@ -106,19 +117,31 @@ that matter here: `runtime_no_memory_fitness_test.go`,
 
 ## Domain events
 
-Six published event types, all through the transactional outbox (ADR 0007)
-to BOTH `warehouse.warehouse-planning.events` (the integration topic) and
-`warehouse.warehouse-planning.analytics` — the analytics twin carries **plan
-facts only** (ADR 0005): `CapacityPlanCreated`,
-`CapacityPlanPublished`, `CapacityShortageDetected` and `BottleneckDetected`
-(entity `capacityplan`). `ProcessCapacityRegistered` and
-`ProcessCapacityChanged` (entity `processcapacity`) publish on the
-integration topic only. All are specified in `apis/asyncapi.yaml`.
+Nine published event types, all through the transactional outbox (ADR 0007).
+Seven go to BOTH `warehouse.warehouse-planning.events` (the integration topic)
+and `warehouse.warehouse-planning.analytics` with the same payload; the two
+`ProcessCapacity` types publish on the integration topic only. The projector
+projects only the four plan facts (ADR 0005); it acknowledges the three
+requirement-side types without projecting them.
+
+| Type | Entity | Raised when | Kafka key / `subject` | Topics | Known consumers |
+|---|---|---|---|---|---|
+| `CapacityPlanCreated` | `capacityplan` | a plan is created (always `DRAFT`) | plan id | both | order-management (opt-in) |
+| `CapacityPlanPublished` | `capacityplan` | a plan is published | plan id | both | order-management, network-inventory-planning |
+| `CapacityShortageDetected` | `capacityplan` | publish, only when `shortage > 0` | plan id | both | order-management |
+| `BottleneckDetected` | `capacityplan` | publish, only when `shortage > 0` | plan id | both | none |
+| `ProcessCapacityRegistered` | `processcapacity` | the first constraint of a (process, location, window) | `<processType>/<location>/<windowStart>/<windowEnd>` | integration | none |
+| `ProcessCapacityChanged` | `processcapacity` | a registration moves the effective rate | same | integration | none |
+| `WorkloadForecastReceived` | `workloadforecast` | a `PUT /workload-forecasts/...` that changed the buckets (ADR 0023) | `<site_id>/<path_id>` | both | none yet |
+| `LabourPlanCommitted` | `labourplan` | a `PUT /labour-plans/...` that created or changed the plan (ADR 0023) | `<site_id>/<shift_id>/<path_id>` | both | workforce-management (its ADR 0043, group `workforce-management-labour-plans`) |
+| `LabourPlanDriftDetected` | `labourplan` | the heads workforce-management committed differ from the plan and the drift is new (ADR 0023 decision 3) | `<site_id>/<shift_id>/<path_id>` | both | none yet |
+
+All are specified in `apis/asyncapi.yaml`.
 
 Every Kafka message on both topics is a **CloudEvents 1.0** event in
 structured content mode (ADR 0006), header
 `content-type: application/cloudevents+json; charset=UTF-8`, `subject` =
-the plan id, `dataschema` =
+the Kafka key above, `dataschema` =
 `urn:warehouse:warehouse-planning:<events|analytics>:<EventName>:v1`.
 CloudEvents `type` convention, identical to the other warehouse-systems
 services — this context's subdomain segment is `wes`:
@@ -128,22 +151,35 @@ com.warehouse.wes.warehouse-planning.<entity>.<EventName>
 
 com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated
 com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered
+com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted
 ```
 
 W3C trace context crosses the outbox with the event (ADR 0014). Consumed
 facts (one pinned consumer group each; DLQ at `<topic>.dlq`):
 
-| Topic | Types consumed | Consumer group env |
-|---|---|---|
-| `warehouse.workforce.events` | `ShiftPlanCommitted` | `LABOR_CAPACITY_CONSUMER_GROUP` |
-| `warehouse.facility.events` | `LocationSlotRegistered`, `LocationSlotDecommissioned` | `STORAGE_CAPACITY_CONSUMER_GROUP` |
-| `warehouse.order-management.events` | `OrderAllocated`, `OrderPartiallyAllocated` | `DEMAND_CONSUMER_GROUP` |
-| `warehouse.dock-scheduling.events` | `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow` | `DOCK_APPOINTMENT_CONSUMER_GROUP` |
-| `warehouse.fulfillment.events` | `TaskCompleted` | `OBSERVED_CAPACITY_CONSUMER_GROUP` |
-| `warehouse.labor-performance.events` | `LaborStandardDefined`, `LaborStandardRevised` (ADR 0022) | `LABOR_STANDARD_CONSUMER_GROUP` |
+| Topic | Types consumed | Consumer group env | Effect |
+|---|---|---|---|
+| `warehouse.workforce.events` | `ShiftPlanCommitted` | `LABOR_CAPACITY_CONSUMER_GROUP` | a LABOR constraint; a line with a `shift_id` also records the committed heads and surfaces the labour plan drift (ADR 0023) |
+| `warehouse.facility.events` | `LocationSlotRegistered`, `LocationSlotDecommissioned` | `STORAGE_CAPACITY_CONSUMER_GROUP` | storage and station tally |
+| `warehouse.order-management.events` | `OrderAllocated`, `OrderPartiallyAllocated` | `DEMAND_CONSUMER_GROUP` | expected-demand read model |
+| `warehouse.dock-scheduling.events` | `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow` | `DOCK_APPOINTMENT_CONSUMER_GROUP` | inbound demand read model |
+| `warehouse.fulfillment.events` | `TaskCompleted` | `OBSERVED_CAPACITY_CONSUMER_GROUP` | observed-capacity buckets |
+| `warehouse.labor-performance.events` | `LaborStandardDefined`, `LaborStandardRevised` (ADR 0022) | `LABOR_STANDARD_CONSUMER_GROUP` (chart default `warehouse-planning-labor-standards`) | the `labor_standards` copy |
 
 The projector consumes `warehouse.warehouse-planning.analytics` under
 `ANALYTICS_CONSUMER_GROUP`.
+
+### Requirement-side tables
+
+Added by the OLTP migrations of ADR 0022 and ADR 0023 (all additive):
+
+| Migration | Table / column | One row per | Holds |
+|---|---|---|---|
+| `0013` | `labor_standards` | labor-performance `standard_id` | `task_type`, `handling_unit` (`''` = task-type-only), `site_code` (`''` = every site), `expected_seconds`, `travel_component_seconds`, `effective_from`, `as_of`; facts, resolved at read time |
+| `0013` | `capacity_plans.labour_requirement` (JSONB) | capacity plan | the labour each step of the plan's path requires, computed and stored at creation |
+| `0014` | `workload_forecasts` | `(site_id, path_id)` | `buckets` (`[{cpt, quantity}]`, at least one), `received_at`, `version` |
+| `0014` | `labour_plans` | `(site_id, shift_id, path_id)` | `planned_heads`, `rate_units_per_hour`, `hours`, `installed_stations`, optional `shift_start`, `heads_source`, `version`; `CHECK (planned_heads <= installed_stations)` |
+| `0015` | `labour_plan_commitments` | `(site_id, shift_id, path_id)` | `committed_heads`, `observed_at`, `last_drift_heads` (NULL until a drift was computed) |
 
 ---
 
@@ -154,7 +190,8 @@ there is no in-memory mode, and `cmd/api` exits at boot, naming every
 missing variable, unless `DATABASE_URL`, `KAFKA_BROKERS`,
 `LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`,
 `DEMAND_CONSUMER_GROUP`, `DOCK_APPOINTMENT_CONSUMER_GROUP`,
-`OBSERVED_CAPACITY_CONSUMER_GROUP` and `DEMAND_SITE_ID` are set
+`OBSERVED_CAPACITY_CONSUMER_GROUP`, `LABOR_STANDARD_CONSUMER_GROUP` and
+`DEMAND_SITE_ID` are set
 (`EVENT_PUBLISHER=log` is refused, and so is the retired
 `INBOUND_DEMAND_CONSUMER_GROUP` of the old inbound-receiving appointment source, ADR 0020).
 
@@ -163,7 +200,7 @@ docker compose up -d --wait   # Postgres :55432 (planning/planning/planning) + K
                               # (KAFKA_HOST_PORT=19092 picks a free broker port)
 export DATABASE_URL='postgres://planning:planning@localhost:55432/planning?sslmode=disable'
 export KAFKA_BROKERS=localhost:9092 DEMAND_SITE_ID=SIM1
-export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-storage DEMAND_CONSUMER_GROUP=wp-local-demand DOCK_APPOINTMENT_CONSUMER_GROUP=wp-local-dock-appointments OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-observed-capacity
+export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-storage DEMAND_CONSUMER_GROUP=wp-local-demand DOCK_APPOINTMENT_CONSUMER_GROUP=wp-local-dock-appointments OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-observed-capacity LABOR_STANDARD_CONSUMER_GROUP=wp-local-labor-standards
 go run ./cmd/api              # migrations run automatically at startup; listens on :8080
 ```
 
@@ -183,6 +220,7 @@ go run ./cmd/api              # migrations run automatically at startup; listens
 | `DOCK_APPOINTMENT_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.dock-scheduling.events` (ADR 0020; inbound demand is attributed to the events' `site_id`) |
 | `INBOUND_DEMAND_CONSUMER_GROUP` | **refused** | retired with inbound-receiving as the appointment source (ADR 0020): setting it is a boot error naming `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 | `OBSERVED_CAPACITY_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.fulfillment.events` (ADR 0017) |
+| `LABOR_STANDARD_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.labor-performance.events` (ADR 0022; chart default `warehouse-planning-labor-standards`) |
 | `DEMAND_SITE_ID` | **required** | the fallback site for consumed orders whose event carries no `site_id` (ADR 0021), and the one site every task completion is attributed to (those events carry no site); dock appointments carry their own `site_id` |
 | `EVENT_PUBLISHER` | *(unset = `kafka`)* | only `kafka` is accepted; `log` is refused at boot (ADR 0016) |
 | `HTTP_ADDR` | `:8080` | REST listen address |
@@ -328,6 +366,19 @@ Read side (`cmd/api`, `:8080`):
 | `GET` | `/labour-plans?site_id=&shift_id=` | ListLabourPlans (by path id, keyset page `{items,nextCursor}`) |
 | `GET` | `/healthz` / `/readyz` | liveness / readiness |
 
+The two requirement-side `PUT`s (ADR 0023) are naturally idempotent and take
+no `Idempotency-Key`: `201` for a first write (version 1), `200` with
+version + 1 when something changed, `200` with the stored resource and its
+version unchanged when nothing changed (nothing is written and no event is
+raised). A concurrent writer that moves the stored version is retried once;
+a second conflict is `409 version-conflict`. The labour plan answer carries
+`warnings` (never stored, computed on every read): one when the
+facility-layout tally knows at least one but fewer stations of the activity
+named like the path than `installed_stations`. These routes are REST only:
+no MCP tool and no A2A skill (ADR 0023 decision 7). The walkthrough with
+request and response bodies is
+[How-to: a planner's morning](docs/docs/overview/planners-morning.md).
+
 Reports (`cmd/planning-reports`, `:8092`): `GET /reports/bottleneck-frequency`,
 `GET /reports/shortage-trend`, `GET /reports/plan-throughput`,
 `GET /reports/freshness`.
@@ -354,7 +405,8 @@ by default) refuses to render without `database.url` or
 `database.existingSecret`, `kafka.brokers`, the six consumer groups
 (`config.laborCapacityConsumerGroup`, `config.storageCapacityConsumerGroup`,
 `demand.consumerGroup`, `dockAppointments.consumerGroup`,
-`observed.consumerGroup`) and `demand.siteId` (and, with analytics on,
+`observed.consumerGroup`, and `laborStandard.consumerGroup`, which defaults to
+`warehouse-planning-labor-standards` and refuses an empty value) and `demand.siteId` (and, with analytics on,
 `analytics.projector.consumerGroup`): Postgres and Kafka are the only
 runtime ([ADR 0016](docs/adr/0016-postgres-and-kafka-are-the-only-runtime.md)).
 The analytical DSN comes from `analytics.databaseUrl` or
@@ -483,10 +535,12 @@ CI (`.github/workflows/ci.yml`) runs `lint`, `guide-lint`, `complexity`,
 
 ## Architecture Decision Records
 
-The ADR index lives at [docs/adr/index.md](docs/adr/index.md) — 18 decisions,
+The ADR index lives at [docs/adr/index.md](docs/adr/index.md) — 25 decisions,
 from the bounded context and the capacity-composition semantics to the
 analytics read side, the CloudEvents catalogue, MCP adoption, HPA tuning,
-OTLP telemetry and the A2A inbound adapter.
+OTLP telemetry, the A2A inbound adapter and the requirement side (labour
+standards from labor-performance, ADR 0022; the workload forecast and the
+shift labour plan, ADR 0023).
 
 ## License
 

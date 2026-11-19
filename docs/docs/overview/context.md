@@ -14,6 +14,18 @@ operators make known, normalizes them to one comparable flow unit, and reports
 the effective end-to-end capacity of a process path, the bottleneck step, and
 the shortage of a planning window.
 
+Since [ADR 0022](/docs/adr/0022-labour-standards-from-labor-performance) and
+[ADR 0023](/docs/adr/0023-workload-forecast-and-labour-plan-move-here) it
+also owns the **requirement side** of labour planning: how much labour the
+demand needs. A capacity plan states the labour hours each step requires
+(from a local copy of labor-performance's engineered standards); the workload
+forecast and the shift labour plan, moved here from wes-work-planning, state
+the heads a path needs per shift and publish them as `LabourPlanCommitted`.
+The **supply** (who is available and how many heads are committed) stays in
+workforce-management, the standards stay in labor-performance, execution stays
+in wes-work-planning, and the process-flow topology in process-path-management.
+This context never reads stock and has no solver.
+
 The decision to create it as a separate context (rather than extending an
 existing service) is [ADR 0001](/docs/adr/0001-warehouse-planning-bounded-context):
 `workforce-management` explicitly stops at the path boundary, and no other
@@ -23,13 +35,15 @@ context combined labor, station and location constraints.
 
 ```mermaid
 flowchart LR
-  WFM[workforce-management] -- "ShiftPlanCommitted" --> WP
+  WFM[workforce-management] -- "ShiftPlanCommitted (LABOR, committed heads)" --> WP
   FL[facility-layout] -- "LocationSlotRegistered / Decommissioned" --> WP
   OMIN[order-management] -- "OrderAllocated / OrderPartiallyAllocated" --> WP
   DS[dock-scheduling] -- "DockAppointmentBooked / Rescheduled / Cancelled / NoShow" --> WP
   FE[fulfillment-execution] -- "TaskCompleted" --> WP
+  LPF[labor-performance] -- "LaborStandardDefined / Revised" --> WP
   WP((warehouse-planning))
   WP -- "CapacityPlan events" --> OM[order-management]
+  WP -- "LabourPlanCommitted" --> WFMD[workforce-management]
   WP -- "MCP read tools" --> OPS[warehouse-ops-agent]
   WP -- "REST via capacity_mfe" --> CON[warehouse-console]
 ```
@@ -41,7 +55,9 @@ DDD pattern of every edge and its code evidence, is on the
 
 | Relationship | Direction | Status |
 | --- | --- | --- |
-| `workforce-management` to `warehouse-planning` | labor via Kafka (`ShiftPlanCommitted`) | implemented (consumer) |
+| `workforce-management` to `warehouse-planning` | labor via Kafka (`ShiftPlanCommitted`): a LABOR constraint, and for a line with a `shift_id` the committed heads the labour plan drift compares | implemented (consumer; drift since ADR 0023) |
+| `labor-performance` to `warehouse-planning` | engineered labour standards via Kafka (`LaborStandardDefined`, `LaborStandardRevised`), a local copy | implemented (consumer, always on; ADR 0022) |
+| `warehouse-planning` to `workforce-management` | the shift labour requirement via Kafka (`LabourPlanCommitted`) | implemented (producer); workforce-management keeps a copy and proposes heads from it (its ADR 0043) |
 | `facility-layout` to `warehouse-planning` | storage positions and stations via Kafka (`LocationSlotRegistered`, `LocationSlotDecommissioned`) | implemented (consumer, tally only) |
 | `order-management` to `warehouse-planning` | expected demand via Kafka (`OrderAllocated`, `OrderPartiallyAllocated`) | implemented (consumer, always on; ADR 0004, ADR 0016) |
 | `dock-scheduling` to `warehouse-planning` | inbound labour demand via Kafka (`DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow`), attributed to the events' `site_id`, priced by an operator-declared inbound labour standard | implemented (consumer, always on; ADR 0017, source switched from `inbound-receiving` by ADR 0020) |
@@ -50,7 +66,8 @@ DDD pattern of every edge and its code evidence, is on the
 | `warehouse-planning` to `order-management` | `CapacityPlanCreated`, `CapacityPlanPublished`, `CapacityShortageDetected`, `BottleneckDetected` | implemented (producer); `order-management` consumes `CapacityPlanCreated`, `CapacityPlanPublished` and `CapacityShortageDetected` and ignores `BottleneckDetected` (its `planned_capacity_consumer.go`, ADR 0031 there) |
 | `warehouse-planning` to `warehouse-ops-agent` | read-only MCP tools (`get_process_path_capacity`, `get_capacity_plan`, `get_storage_capacity`, `list_station_standards`) | implemented (the agent's MCP client) |
 | `warehouse-planning` to `warehouse-console` | REST through the `capacity_mfe` remote in `web/` | implemented |
-| `wes-work-planning`, `network-fulfillment` | demand ingestion | planned in ADR 0001, **not** implemented (observed capacity feedback from `fulfillment-execution` and inbound demand from the dock appointments landed in ADR 0017 and moved to `dock-scheduling` in ADR 0020; automatic adjustment of planned capacity from observed capacity stays a later ADR) |
+| `wes-work-planning` | handed its charge forecast and path plan over (ADR 0023, its ADR 0049: its `/charge` and `/plan` routes answer `410`) | no runtime edge; execution stays there |
+| `network-fulfillment` | demand ingestion | planned in ADR 0001, **not** implemented (observed capacity feedback from `fulfillment-execution` and inbound demand from the dock appointments landed in ADR 0017 and moved to `dock-scheduling` in ADR 0020; automatic adjustment of planned capacity from observed capacity stays a later ADR) |
 | `product-master` | none: SKU master data (handling classification, unit dimensions) is not a capacity input | no relationship in either direction |
 
 ## No live cross-context lookup
@@ -66,7 +83,8 @@ capacity.
 
 - `cmd/api` serves REST on `HTTP_ADDR` (default `:8080`), runs the Kafka
   consumers and the outbox relay, and applies the idempotent migrations on
-  start.
+  start. The workload forecast and labour plan routes are served here only
+  (no MCP tool, no A2A skill; ADR 0023 decision 7).
 - `cmd/mcp` serves an MCP server (14 tools) over Streamable HTTP on `MCP_ADDR`
   (default `:8090`, mounted at `/` and `/mcp`, with `GET /healthz`). It uses
   the same use cases and repositories as REST, never dials Kafka and never
