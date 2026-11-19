@@ -53,7 +53,7 @@ of them for this service, so the chart defaults apply in the kind cluster.
 | `MIGRATIONS_DATABASE_URL` | the value of `DATABASE_URL` | no | DSN used **only** by the golang-migrate step at boot. In the kind cluster `DATABASE_URL` goes through PgBouncer (transaction pooling), which cannot hold golang-migrate's session-scoped `pg_advisory_lock`, so this one is a direct Postgres DSN ([ADR 0010](/docs/adr/0010-migrations-over-direct-connection)). The runtime pool never uses it. | `database.migrationsExistingSecretKey` (rendered with `optional: true`) | `cmd/api/main.go` |
 | `MIGRATIONS_PATH` | `internal/adapters/outbound/postgres/migrations` | no | Directory of the OLTP `*.up.sql` files, relative to the working directory. The image copies them to `/app/migrations`. | `config.migrationsPath` (`migrations`) | `cmd/api/main.go` |
 | `KAFKA_BROKERS` | none | **yes** | Comma-separated broker list (each entry trimmed, empty entries dropped). Unset or blank is a boot error (`KAFKA_BROKERS is required: ...`). It feeds the six consumers, the outbox relay and the `/readyz` broker check. | `kafka.brokers` (required; a legacy `kafka.enabled: true` still renders, `false` is refused) | `cmd/api/runtime.go` |
-| `LABOR_CAPACITY_CONSUMER_GROUP` | none | **yes** | Consumer group of the labor consumer on `warehouse.workforce.events`. No default on purpose, so that a local process never joins the live group; unset is a boot error. | `config.laborCapacityConsumerGroup` (required) | `cmd/api/runtime.go` |
+| `LABOR_CAPACITY_CONSUMER_GROUP` | none | **yes** | Consumer group of the labor consumer on `warehouse.workforce.events`. The same consumer registers the LABOR constraint and, for a line with a `shift_id`, records the committed heads that the labour plan drift compares ([ADR 0023](/docs/adr/0023-workload-forecast-and-labour-plan-move-here) decision 3); there is no separate drift consumer or group. No default on purpose, so that a local process never joins the live group; unset is a boot error. | `config.laborCapacityConsumerGroup` (required) | `cmd/api/runtime.go` |
 | `STORAGE_CAPACITY_CONSUMER_GROUP` | none | **yes** | Consumer group of the facility consumer on `warehouse.facility.events`. No default; unset is a boot error. | `config.storageCapacityConsumerGroup` (required) | `cmd/api/runtime.go` |
 | `DEMAND_CONSUMER_GROUP` | none | **yes** | Consumer group of the order-demand consumer on `warehouse.order-management.events`. The consumer is always on ([ADR 0004](/docs/adr/0004-demand-ingestion-from-order-management) made it opt-in; [ADR 0016](/docs/adr/0016-postgres-and-kafka-are-the-only-runtime) removed the off switch). No default; unset is a boot error. | `demand.consumerGroup` (required) | `cmd/api/runtime.go` |
 | `DEMAND_SITE_ID` | none | **yes** | The site every task completion is attributed to (those events carry no site) and the fallback site for an order whose event carries no `site_id` ([ADR 0021](/docs/adr/0021-order-demand-and-labour-read-the-events-own-site)); dock appointments carry their own `site_id` ([ADR 0020](/docs/adr/0020-inbound-demand-from-dock-scheduling)). Unset is a boot error. | `demand.siteId` (required) | `cmd/api/runtime.go` |
@@ -155,3 +155,16 @@ the HPA ceiling at the same time.
 | HTTP graceful drain, consumer drain, relay drain | 10 s each | `cmd/api/main.go` |
 | OTel metric export interval | 30 s | `internal/adapters/outbound/telemetry/telemetry.go` |
 | Report range | default the 30 days ending now, at most 366 days | `internal/analytics/report/range.go` |
+| Version-conflict retry of the requirement-side `PUT`s | one re-run of the whole unit of work; a second conflict is `409 version-conflict` | `internal/application/usecases/workload_forecast.go` (`retryOnVersionConflict`) |
+| Labour plan count bound | `planned_heads`, `installed_stations` and committed heads from 0 to 2147483647 | `internal/domain/labourplan/plan.go` (`MaxCount`) |
+
+## Requirement side (ADR 0022, ADR 0023)
+
+The workload forecast, the labour plan and the drift add **no** environment
+variable and no chart value: they run inside `cmd/api` on the same database,
+outbox and relay, and the drift's commitment side rides on the labor consumer
+above. The labour-standard copy needs `LABOR_STANDARD_CONSUMER_GROUP`. The
+routes are REST only (no MCP tool, no A2A skill, ADR 0023 decision 7), so
+`cmd/mcp` and `cmd/a2a` need nothing new; both read the labour-standard copy
+for a capacity plan's labour requirement (`postgres.NewLaborStandardRepo`)
+but never start its consumer.
