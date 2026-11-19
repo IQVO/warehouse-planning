@@ -70,7 +70,7 @@ func newDriftFixture() *driftFixture {
 	f := &driftFixture{labourFixture: newLabourFixture(), commitments: memory.NewCommittedHeadsRepo()}
 	enc := driftCapture{drifts: &f.drifts}
 	uow := memory.NewUnitOfWork(f.plans, f.forecasts, f.outbox, f.commitments)
-	f.commit.Encoder, f.commit.UnitOfWork = enc, uow
+	f.commit.Encoder, f.commit.UnitOfWork, f.commit.Commitments = enc, uow, f.commitments
 	f.record = &RecordShiftCommitment{
 		Commitments: f.commitments, Plans: f.plans, Outbox: f.outbox, Encoder: enc, UnitOfWork: uow,
 		Now: func() time.Time { return driftDetectedAt },

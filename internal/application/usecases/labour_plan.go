@@ -60,8 +60,9 @@ type CommitLabourPlanResult struct {
 // labourplan.Spec from the command (deriving planned_heads from the stored
 // workload forecast when they were omitted), loads the plan of (site, shift,
 // path), builds it with labourplan.New when absent or applies Revise
-// otherwise and, when that changed something, saves it and inserts its
-// LabourPlanCommitted CloudEvents into the outbox -- all in ONE
+// otherwise and, when that changed something, saves it, inserts its
+// LabourPlanCommitted CloudEvents into the outbox and surfaces the drift
+// against the committed heads (see surfaceDrift) -- all in ONE
 // ports.UnitOfWork.Do. A ports.ErrVersionConflict re-runs the whole unit
 // once; a second one is returned as is.
 type CommitLabourPlan struct {
@@ -75,6 +76,11 @@ type CommitLabourPlan struct {
 	// reader the capacity plan's station constraint uses. Nil means no tally
 	// is wired: no station warning is ever raised.
 	Stations ports.StorageTallyReader
+
+	// Commitments is the heads workforce-management committed per key, the
+	// other side of the labour plan drift (docs/adr/0023 decision 3). Nil
+	// means no drift is ever surfaced by a plan commit.
+	Commitments ports.CommittedHeadsRepository
 
 	// Now supplies the commit time (utcNow when nil).
 	Now func() time.Time
@@ -137,7 +143,10 @@ func (uc *CommitLabourPlan) commit(ctx context.Context, cmd CommitLabourPlanComm
 		if err != nil {
 			return err
 		}
-		return uc.Outbox.Insert(ctx, msgs...)
+		if err := uc.Outbox.Insert(ctx, msgs...); err != nil {
+			return err
+		}
+		return uc.surfaceDrift(ctx, res.Plan.Spec(), at)
 	})
 	return res, err
 }

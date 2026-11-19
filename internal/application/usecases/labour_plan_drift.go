@@ -84,6 +84,23 @@ func IsCommitmentRejection(err error) bool {
 	return errors.Is(err, labourplan.ErrRequiredField) || errors.Is(err, labourplan.ErrInvalidCount)
 }
 
+// surfaceDrift is the plan trigger of the labour plan drift (docs/adr/0023
+// decision 3): called by commit only when the plan CHANGED, on the unit of
+// work of the plan's save, it compares the plan's heads with the heads
+// workforce-management committed for the key, raises LabourPlanDriftDetected
+// when the drift is news and records it. No commitment stored, or no
+// Commitments wired, surfaces nothing. It never changes the commitment's heads.
+func (uc *CommitLabourPlan) surfaceDrift(ctx context.Context, s labourplan.Spec, at time.Time) error {
+	if uc.Commitments == nil {
+		return nil
+	}
+	c, found, err := uc.Commitments.Get(ctx, s.SiteID, s.ShiftID, s.PathID)
+	if err != nil || !found {
+		return err
+	}
+	return driftRecorder{uc.Commitments, uc.Outbox, uc.Encoder}.record(ctx, s.PlannedHeads, c, at)
+}
+
 // driftRecorder is the raise rule both drift triggers share (docs/adr/0023
 // decision 3): compare, raise when the drift is news, record the drift.
 type driftRecorder struct {

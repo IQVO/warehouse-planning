@@ -22,6 +22,9 @@ func wireRequirementSide(s *inboundhttp.Server, ad adapters, encoder ports.Event
 	s.CommitLabourPlan = &usecases.CommitLabourPlan{
 		Plans: ad.labourPlans, Forecasts: ad.workloadForecasts,
 		Outbox: ad.outbox, Encoder: encoder, UnitOfWork: ad.uow, Stations: ad.tallyReader,
+		// ADR 0023 decision 3: a changed plan surfaces its drift against
+		// the heads workforce-management committed for the key.
+		Commitments: ad.committedHeads,
 	}
 	s.GetLabourPlan = &usecases.GetLabourPlan{Plans: ad.labourPlans, Stations: ad.tallyReader}
 	s.ListLabourPlans = &usecases.ListLabourPlans{Plans: ad.labourPlans, Stations: ad.tallyReader}
