@@ -4,12 +4,15 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/inbound"
+	"github.com/claudioed/warehouse-planning/internal/domain/labourplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/observed"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
 
 // problemBaseURI is the namespace for this service's RFC 7807 "type" URIs.
@@ -58,11 +61,15 @@ func statusFor(err error) int {
 		errors.Is(err, observed.ErrNonPositiveTasksPerOrder),
 		errors.Is(err, capacityplan.ErrNonPositiveTasksPerOrder):
 		return http.StatusUnprocessableEntity
+	case isRequirementValidation(err):
+		return http.StatusUnprocessableEntity
 	case errors.Is(err, processcapacity.ErrUnitMismatch),
-		errors.Is(err, capacityplan.ErrAlreadyPublished):
+		errors.Is(err, capacityplan.ErrAlreadyPublished),
+		errors.Is(err, ports.ErrVersionConflict):
 		return http.StatusConflict
 	case errors.Is(err, usecases.ErrProcessPathNotFound),
-		errors.Is(err, usecases.ErrCapacityPlanNotFound):
+		errors.Is(err, usecases.ErrCapacityPlanNotFound),
+		errors.Is(err, usecases.ErrWorkloadForecastNotFound):
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
@@ -103,7 +110,37 @@ func problemCatalog() []struct {
 		{inbound.ErrNonFiniteMinutes, problemInfo{"non-finite-minutes", "Labour minutes must be finite numbers"}},
 		{observed.ErrNonPositiveTasksPerOrder, problemInfo{"non-positive-tasks-per-order", "tasks_per_order must be a positive number"}},
 		{capacityplan.ErrNonPositiveTasksPerOrder, problemInfo{"non-positive-tasks-per-order", "tasks_per_order must be a positive number"}},
+
+		// Workload forecast and labour plan (docs/adr/0023).
+		{workloadforecast.ErrRequiredField, problemInfo{"missing-forecast-field", "site_id and path_id are required"}},
+		{workloadforecast.ErrNoBuckets, problemInfo{"no-forecast-buckets", "A workload forecast needs at least one CPT bucket"}},
+		{workloadforecast.ErrMissingCPT, problemInfo{"missing-cpt", "Every forecast bucket needs a cpt"}},
+		{workloadforecast.ErrNegativeQuantity, problemInfo{"negative-bucket-quantity", "A bucket quantity must be a non-negative whole number of units"}},
+		{usecases.ErrWorkloadForecastNotFound, problemInfo{"workload-forecast-not-found", "No workload forecast exists for this site and path"}},
+		{labourplan.ErrRequiredField, problemInfo{"missing-labour-plan-field", "site_id, shift_id and path_id are required"}},
+		{labourplan.ErrInvalidCount, problemInfo{"invalid-count", "planned_heads and installed_stations must be whole numbers from 0 to 2147483647"}},
+		{labourplan.ErrHeadsExceedStations, problemInfo{"heads-exceed-stations", "planned_heads must not exceed installed_stations"}},
+		{labourplan.ErrInvalidRate, problemInfo{"non-positive-rate", "rate_units_per_hour must be positive"}},
+		{labourplan.ErrInvalidHours, problemInfo{"non-positive-hours", "hours must be positive"}},
+		{labourplan.ErrThroughputNotFinite, problemInfo{"throughput-not-finite", "rate_units_per_hour x planned_heads x hours must be a finite number"}},
+		{ports.ErrVersionConflict, problemInfo{"version-conflict", "The stored version moved twice during this request; retry it"}},
 	}
+}
+
+// isRequirementValidation reports the 422 validation errors of the workload
+// forecast and the labour plan (docs/adr/0023).
+func isRequirementValidation(err error) bool {
+	for _, target := range []error{
+		workloadforecast.ErrRequiredField, workloadforecast.ErrNoBuckets,
+		workloadforecast.ErrMissingCPT, workloadforecast.ErrNegativeQuantity,
+		labourplan.ErrRequiredField, labourplan.ErrInvalidCount, labourplan.ErrHeadsExceedStations,
+		labourplan.ErrInvalidRate, labourplan.ErrInvalidHours, labourplan.ErrThroughputNotFinite,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // problemFor maps a typed domain error to its RFC 7807 (type, title) pair
