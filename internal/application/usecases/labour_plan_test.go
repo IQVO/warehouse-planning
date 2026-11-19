@@ -266,6 +266,15 @@ func TestCommitLabourPlan_StationWarning(t *testing.T) {
 	if res, err = f.commit.Handle(context.Background(), cmd); err != nil || len(res.Warnings) != 0 {
 		t.Fatalf("no tally wired: %v %q, want no warning", err, res.Warnings)
 	}
+	empty := newLabourFixture() // a tally with no PICK station: no data, no warning
+	if res, err = empty.commit.Handle(context.Background(), cmd); err != nil || len(res.Warnings) != 0 {
+		t.Fatalf("empty tally: %v %q, want no warning", err, res.Warnings)
+	}
+	one := newLabourFixture() // the smallest tally that knows fewer stations
+	one.seedStations(t, 1)
+	if res, err = one.commit.Handle(context.Background(), cmd); err != nil || len(res.Warnings) != 1 {
+		t.Fatalf("one tallied station: %v %q, want one warning", err, res.Warnings)
+	}
 }
 
 func TestCommitLabourPlan_FailuresStoreNothing(t *testing.T) {
@@ -306,6 +315,7 @@ func TestCommitLabourPlan_DefaultsTheClockToUTCNow(t *testing.T) {
 
 func TestGetLabourPlan(t *testing.T) {
 	f := newLabourFixture()
+	f.seedStations(t, 3)
 	get := &GetLabourPlan{Plans: f.plans, Stations: f.tally}
 	if _, err := get.Handle(context.Background(), "SIM1", "S1", "PICK"); !errors.Is(err, ErrLabourPlanNotFound) {
 		t.Fatalf("err = %v, want ErrLabourPlanNotFound", err)
@@ -315,7 +325,7 @@ func TestGetLabourPlan(t *testing.T) {
 	}
 	view, err := get.Handle(context.Background(), "SIM1", "S1", "PICK")
 	if err != nil || view.Plan.Spec().PlannedHeads != 7 || len(view.Warnings) != 1 {
-		t.Fatalf("view = %+v, %v; want the plan with the empty-tally warning", view, err)
+		t.Fatalf("view = %+v, %v; want the plan with the tally warning (3 < 12)", view, err)
 	}
 	get.Stations = failingTally{StorageTallyRepo: f.tally, err: errLabourBoom}
 	if _, err := get.Handle(context.Background(), "SIM1", "S1", "PICK"); !errors.Is(err, errLabourBoom) {
@@ -329,7 +339,7 @@ func TestGetLabourPlan(t *testing.T) {
 
 func TestListLabourPlans(t *testing.T) {
 	f := newLabourFixture()
-	f.seedStations(t, 12)
+	f.seedStations(t, 5)
 	for _, c := range []struct{ shift, path string }{{"S1", "PICK"}, {"S1", "PACK"}, {"S1", "SORT"}, {"S2", "PICK"}} {
 		cmd := planCmd(heads(1))
 		cmd.ShiftID, cmd.PathID = c.shift, c.path
@@ -342,8 +352,9 @@ func TestListLabourPlans(t *testing.T) {
 	if err != nil || len(page) != 2 || page[0].Plan.Spec().PathID != "PACK" || page[1].Plan.Spec().PathID != "PICK" {
 		t.Fatalf("first page = %+v, %v", page, err)
 	}
-	// Only PICK is tallied: PACK carries the warning, PICK does not.
-	if len(page[0].Warnings) != 1 || len(page[1].Warnings) != 0 {
+	// PICK is tallied with 5 stations (< 12 installed): it warns. PACK has no
+	// tally data at all: no warning.
+	if len(page[0].Warnings) != 0 || len(page[1].Warnings) != 1 {
 		t.Fatalf("warnings = %q / %q", page[0].Warnings, page[1].Warnings)
 	}
 	rest, err := list.Handle(context.Background(), "SIM1", "S1", "PICK", 2)

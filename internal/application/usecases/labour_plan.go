@@ -258,7 +258,10 @@ func stationWarnings(ctx context.Context, tally ports.StorageTallyReader, s labo
 	if err != nil {
 		return nil, err
 	}
-	if known >= s.InstalledStations {
+	// Zero tallied stations is no tally data (the capacity plan reads it the
+	// same way: station standards apply only when the count is above zero), so
+	// it never warns; only a tally that KNOWS fewer stations does.
+	if known == 0 || known >= s.InstalledStations {
 		return nil, nil
 	}
 	return []string{fmt.Sprintf(

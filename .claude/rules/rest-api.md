@@ -49,6 +49,18 @@ unchanged):
 - `GET /process-paths`                     -> `ListProcessPaths`
 - `GET /capacity-plans?location=&limit=`   -> `ListCapacityPlans`
 
+Requirement side (docs/adr/0023; REST only, **no MCP tool and no A2A skill**, decision 7):
+
+- `PUT /workload-forecasts/{site_id}/{path_id}`            -> `ReceiveWorkloadForecast` (201 new, 200 replaced or unchanged; no Idempotency-Key)
+- `GET /workload-forecasts/{site_id}/{path_id}`            -> `GetWorkloadForecast`
+- `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`       -> `CommitLabourPlan` (omitted planned_heads derived from the stored forecast in [shift_start, shift_start + hours), else 422 missing-planned-heads)
+- `GET /labour-plans/{site_id}/{shift_id}/{path_id}`       -> `GetLabourPlan`
+- `GET /labour-plans?site_id=&shift_id=&limit=&cursor=`    -> `ListLabourPlans` (both filters required)
+
+A version conflict on save is retried once, then answered `409 version-conflict`. The station
+warning (a tally that knows at least one but fewer stations than `installed_stations`; zero is
+no data) is computed on every read and never stored.
+
 ## Conventions
 
 - Error shape: RFC 7807 `application/problem+json`, matching the rest of

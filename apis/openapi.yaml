@@ -1039,8 +1039,8 @@ paths:
         which needs shift_start and a stored workload forecast for (site_id, path_id) with at
         least one bucket in the shift; otherwise 422 missing-planned-heads (zero buckets in the
         shift is no data, never zero heads). heads_source says which happened. When the facility
-        tally knows fewer stations of the activity named like the path (the path id upper-cased)
-        than installed_stations, the plan is still stored with the number as sent and the answer
+        tally knows at least one but fewer stations of the activity named like the path (the path
+        id upper-cased) than installed_stations, the plan is still stored with the number as sent and the answer
         carries a warning. 201 with version 1 for a first commit; 200 with version + 1 for a
         revision; 200 with the stored plan and version unchanged when the plan equals the stored
         one (no event). A change raises LabourPlanCommitted (integration and analytics topics,
@@ -2491,8 +2491,9 @@ components:
           type: array
           description: >
             Advisory, computed against the facility tally on every read (never stored, never null):
-            a warning when the tally knows fewer stations of the activity named like the path than
-            installed_stations. The number is reported as sent, never replaced.
+            a warning when the tally knows at least one but fewer stations of the activity named
+            like the path than installed_stations (zero tallied stations is no tally data: no
+            warning). The number is reported as sent, never replaced.
           items:
             type: string
     LabourPlanPage:
