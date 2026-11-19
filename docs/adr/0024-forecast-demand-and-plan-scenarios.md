@@ -12,10 +12,10 @@ plan lifecycle of [ADR 0001](0001-warehouse-planning-bounded-context.md). Builds
 `WorkloadForecast` of [ADR 0023](0023-workload-forecast-and-labour-plan-move-here.md). Adds one
 published type; existing types and fields are unchanged.
 
-Implementation: decisions 1, 2 and 4 in PR #151 (migration `0016`); decision 3 follows once
-order-management consumes `CapacityPlanSuperseded` (its ADR 0052, merged). Decision 5's check
-found network-inventory-planning keeping the newest published plan per site, and
-order-management keeping every published plan, hence its ADR 0052.
+Implementation: decisions 1, 2 and 4 in PR #151 (migration `0016`); decision 3 in PR #153
+(migration `0017`), after order-management consumes `CapacityPlanSuperseded` (its ADR 0052,
+merged). Decision 5's check found network-inventory-planning keeping the newest published plan
+per site, and order-management keeping every published plan, hence its ADR 0052.
 
 ## Context
 
@@ -68,6 +68,26 @@ published plan replaced which.
    `develop`, that an unknown type is ignored and that the newest published plan for a
    window wins. If a consumer keeps the FIRST published plan instead, the implementation
    stops and that consumer's change becomes its own decision before anything is merged here.
+
+### Implementation notes
+
+- `CapacityPlanSuperseded` also carries `warehouse_id` and `location`, a superset of decision
+  3's field list: they are the fields every other capacityplan event carries, and
+  order-management lists its rows by `location`. `subject` and the Kafka key are the older
+  plan's id; `site_id` is always present (`""` for a plan stored before migration `0008`).
+- One PUBLISHED plan per key is a database fact: migration `0017` adds a partial unique index
+  on `(site_id, location, process_path_id, window_start, window_end) WHERE status =
+  'PUBLISHED'`. The publish locks the older plan (`FOR UPDATE`) and saves it SUPERSEDED before
+  the newer plan; a publish that loses on the index reruns its unit once, then answers `409
+  version-conflict`.
+- Migration `0017` backfills before it builds the index: every PUBLISHED plan except the newest
+  of its key (by `published_at`, then id) becomes SUPERSEDED by that newest plan. The backfill
+  publishes NO event, so a consumer that kept those plans keeps them until a later publish of
+  the key supersedes the newest one.
+- Publishing a SUPERSEDED plan answers `409 capacity-plan-superseded`. The comparison read
+  returns `status` as stored, SUPERSEDED included. The planning projector acknowledges
+  `CapacityPlanSuperseded` without projecting it: the reports keep counting a superseded plan
+  as published.
 
 ## Consequences
 

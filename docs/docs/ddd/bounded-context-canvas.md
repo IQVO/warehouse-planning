@@ -239,7 +239,10 @@ heads**, **Heads source**, **Committed heads**, **Labour plan drift**.
 5. `shortage = max(0, demand - capacity over window)`; demand equal to capacity
    is not a shortage, and the plan keeps the requested window.
 6. A plan is published at most once (`ErrAlreadyPublished`, `409`); shortage and
-   bottleneck events are raised only at publish and only when `shortage > 0`.
+   bottleneck events are raised only at publish and only when `shortage > 0`. Publishing
+   supersedes the plan published before it for the same site, location, path and window
+   (`SUPERSEDED`, terminal, `CapacityPlanSuperseded`, ADR 0024); a superseded plan cannot be
+   published again (`ErrSuperseded`, `409 capacity-plan-superseded`).
 7. An omitted `assigned_demand` defaults to the expected orders; zero orders is
    *no data* and rejects the plan (`ErrMissingAssignedDemand`), never a
    zero-demand plan (ADR 0004).

@@ -300,9 +300,14 @@ sequenceDiagram
   alt already PUBLISHED
     CP-->>UC: ErrAlreadyPublished, transaction rolled back
     H-->>Client: 409 capacity-plan-already-published
+  else SUPERSEDED
+    CP-->>UC: ErrSuperseded, transaction rolled back
+    H-->>Client: 409 capacity-plan-superseded
   else DRAFT
     Note over CP: records Published, plus ShortageDetected and BottleneckDetected when shortage is above 0
-    U->>R: Save
+    U->>R: FindPublished(site, location, path, window) FOR UPDATE
+    Note over CP: an older PUBLISHED plan of the key: Supersede(by, at) records CapacityPlanSuperseded, saved BEFORE the newer plan
+    U->>R: Save (a lost race on the unique index = ErrVersionConflict: rerun once, then 409 version-conflict)
     U->>E: Encode(PullEvents)
     U->>OB: Insert two rows per event
     U-->>UC: commit
@@ -359,7 +364,7 @@ sequenceDiagram
   participant PR as analyticsstore Projection
   participant DLQ as analytics DLQ writer
   K->>A: FetchMessage
-  A->>A: Decode, match one of the four capacityplan types
+  A->>A: Decode, match one of the projected capacityplan types (CapacityPlanSuperseded is acknowledged, not projected)
   alt known type with an unusable payload or a deterministic store rejection
     A->>DLQ: publish to warehouse.warehouse-planning.analytics.dlq
   else valid

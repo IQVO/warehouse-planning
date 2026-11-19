@@ -127,9 +127,10 @@ Source: `internal/application/usecases/create_capacity_plan.go`,
 `internal/adapters/outbound/kafka/analytics_encoder.go` (`FanoutEncoder`),
 `internal/adapters/outbound/analyticsstore/postgres_projection.go`,
 `internal/adapters/inbound/http/reports_handler.go`.
-Omits: the rejection paths (`ErrAlreadyPublished`, `ErrMissingAssignedDemand`,
-`ErrMissingStepCapacity`). `CapacityShortageDetected` and `BottleneckDetected`
-are raised only when `shortage > 0`.
+Omits: the rejection paths (`ErrAlreadyPublished`, `ErrSuperseded`, `ErrMissingAssignedDemand`,
+`ErrMissingStepCapacity`). `CapacityPlanSuperseded` (the older plan of the same site, location,
+path and window) is queued before `CapacityPlanPublished`; `CapacityShortageDetected` and
+`BottleneckDetected` are raised only when `shortage > 0`.
 
 ## 3. Expected demand from order-management
 

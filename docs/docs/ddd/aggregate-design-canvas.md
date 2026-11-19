@@ -126,7 +126,9 @@ stateDiagram-v2
   [*] --> DRAFT: Create(params, now) records CapacityPlanCreated
   DRAFT --> PUBLISHED: Publish(now) records CapacityPlanPublished
   PUBLISHED --> PUBLISHED: Publish again is rejected ErrAlreadyPublished, records nothing
-  PUBLISHED --> [*]
+  PUBLISHED --> SUPERSEDED: Supersede(by, at) records CapacityPlanSuperseded (a newer plan of the same site, location, path and window was published)
+  SUPERSEDED --> SUPERSEDED: Publish or Supersede again is rejected ErrSuperseded, records nothing
+  SUPERSEDED --> [*]
   note right of PUBLISHED
     When shortage is above 0, Publish also records
     CapacityShortageDetected and BottleneckDetected
@@ -147,6 +149,8 @@ recording events, and the absence of any delete or un-publish.
 | The path rate is an ORDER rate | `Create` returns `ErrPathRateNotOrder` |
 | `shortage = max(0, demand - capacityOverWindow)`, never negative; equal is not a shortage | `Create` (`math.Max`); `CHECK (shortage >= 0)` |
 | A plan is published at most once | `Publish` returns `ErrAlreadyPublished` |
+| A superseded plan is terminal: it is never published or superseded again | `Publish` and `Supersede` return `ErrSuperseded` |
+| At most one PUBLISHED plan per `(site_id, location, path_id, window)` | `Supersede` in the publish unit of work; partial unique index `capacity_plans_one_published_per_key` (migration 0017) |
 | Each recorded event is handed over exactly once | `PullEvents` clears the slice |
 | The window is valid | `processcapacity.NewCapacityWindow` in the use case (`ErrInvalidWindow`); `CHECK (window_end > window_start)` |
 
@@ -157,6 +161,9 @@ recording events, and the absence of any delete or un-publish.
   creating a zero-demand plan (ADR 0004).
 - A second publish returns `409 capacity-plan-already-published` and queues no
   event, so downstream consumers never see the shortage twice.
+- Publishing a plan supersedes the plan published before it for the same key
+  (`CapacityPlanSuperseded`, queued before the newer plan's `CapacityPlanPublished`);
+  publishing a SUPERSEDED plan returns `409 capacity-plan-superseded` (ADR 0024).
 - Concurrent publishes of one plan serialize on the Postgres row lock taken by
   `FindByID` inside the unit of work.
 

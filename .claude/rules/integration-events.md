@@ -7,7 +7,7 @@ paths:
 
 # Cross-service integration events (Kafka)
 
-This service both PUBLISHES and CONSUMES. Publishes the four CapacityPlan
+This service both PUBLISHES and CONSUMES. Publishes the five CapacityPlan
 events to `warehouse.warehouse-planning.events` (Phase 4, through a
 transactional outbox -- see "Publishing: the transactional outbox" below).
 Consumes
@@ -82,6 +82,7 @@ through the `cloudevents` helper; golden exact-JSON tests in
 | `type` | raised | `dataschema` |
 | --- | --- | --- |
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated` | `POST /capacity-plans` | `urn:warehouse:warehouse-planning:events:CapacityPlanCreated:v1` |
+| `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanSuperseded` | publish, when a PUBLISHED plan of the same site, location, path and window exists: subject/key = the OLDER plan id; `data` plan_id, superseded_by, warehouse_id, site_id, location, path_id, window_start, window_end; queued BEFORE the newer plan's Published in the same unit (docs/adr/0024 decision 3; consumed by order-management, its ADR 0052; the projector acknowledges it unprojected) | `urn:warehouse:warehouse-planning:events:CapacityPlanSuperseded:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | publish | `urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:CapacityShortageDetected:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:BottleneckDetected:v1` |
@@ -109,7 +110,7 @@ refuses one rather than silently dropping it).
 
 ### The analytics stream (ADR 0005)
 
-The same four events are ALSO written to `warehouse.warehouse-planning.analytics`
+The same five events are ALSO written to `warehouse.warehouse-planning.analytics`
 (`outboundkafka.AnalyticsTopic`), consumed ONLY by this service's own
 `cmd/planning-projector` (DLQ `warehouse.warehouse-planning.analytics.dlq`). Rules:
 

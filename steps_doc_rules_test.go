@@ -429,7 +429,7 @@ func registerDocRulesSteps(sc *godog.ScenarioContext, w *world) {
 
 	sc.Step(`^I note the capacity plan as `+ts+`$`, w.iNoteThePlan)
 	sc.Step(`^I publish the noted capacity plan `+ts+`$`, w.iPublishTheNotedPlan)
-	sc.Step(`^the noted capacity plan `+ts+` is (DRAFT|PUBLISHED)$`, w.theNotedPlanIs)
+	sc.Step(`^the noted capacity plan `+ts+` is (DRAFT|PUBLISHED|SUPERSEDED)$`, w.theNotedPlanIs)
 	sc.Step(`^the noted capacity plans `+ts+` and `+ts+` are different plans$`, w.theNotedPlansDiffer)
 
 	sc.Step(`^the last `+pcEv+` event has `+`([a-z_]+) `+jsonVal+`$`, w.theLastProcessCapacityEventHas)

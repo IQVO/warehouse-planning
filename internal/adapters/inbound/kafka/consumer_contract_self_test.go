@@ -114,13 +114,27 @@ func TestPinnedAsyncAPICoversSubscriptions_SelfAnalyticsRequirementTypes(t *test
 	}
 }
 
-// planEventTypes lists the four CapacityPlan integration types.
+// planEventTypes lists the five CapacityPlan integration types.
 func planEventTypes() []string {
 	return []string{
 		cloudevents.Type(outkafka.Entity, capacityplan.EventCapacityPlanCreated),
 		cloudevents.Type(outkafka.Entity, capacityplan.EventCapacityPlanPublished),
 		cloudevents.Type(outkafka.Entity, capacityplan.EventCapacityShortageDetected),
 		cloudevents.Type(outkafka.Entity, capacityplan.EventBottleneckDetected),
+		cloudevents.Type(outkafka.Entity, capacityplan.EventCapacityPlanSuperseded),
+	}
+}
+
+// E1-self (analytics stream, docs/adr/0024 decision 3): the analytics channel
+// documents CapacityPlanSuperseded, which the projector acknowledges
+// unprojected (a superseded plan stays counted as published in the reports).
+func TestPinnedAsyncAPICoversSubscriptions_SelfAnalyticsSuperseded(t *testing.T) {
+	typ := cloudevents.Type(outkafka.Entity, capacityplan.EventCapacityPlanSuperseded)
+	if _, ok := selfDocumentedTypes(t, selfAnalyticsTopic)[typ]; !ok {
+		t.Errorf("own pinned spec does not document analytics type %s on %s", typ, selfAnalyticsTopic)
+	}
+	if _, routed := analyticsKinds[typ]; routed {
+		t.Errorf("%s is routed by the projector; it is acknowledged unprojected", typ)
 	}
 }
 
@@ -199,7 +213,8 @@ func TestCloudEventsEnvelopeInvariants_Self(t *testing.T) {
 	doc := loadPinnedAsyncAPI(t, pinnedSelfSpec)
 	for _, message := range []string{"CapacityPlanCreated", "ProcessCapacityRegistered", "CapacityPlanCreatedAnalytics",
 		"WorkloadForecastReceived", "LabourPlanCommitted", "LabourPlanDriftDetected",
-		"WorkloadForecastReceivedAnalytics", "LabourPlanCommittedAnalytics", "LabourPlanDriftDetectedAnalytics"} {
+		"WorkloadForecastReceivedAnalytics", "LabourPlanCommittedAnalytics", "LabourPlanDriftDetectedAnalytics",
+		"CapacityPlanSuperseded", "CapacityPlanSupersededAnalytics"} {
 		msg := doc.message(t, message)
 		wantSchema := doc.documentedConst(t, msg, "dataschema")
 		for _, ex := range selfGoldenExamples(t, message) {

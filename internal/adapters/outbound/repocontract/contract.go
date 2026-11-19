@@ -51,6 +51,7 @@ func Run(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		{"unit of work", unitOfWorkCases},
 		{"committed heads", committedHeadsCases},
 		{"capacity plans", capacityPlanCases},
+		{"superseded capacity plans", supersedeCases},
 	}
 	for _, g := range groups {
 		for _, c := range g.cases {

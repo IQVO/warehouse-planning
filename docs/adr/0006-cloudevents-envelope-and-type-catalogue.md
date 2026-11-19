@@ -35,6 +35,7 @@ the two must agree.
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | capacity plan id |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | capacity plan id |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | capacity plan id |
+| `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanSuperseded` | the superseded (older) capacity plan id (ADR 0024) |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered` | `<processType>/<location>/<windowStart>/<windowEnd>` |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged` | `<processType>/<location>/<windowStart>/<windowEnd>` |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.workloadforecast.WorkloadForecastReceived` | `<site_id>/<path_id>` |
@@ -44,6 +45,7 @@ the two must agree.
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | capacity plan id |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | capacity plan id |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | capacity plan id |
+| `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanSuperseded` | the superseded (older) capacity plan id (ADR 0024) |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.workloadforecast.WorkloadForecastReceived` | `<site_id>/<path_id>` |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted` | `<site_id>/<shift_id>/<path_id>` |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanDriftDetected` | `<site_id>/<shift_id>/<path_id>` |

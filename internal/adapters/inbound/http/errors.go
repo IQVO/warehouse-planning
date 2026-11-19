@@ -65,6 +65,7 @@ func statusFor(err error) int {
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, processcapacity.ErrUnitMismatch),
 		errors.Is(err, capacityplan.ErrAlreadyPublished),
+		errors.Is(err, capacityplan.ErrSuperseded),
 		errors.Is(err, ports.ErrVersionConflict):
 		return http.StatusConflict
 	case errors.Is(err, usecases.ErrProcessPathNotFound),
@@ -133,6 +134,7 @@ func problemCatalog() []struct {
 		{capacityplan.ErrMissingUnitsPerOrder, problemInfo{"missing-units-per-order", "units_per_order is required with demand_source forecast"}},
 		{capacityplan.ErrDemandSourceConflict, problemInfo{"demand-source-conflict", "The request names an input its demand_source does not read"}},
 		{capacityplan.ErrInvalidScenario, problemInfo{"invalid-scenario", "scenario must be 1 to 64 characters"}},
+		{capacityplan.ErrSuperseded, problemInfo{"capacity-plan-superseded", "This CapacityPlan was superseded by a newer published plan and cannot be published again"}},
 		{capacityplan.ErrInvalidComparison, problemInfo{"invalid-comparison-ids", "ids must name 2 to 5 distinct capacity plans"}},
 		{capacityplan.ErrComparisonSiteMismatch, problemInfo{"comparison-site-mismatch", "The compared capacity plans are not all of one site"}},
 		{capacityplan.ErrComparisonWindowMismatch, problemInfo{"comparison-window-mismatch", "The compared capacity plans are not all of one window"}},

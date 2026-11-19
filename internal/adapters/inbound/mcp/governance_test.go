@@ -21,6 +21,9 @@ func (failingPlans) Save(context.Context, *capacityplan.CapacityPlan) error {
 func (failingPlans) FindByID(context.Context, string) (*capacityplan.CapacityPlan, error) {
 	return nil, errors.New("postgres dsn secret unreachable")
 }
+func (failingPlans) FindPublished(context.Context, capacityplan.SupersedeKey, string) (*capacityplan.CapacityPlan, error) {
+	return nil, errors.New("postgres dsn secret unreachable")
+}
 
 func callParams(name string, args map[string]any) *sdk.CallToolParams {
 	return &sdk.CallToolParams{Name: name, Arguments: args}

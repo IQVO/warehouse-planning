@@ -147,6 +147,18 @@ describe("publish", () => {
     await waitFor(() => expect(api.to("GET /capacity-plans")).toHaveLength(2));
   });
 
+  it("treats 409 capacity-plan-superseded as a state, not a failure, and refreshes", async () => {
+    const api = baseRoutes({
+      [route]: problem(409, "capacity-plan-superseded", "This CapacityPlan has been superseded", "capacity plan superseded"),
+    });
+    const user = userEvent.setup();
+    render(<CapacityPlansScreen />);
+    await user.click(await screen.findByRole("button", { name: `Publish plan ${DRAFT.id}` }));
+    expect(await screen.findByText(new RegExp(`Plan ${DRAFT.id} was superseded`))).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() => expect(api.to("GET /capacity-plans")).toHaveLength(2));
+  });
+
   it("shows any other publish failure with its title and detail", async () => {
     baseRoutes({
       [route]: problem(404, "capacity-plan-not-found", "No CapacityPlan exists under this id", "capacity plan not found"),

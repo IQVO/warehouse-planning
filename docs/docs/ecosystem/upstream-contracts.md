@@ -218,8 +218,9 @@ REST and MCP are unauthenticated, as everywhere in the fleet.
 
 ## Downstream: capacity-plan events
 
-The four CapacityPlan events (`CapacityPlanCreated`, `CapacityPlanPublished`,
-`CapacityShortageDetected`, `BottleneckDetected`) are published on
+The five CapacityPlan events (`CapacityPlanCreated`, `CapacityPlanPublished`,
+`CapacityShortageDetected`, `BottleneckDetected`, `CapacityPlanSuperseded`; the last is consumed
+by order-management per its ADR 0052) are published on
 `warehouse.warehouse-planning.events` (see the
 [event catalogue](/docs/api-reference/events)). The Kafka key is the plan id,
 so one plan's events stay on one partition. They are written to the outbox in

@@ -153,13 +153,15 @@ func (d Deps) registerTools(server *mcp.Server) {
 	addTool(server, &mcp.Tool{
 		Name: "publish_capacity_plan",
 		Description: "Publish a DRAFT capacity plan, making it PUBLISHED and queueing its CapacityPlanPublished (and shortage/bottleneck) events in the outbox. " +
-			"Irreversible and allowed once per plan: publishing again fails with capacity-plan-already-published; an unknown id fails with capacity-plan-not-found.",
+			"It supersedes the plan published before it for the same site, location, path and window: that older plan becomes SUPERSEDED (superseded_by: this plan) and its CapacityPlanSuperseded is queued first, in the same transaction. " +
+			"Irreversible and allowed once per plan: publishing again fails with capacity-plan-already-published, a SUPERSEDED plan with capacity-plan-superseded; " +
+			"a concurrent publish of the same window that wins twice fails with version-conflict (retry); an unknown id fails with capacity-plan-not-found.",
 		Annotations: idempotent(false),
 	}, d.publishCapacityPlan)
 
 	addTool(server, &mcp.Tool{
 		Name:        "get_capacity_plan",
-		Description: "Read a capacity plan by id: its status (DRAFT or PUBLISHED), path capacity, capacity over window, shortage, bottleneck step, the constraint type binding it (bottleneck_constraint) and any composition warnings. Read-only.",
+		Description: "Read a capacity plan by id: its status (DRAFT, PUBLISHED, or SUPERSEDED with superseded_by), path capacity, capacity over window, shortage, bottleneck step, the constraint type binding it (bottleneck_constraint) and any composition warnings. Read-only.",
 		Annotations: readOnly,
 	}, d.getCapacityPlan)
 

@@ -45,6 +45,9 @@ func TestAsyncAPIExamplesAreTheGoldenWire(t *testing.T) {
 		{"WorkloadForecastReceivedAnalytics", 0, "WorkloadForecastReceived.analytics.json"},
 		{"LabourPlanCommittedAnalytics", 0, "LabourPlanCommitted.analytics.json"},
 		{"LabourPlanDriftDetectedAnalytics", 0, "LabourPlanDriftDetected.analytics.json"},
+		// docs/adr/0024 decision 3: order-management builds its consumer on it.
+		{"CapacityPlanSuperseded", 0, "CapacityPlanSuperseded.events.json"},
+		{"CapacityPlanSupersededAnalytics", 0, "CapacityPlanSuperseded.analytics.json"},
 	}
 	for _, tc := range cases {
 		examples := doc.Components.Messages[tc.message].Examples

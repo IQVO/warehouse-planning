@@ -8,8 +8,10 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
@@ -26,8 +28,15 @@ func NewCapacityPlanRepo(pool *pgxpool.Pool) *CapacityPlanRepo {
 	return &CapacityPlanRepo{pool: pool}
 }
 
+// onePublishedPerKey is migration 0017's partial unique index: one PUBLISHED
+// plan per (site_id, location, process_path_id, window_start, window_end).
+const onePublishedPerKey = "capacity_plans_one_published_per_key"
+
 // Save upserts the plan row. Only state is persisted; pending domain
-// events go through the outbox.
+// events go through the outbox. A row that would be a second PUBLISHED plan
+// of its key violates onePublishedPerKey: that is ports.ErrVersionConflict (a
+// concurrent publish of the key committed first), and inside a UnitOfWork the
+// transaction is aborted, so the caller reruns the whole unit.
 func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPlan) error {
 	var publishedAt *time.Time
 	if !p.PublishedAt().IsZero() {
@@ -47,16 +56,30 @@ func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPla
 			id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 			assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 			status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
-			inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement, forecast_path_id, scenario)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, NULLIF($23, ''), NULLIF($24, ''))
+			inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement, forecast_path_id, scenario,
+			superseded_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, NULLIF($23, ''), NULLIF($24, ''),
+			NULLIF($25, ''))
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
-			published_at = EXCLUDED.published_at
+			published_at = EXCLUDED.published_at,
+			superseded_by = EXCLUDED.superseded_by
 	`, p.ID(), p.WarehouseID(), p.SiteID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
 		p.AssignedDemand(), p.PathCapacity(), string(p.BottleneckStep()), p.CapacityOverWindow(), p.Shortage(),
 		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings, string(p.DemandSource()),
-		p.Inbound().Appointments, p.Inbound().LabourMinutes, p.Inbound().StandardMissing, string(labour), p.ForecastPathID(), p.Scenario())
+		p.Inbound().Appointments, p.Inbound().LabourMinutes, p.Inbound().StandardMissing, string(labour), p.ForecastPathID(), p.Scenario(),
+		p.SupersededBy())
+	if isOnePublishedPerKeyViolation(err) {
+		return ports.ErrVersionConflict
+	}
 	return err
+}
+
+// isOnePublishedPerKeyViolation reports a unique violation (SQLSTATE 23505)
+// of onePublishedPerKey; any other error, unique or not, is not one.
+func isOnePublishedPerKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == onePublishedPerKey
 }
 
 // FindByID loads the plan, or (nil, nil) if there is none. Inside a
@@ -71,6 +94,32 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 	}
 
 	plan, err := scanPlan(q.QueryRow(ctx, query, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return plan, nil
+}
+
+// FindPublished returns the PUBLISHED plan of key whose id is not excludeID
+// (the newest by published_at, then id), or (nil, nil). Inside a UnitOfWork
+// the row is locked (FOR UPDATE): a concurrent publish of the same key waits
+// for this transaction, then no longer sees the row as PUBLISHED and loses
+// on the partial unique index instead (ports.ErrVersionConflict from Save).
+func (r *CapacityPlanRepo) FindPublished(ctx context.Context, key capacityplan.SupersedeKey, excludeID string) (*capacityplan.CapacityPlan, error) {
+	query := `SELECT ` + planColumns + ` FROM capacity_plans
+		WHERE site_id = $1 AND location = $2 AND process_path_id = $3
+		  AND window_start = $4 AND window_end = $5
+		  AND status = 'PUBLISHED' AND id <> $6
+		ORDER BY published_at DESC NULLS LAST, id DESC
+		LIMIT 1`
+	q := queryFor(ctx, r.pool)
+	if _, inTx := q.(pgx.Tx); inTx {
+		query += " FOR UPDATE"
+	}
+	plan, err := scanPlan(q.QueryRow(ctx, query, key.SiteID, key.Location, key.PathID, key.WindowStart, key.WindowEnd, excludeID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -128,7 +177,7 @@ const planColumns = `id, warehouse_id, site_id, location, window_start, window_e
 		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
 		       inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement,
-		       COALESCE(forecast_path_id, ''), COALESCE(scenario, '')`
+		       COALESCE(forecast_path_id, ''), COALESCE(scenario, ''), COALESCE(superseded_by, '')`
 
 // scanPlan rehydrates one capacity_plans row selected with planColumns.
 func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
@@ -145,7 +194,8 @@ func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
 		&p.ID, &p.WarehouseID, &p.SiteID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
 		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
 		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource,
-		&p.Inbound.Appointments, &p.Inbound.LabourMinutes, &p.Inbound.StandardMissing, &labour, &p.ForecastPathID, &p.Scenario)
+		&p.Inbound.Appointments, &p.Inbound.LabourMinutes, &p.Inbound.StandardMissing, &labour, &p.ForecastPathID, &p.Scenario,
+		&p.SupersededBy)
 	if err != nil {
 		return nil, err
 	}

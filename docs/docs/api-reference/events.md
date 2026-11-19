@@ -11,7 +11,7 @@ authority for payload fields.
 
 ## Analytics stream (ADR 0005)
 
-The four published events below are ALSO written to
+The five CapacityPlan events below are ALSO written to
 `warehouse.warehouse-planning.analytics` in the same outbox transaction, with the
 **same `type` and `id`** and
 `dataschema=urn:warehouse:warehouse-planning:analytics:<EventName>:v1`. The
@@ -56,6 +56,7 @@ Topic `warehouse.warehouse-planning.events`, written by the outbox relay.
 | `CapacityPlanPublished` | plan publication | the same fields except `status`, plus `published_at` |
 | `CapacityShortageDetected` | publication, only when `shortage > 0` | `plan_id`, `warehouse_id`, `location`, `path_id`, `window_start`, `window_end`, `assigned_demand`, `capacity_over_window`, `shortage`, `bottleneck_step` |
 | `BottleneckDetected` | publication, only when `shortage > 0` | `plan_id`, `warehouse_id`, `location`, `path_id`, `window_start`, `window_end`, `bottleneck_step`, `path_capacity` |
+| `CapacityPlanSuperseded` | publication, only when another plan of the same `site_id`, `location`, `path_id` and window was PUBLISHED; queued BEFORE the newer plan's `CapacityPlanPublished`; `subject` and key are the OLDER plan ([ADR 0024](/docs/adr/0024-forecast-demand-and-plan-scenarios)) | `plan_id` (the older plan), `superseded_by`, `warehouse_id`, `site_id`, `location`, `path_id`, `window_start`, `window_end` |
 
 Each plan-event occurrence is also written once more to the analytics topic
 (see "Analytics stream" above).

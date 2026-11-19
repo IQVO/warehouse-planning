@@ -235,6 +235,8 @@ Errors (`application/problem+json`):
 - `404 process-path-not-found` (create), `404 capacity-plan-not-found`
   (publish, get).
 - `409 capacity-plan-already-published` (publish twice; nothing is queued).
+- `409 capacity-plan-superseded` (publish a SUPERSEDED plan; nothing is queued).
+- `409 version-conflict` (a concurrent publish of the same site, location, path and window won twice).
 - `422 missing-step-capacity`, `non-positive-conversion-factor`,
   `missing-conversion-factor`, `unsupported-normalization-unit` (as Phase 2),
   plus `negative-assigned-demand`, `missing-assigned-demand` (field absent AND

@@ -209,9 +209,12 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 	plan(siteB, 20000, at(6, 1, 0), 20*time.Minute) // shortage 12000, latency 1200 s
 
 	// A1 and B1 (shortage): Created, Published, ShortageDetected, BottleneckDetected = 4 each;
-	// A2 (no shortage): Created, Published = 2; A3 (draft): Created = 1; total 11.
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 11 {
-		t.Fatalf("analytics outbox rows = %d, want 11", n)
+	// A2 (no shortage, same key as A1, so it supersedes A1 -- docs/adr/0024
+	// decision 3): Created, Superseded, Published = 3; A3 (draft): Created = 1;
+	// total 12. The projector acknowledges CapacityPlanSuperseded without
+	// projecting it, so the reports below still count A1 as published.
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 12 {
+		t.Fatalf("analytics outbox rows = %d, want 12", n)
 	}
 
 	// ---- the topic also carries messages the projector must survive ----
