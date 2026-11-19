@@ -59,7 +59,7 @@ reference differs from `apis/openapi.yaml`).
 Hexagonal / ports & adapters; dependencies point inward only:
 
 ```
-cmd/api/                      composition root: REST service, outbox relay, the five fact consumers
+cmd/api/                      composition root: REST service, outbox relay, the six fact consumers
 cmd/mcp/                      MCP server (Streamable HTTP — read AND write tools)
 cmd/a2a/                      A2A agent (JSON-RPC over HTTP, Agent Card at /.well-known/agent-card.json)
 cmd/planning-projector/       analytics projector (the only analytical-DB writer)
@@ -81,7 +81,7 @@ internal/
     inbound/http/             chi handlers, DTOs, RFC 7807 error mapping, otelchi spans
     inbound/mcp/              the 14 MCP tools
     inbound/a2a/              A2A skills: path_capacity (read), evaluate_capacity_plan (write)
-    inbound/kafka/            the five fact consumers + the projector's analytics consumer
+    inbound/kafka/            the six fact consumers + the projector's analytics consumer
     kafka/cloudevents/        the CloudEvents 1.0 envelope
     outbound/postgres/        pgxpool repos, golang-migrate runner (migrations under outbound/postgres/migrations), UnitOfWork, outbox + relay
     outbound/kafka/           integration + analytics topic publishers
@@ -140,6 +140,7 @@ facts (one pinned consumer group each; DLQ at `<topic>.dlq`):
 | `warehouse.order-management.events` | `OrderAllocated`, `OrderPartiallyAllocated` | `DEMAND_CONSUMER_GROUP` |
 | `warehouse.dock-scheduling.events` | `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow` | `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 | `warehouse.fulfillment.events` | `TaskCompleted` | `OBSERVED_CAPACITY_CONSUMER_GROUP` |
+| `warehouse.labor-performance.events` | `LaborStandardDefined`, `LaborStandardRevised` (ADR 0022) | `LABOR_STANDARD_CONSUMER_GROUP` |
 
 The projector consumes `warehouse.warehouse-planning.analytics` under
 `ANALYTICS_CONSUMER_GROUP`.
@@ -345,7 +346,7 @@ helm install warehouse-planning ./charts/warehouse-planning \
 The chart (OLTP `api` component; optional `mcp`, `a2a`, `frontend` and
 analytics (`analytics-projector`, `analytics-reports`) components, all off
 by default) refuses to render without `database.url` or
-`database.existingSecret`, `kafka.brokers`, the five consumer groups
+`database.existingSecret`, `kafka.brokers`, the six consumer groups
 (`config.laborCapacityConsumerGroup`, `config.storageCapacityConsumerGroup`,
 `demand.consumerGroup`, `dockAppointments.consumerGroup`,
 `observed.consumerGroup`) and `demand.siteId` (and, with analytics on,

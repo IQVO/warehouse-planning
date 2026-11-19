@@ -50,6 +50,7 @@ func (s *Server) handleCreateCapacityPlan(w http.ResponseWriter, r *http.Request
 		DemandFromOrders: req.AssignedDemand == nil,
 		UnitsPerOrder:    req.UnitsPerOrder,
 		PackagesPerOrder: req.PackagesPerOrder,
+		TasksPerOrder:    req.TasksPerOrder,
 	}
 	if req.AssignedDemand != nil {
 		cmd.AssignedDemand = *req.AssignedDemand
@@ -156,10 +157,31 @@ func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {
 		InboundLabourMinutes:   p.Inbound().LabourMinutes,
 		InboundAverageHeads:    p.InboundAverageHeads(),
 		InboundStandardMissing: p.Inbound().StandardMissing,
+
+		LabourRequirement: toLabourRequirementItems(p.LabourRequirement()),
 	}
 	if !p.PublishedAt().IsZero() {
 		publishedAt := p.PublishedAt().UTC().Format(time.RFC3339)
 		resp.PublishedAt = &publishedAt
 	}
 	return resp
+}
+
+// toLabourRequirementItems maps the plan's per-step labour requirement to
+// the response items; never nil.
+func toLabourRequirementItems(items []capacityplan.LabourRequirement) []labourRequirementItem {
+	out := make([]labourRequirementItem, 0, len(items))
+	for _, r := range items {
+		out = append(out, labourRequirementItem{
+			ProcessType:          string(r.ProcessType),
+			StandardSeconds:      r.StandardSeconds,
+			StandardSiteScoped:   r.StandardSiteScoped,
+			Tasks:                r.Tasks,
+			RequiredLabourHours:  r.RequiredLabourHours,
+			RequiredAverageHeads: r.RequiredAverageHeads,
+			Known:                r.Known,
+			Reason:               string(r.Reason),
+		})
+	}
+	return out
 }

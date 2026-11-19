@@ -411,6 +411,15 @@ paths:
         response is that figure. When the read model has no order for that
         location and window the request is rejected with 422
         missing-assigned-demand: absence never silently means zero demand.
+        labour_requirement (docs/adr/0022) states, per path step, the labour
+        its demand requires: tasks x the standard seconds of the step's task
+        type, read from the local copy of labor-performance's labour
+        standards (fed by its LaborStandardDefined / LaborStandardRevised
+        events, never by a live call) for the plan's site at window_start.
+        The optional tasks_per_order map counts a step's tasks; a step without
+        a standard or without a task count is known false with a reason. It
+        is informational: the shortage, the bottleneck and every published
+        event are unchanged by it.
         The plan is saved and its
         CapacityPlanCreated event is queued in the transactional outbox in
         ONE database transaction.
@@ -451,8 +460,9 @@ paths:
             positive, or cannot normalize a step's unit; assigned_demand is
             negative, or is omitted and the order-demand read model has no
             order for this location and window (missing-assigned-demand);
-            site_id is absent/blank; or warehouse_id/location/path_id is
-            blank.
+            a tasks_per_order value is not positive
+            (non-positive-tasks-per-order); site_id is absent/blank; or
+            warehouse_id/location/path_id is blank.
           content:
             application/problem+json:
               schema:
@@ -1702,9 +1712,82 @@ components:
           format: double
           description: WorkloadProfile factor (PACKAGE per ORDER); needed only if a step is measured in PACKAGE.
           example: 1
+        tasks_per_order:
+          type: object
+          description: >
+            OPTIONAL, additive (docs/adr/0022). Tasks per ORDER for a process
+            type, keyed by process type. A step's labour requirement is its
+            tasks x the labor-performance standard seconds of its task type,
+            where tasks = assigned_demand x this factor; a PICK step uses the
+            released order lines instead when the demand came from the order
+            read model (demand_source "orders"). A step without a factor is
+            reported known false with reason no-task-factor, never guessed.
+            Every value must be positive (422 non-positive-tasks-per-order).
+            It never changes path_capacity, the shortage or the bottleneck.
+          additionalProperties:
+            type: number
+            format: double
+            minimum: 0
+            exclusiveMinimum: true
+          example:
+            PICK: 3
+            PACK: 1
+    LabourRequirement:
+      type: object
+      description: >
+        Additive (docs/adr/0022). The labour one step of the plan's path
+        requires: tasks x the engineered standard seconds of the step's task
+        type (labor-performance's standard in force for the plan's site at
+        the window start; a step's process type names its task type).
+        Computed when the plan was created and stored with it: a later
+        revision of a standard never rewrites it. Informational: the ORDER
+        shortage, the bottleneck and every published event do not depend on
+        it. When known is false the figures are 0 and reason says why.
+      required: [process_type, standard_seconds, standard_site_scoped, tasks, required_labour_hours, required_average_heads, known]
+      properties:
+        process_type:
+          type: string
+          example: PACK
+        standard_seconds:
+          type: number
+          format: double
+          description: expected_seconds of the standard in force; 0 when there is none.
+          example: 90
+        standard_site_scoped:
+          type: boolean
+          description: True when that standard is scoped to the plan's site rather than every site.
+          example: false
+        tasks:
+          type: number
+          format: double
+          description: Tasks the step's demand is (released lines for PICK with demand_source orders, else assigned_demand x tasks_per_order[step]).
+          example: 12000
+        required_labour_hours:
+          type: number
+          format: double
+          description: tasks x standard_seconds / 3600.
+          example: 300
+        required_average_heads:
+          type: number
+          format: double
+          description: required_labour_hours over the plan window length, in people.
+          example: 37.5
+        known:
+          type: boolean
+          example: true
+        reason:
+          type: string
+          enum: [no-labor-standard, no-task-factor]
+          description: >
+            Present only when known is false. no-labor-standard: no
+            labor-performance standard of the step's task type is in force for
+            the plan's site and window (or the step is not a task type it
+            measures, e.g. REBIN). no-task-factor: a standard exists but the
+            step's tasks cannot be counted (no tasks_per_order factor).
+          example: no-task-factor
     CapacityPlanResponse:
       type: object
-      required: [id, warehouse_id, site_id, location, window_start, window_end, path_id, assigned_demand, demand_source, status, path_capacity, bottleneck_step, capacity_over_window, shortage, created_at, bottleneck_constraint, warnings, inbound_appointments, inbound_labour_minutes, inbound_average_heads, inbound_standard_missing]
+      required: [id, warehouse_id, site_id, location, window_start, window_end, path_id, assigned_demand, demand_source, status, path_capacity, bottleneck_step, capacity_over_window, shortage, created_at, bottleneck_constraint, warnings, inbound_appointments, inbound_labour_minutes, inbound_average_heads, inbound_standard_missing, labour_requirement]
       properties:
         id:
           type: string
@@ -1806,6 +1889,14 @@ components:
           type: boolean
           description: True when appointments exist but no inbound standard is declared for the plan's (location, path_id); they contribute no labour demand.
           example: false
+        labour_requirement:
+          type: array
+          description: >
+            Additive (docs/adr/0022). The labour each step of the plan's path
+            requires, in path order (never null; [] for plans stored before
+            migration 0013).
+          items:
+            $ref: "#/components/schemas/LabourRequirement"
     DeclareInboundLabourStandardRequest:
       type: object
       required: [minutes_per_appointment]

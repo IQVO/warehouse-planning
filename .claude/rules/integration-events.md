@@ -203,7 +203,18 @@ upsert, offsets committed after success, transient errors retried, validation
 before the transaction, never blocking the partition. `cmd/mcp` reads the table
 and never dials Kafka.
 
-`process-path-management` is deliberately NOT consumed — its `ProcessPath`
+| type (labour standards, ADR 0022) | topic | producer | fields used |
+| --- | --- | --- | --- |
+| `com.warehouse.wes.labor-performance.standard.LaborStandardDefined` | `warehouse.labor-performance.events` | labor-performance (its ADR 0038) | `standard_id`, `task_type`, `expected_seconds`, `effective_from`, optional `handling_unit`, `site_code`, `travel_component_seconds` -> one immutable row in `labor_standards` |
+| `com.warehouse.wes.labor-performance.standard.LaborStandardRevised` | `warehouse.labor-performance.events` | labor-performance | same fields; a revision is a new `standard_id`, so it is a new row |
+
+`LaborStandardConsumer` (group `LABOR_STANDARD_CONSUMER_GROUP`, required; processed-event
+consumer `labor-standard-consumer`) claims and stores in ONE unit of work, dead-letters a
+deterministic failure to `warehouse.labor-performance.events.dlq`, ignores every other type
+on the topic and never reads labor-performance's analytics topic. `cmd/mcp` and `cmd/a2a`
+read the copy and never start the consumer.
+
+Until ADR 0025 is implemented, `process-path-management` is NOT consumed — its `ProcessPath`
 carries `path_id`/`required_capabilities`/`eligibility`, never an ordered
 step sequence, so there is nothing structural to sync.
 

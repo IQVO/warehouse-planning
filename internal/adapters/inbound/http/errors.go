@@ -55,7 +55,8 @@ func statusFor(err error) int {
 		errors.Is(err, inbound.ErrNonPositiveAppointmentMinutes),
 		errors.Is(err, inbound.ErrNegativeASNMinutes),
 		errors.Is(err, inbound.ErrNonFiniteMinutes),
-		errors.Is(err, observed.ErrNonPositiveTasksPerOrder):
+		errors.Is(err, observed.ErrNonPositiveTasksPerOrder),
+		errors.Is(err, capacityplan.ErrNonPositiveTasksPerOrder):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, processcapacity.ErrUnitMismatch),
 		errors.Is(err, capacityplan.ErrAlreadyPublished):
@@ -101,6 +102,7 @@ func problemCatalog() []struct {
 		{inbound.ErrNegativeASNMinutes, problemInfo{"negative-asn-minutes", "Minutes per ASN must not be negative"}},
 		{inbound.ErrNonFiniteMinutes, problemInfo{"non-finite-minutes", "Labour minutes must be finite numbers"}},
 		{observed.ErrNonPositiveTasksPerOrder, problemInfo{"non-positive-tasks-per-order", "tasks_per_order must be a positive number"}},
+		{capacityplan.ErrNonPositiveTasksPerOrder, problemInfo{"non-positive-tasks-per-order", "tasks_per_order must be a positive number"}},
 	}
 }
 

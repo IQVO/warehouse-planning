@@ -23,6 +23,7 @@ flowchart LR
   OM1[order-management] -- "Kafka: OrderAllocated / OrderPartiallyAllocated" --> API
   DS[dock-scheduling] -- "Kafka: DockAppointmentBooked / Rescheduled / Cancelled / NoShow" --> API
   FE[fulfillment-execution] -- "Kafka: TaskCompleted" --> API
+  LPF[labor-performance] -- "Kafka: LaborStandardDefined / Revised" --> API
   CON[warehouse-console remote capacity_mfe] -- "REST via Kong /api/warehouse-planning" --> API
   AGT[warehouse-ops-agent] -- "MCP: 4 read-only tools" --> MCP
   subgraph WP[warehouse-planning]
@@ -47,6 +48,7 @@ Omits: the DLQ topics, Postgres and the OTel Collector.
 | upstream | `order-management` | Kafka, `warehouse.order-management.events` | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` | same, `warehouse.order-management.events.dlq`; consumer always on |
 | upstream | `dock-scheduling` | Kafka, `warehouse.dock-scheduling.events` | `...dock-scheduling.dockappointment.DockAppointmentBooked`, `...DockAppointmentRescheduled`, `...DockAppointmentCancelled`, `...DockAppointmentNoShow` | transient: retried 5 times; deterministic: dead-lettered at once; `warehouse.dock-scheduling.events.dlq`; consumer always on |
 | upstream | `fulfillment-execution` | Kafka, `warehouse.fulfillment.events` | `...fulfillment-execution.task.TaskCompleted` | same, `warehouse.fulfillment.events.dlq`; consumer always on |
+| upstream | `labor-performance` | Kafka, `warehouse.labor-performance.events` (its integration topic) | `...labor-performance.standard.LaborStandardDefined`, `...LaborStandardRevised` (ADR 0022) | a deterministic failure goes to `warehouse.labor-performance.events.dlq` at once; transient errors retried 5 times, then the same DLQ; every other type ignored; consumer always on |
 | inbound caller | `warehouse-console` (remote `capacity_mfe` from `web/`) | REST through Kong at `/api/warehouse-planning` | `apis/openapi.yaml` ([API reference](/docs/api-reference)) | RFC 7807 problem responses (`application/problem+json`); the call fails, nothing is retried by this service |
 | inbound caller | `warehouse-ops-agent` | MCP (Streamable HTTP, `cmd/mcp` on `:8090`) | `get_process_path_capacity`, `get_capacity_plan`, `get_storage_capacity`, `list_station_standards` ([MCP tools](/docs/mcp/tools)) | the tool returns an error result; how the agent degrades is that repo's concern |
 | downstream | `order-management` | Kafka, `warehouse.warehouse-planning.events` | the four `com.warehouse.wes.warehouse-planning.capacityplan.*` types ([event catalogue](/docs/api-reference/events)) | outbox: the row stays unpublished and is retried every relay pass |

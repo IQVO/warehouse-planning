@@ -118,6 +118,11 @@ type CapacityPlan struct {
 	// (docs/adr/0017); informational, no published event carries it.
 	inbound InboundDemand
 
+	// labour is the labour each path step requires, computed at creation
+	// from the standards in force then (docs/adr/0022); informational, no
+	// published event carries it, and a later standard never rewrites it.
+	labour []LabourRequirement
+
 	status      Status
 	createdAt   time.Time
 	publishedAt time.Time
@@ -154,6 +159,10 @@ type CreateParams struct {
 	// (docs/adr/0017); the zero value is no inbound demand. Negative
 	// figures are rejected with ErrNegativeInbound.
 	Inbound InboundDemand
+
+	// LabourRequirement is the labour per path step (docs/adr/0022), in path
+	// order, as RequireLabour computed it; nil is no requirement evaluated.
+	LabourRequirement []LabourRequirement
 }
 
 // ValidateRequired reports ErrRequiredField when the warehouse id, site id,
@@ -210,6 +219,7 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 		bottleneckConstraint: p.BottleneckConstraint,
 		warnings:             append([]string(nil), p.Warnings...),
 		inbound:              p.Inbound,
+		labour:               append([]LabourRequirement(nil), p.LabourRequirement...),
 	}
 	plan.record(CapacityPlanCreated{
 		Header:             Header{PlanID: plan.id, At: now},
@@ -255,6 +265,9 @@ type RehydrateParams struct {
 
 	// Inbound: the zero value for rows stored before migration 0009.
 	Inbound InboundDemand
+
+	// LabourRequirement: empty for plans stored before migration 0013.
+	LabourRequirement []LabourRequirement
 }
 
 // Rehydrate rebuilds a CapacityPlan from persisted state. It records no
@@ -280,6 +293,7 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 		bottleneckConstraint: p.BottleneckConstraint,
 		warnings:             append([]string(nil), p.Warnings...),
 		inbound:              p.Inbound,
+		labour:               append([]LabourRequirement(nil), p.LabourRequirement...),
 	}
 }
 
@@ -429,4 +443,11 @@ func (c *CapacityPlan) InboundAverageHeads() float64 {
 		return 0
 	}
 	return c.inbound.LabourMinutes / minutes
+}
+
+// LabourRequirement returns the labour each path step requires, in path
+// order, as computed when the plan was created (docs/adr/0022); empty for
+// plans stored before it. The result is a copy.
+func (c *CapacityPlan) LabourRequirement() []LabourRequirement {
+	return append([]LabourRequirement(nil), c.labour...)
 }

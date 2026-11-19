@@ -257,7 +257,7 @@ variance never changes a planned capacity.
 | Count a completed task in its minute bucket | Policy | `ObservedCapacityConsumer.HandleMessage` |
 | Fan out to both topics through the outbox | Policy | `FanoutEncoder.Encode`, `enqueue` in `create_capacity_plan.go` |
 | Path capacity, facility tally, StationStandard, expected demand, inbound demand, observed capacity and variance, `plan_facts`, reports | Read model | `GetProcessPathCapacity`, `location_slot_tally`, `station_standards`, `order_demand`, `inbound_appointments`, `inbound_labour_standards`, `observed_capacity`, `plan_facts`, `internal/analytics/report` |
-| workforce-management, facility-layout, order-management, dock-scheduling, fulfillment-execution | External system | the five consumer files above (`labor_capacity_consumer.go`, `storage_capacity_consumer.go`, `order_demand_consumer.go`, `dock_appointment_consumer.go`, `observed_capacity_consumer.go`) and order-management's `planned_capacity_consumer.go` |
+| workforce-management, facility-layout, order-management, dock-scheduling, fulfillment-execution, labor-performance | External system | the six consumer files above (`labor_capacity_consumer.go`, `storage_capacity_consumer.go`, `order_demand_consumer.go`, `dock_appointment_consumer.go`, `observed_capacity_consumer.go`, `labor_standard_consumer.go`) and order-management's `planned_capacity_consumer.go` |
 | Derived labor window, assumed UNIT/HOUR | Hotspot | ADR 0001 Addendum; `laborRateUnit` comment in `labor_capacity_consumer.go` |
 | Stations without a standard only warn | Hotspot | `ComposeStepCapacity` warning, ADR 0002 |
 | WorkloadProfile not stored | Hotspot | `GetProcessPathCapacityCommand` doc comment ("PHASE 2 SIMPLIFICATION") |

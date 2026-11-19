@@ -41,6 +41,7 @@ const (
 	topicOrders    = "warehouse.order-management.events"
 	topicDock      = "warehouse.dock-scheduling.events"
 	topicFulfil    = "warehouse.fulfillment.events"
+	topicLaborPerf = "warehouse.labor-performance.events"
 	topicEvents    = "warehouse.warehouse-planning.events"
 	topicAnalytics = "warehouse.warehouse-planning.analytics"
 
@@ -52,10 +53,12 @@ const (
 	windowEnd   = "2026-10-05T16:00:00Z"
 )
 
-// consumedEvents is how many distinct CloudEvents ids the five consumers
+// consumedEvents is how many distinct CloudEvents ids the consumers
 // claim in the whole test: 4 in phaseConsumers, 9 dock-scheduling appointment
 // events and 5 task completions in phaseInboundObserved (duplicates excluded;
-// the retired inbound-receiving event is never claimed).
+// the retired inbound-receiving event is never claimed). The labour-standard
+// consumer (ADR 0022) runs but is fed nothing here: its effect is covered by
+// the kafka package's integration test.
 const consumedEvents = 18
 
 // containerStartTimeout bounds a testcontainers start.
@@ -248,6 +251,7 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("DEMAND_CONSUMER_GROUP", "warehouse-planning-demand-e2e")
 	t.Setenv("DOCK_APPOINTMENT_CONSUMER_GROUP", "warehouse-planning-dock-appointments-e2e")
 	t.Setenv("OBSERVED_CAPACITY_CONSUMER_GROUP", "warehouse-planning-observed-capacity-e2e")
+	t.Setenv("LABOR_STANDARD_CONSUMER_GROUP", "warehouse-planning-labor-standards-e2e")
 	t.Setenv("DEMAND_SITE_ID", siteID)
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
@@ -830,7 +834,7 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	pg, dbURL := startPostgres(t)
 	kc, brokers := startKafka(t)
 	// The input topics are infra's: create them the way the cluster has them.
-	for _, topic := range []string{topicLabor, topicFacility, topicOrders, topicDock, topicFulfil} {
+	for _, topic := range []string{topicLabor, topicFacility, topicOrders, topicDock, topicFulfil, topicLaborPerf} {
 		createTopic(t, brokers, topic)
 	}
 	w := &world{e: env{dbURL: dbURL, brokers: brokers, addr: freeAddr(t)}, pg: pg, kc: kc, db: newPGView(t, dbURL), brokers: brokers}

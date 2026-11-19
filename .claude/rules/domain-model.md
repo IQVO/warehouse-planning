@@ -105,6 +105,18 @@ paths:
   serve it, and the resulting shortage (if any). Implemented in Phase 4.
 - **Bottleneck** — the constraint or process-path step currently limiting
   end-to-end flow.
+- **Labour standard** — an immutable fact per `standard_id`, copied from
+  labor-performance (`internal/domain/laborstandard`, ADR 0022). The standard
+  in force for (site, task type, window start) is resolved at READ time by
+  `laborstandard.Resolve`: site-scoped over site-less, then latest
+  `effective_from`, then latest `as_of`; handling-unit standards are stored
+  but not used. A step's ProcessType names its task type when they are equal.
+- **LabourRequirement** — per plan step: tasks x standard seconds
+  (`capacityplan.RequireLabour`). PICK tasks are released lines when the
+  demand came from orders, otherwise `assigned_demand x tasks_per_order[step]`;
+  unknown with `no-labor-standard` or `no-task-factor`, never guessed.
+  Computed at creation and stored with the plan; it never affects the
+  shortage, the bottleneck or any published event.
 
 ## Aggregates
 

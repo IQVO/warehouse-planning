@@ -18,6 +18,8 @@ type createPlanInput struct {
 	AssignedDemand   *float64 `json:"assigned_demand,omitempty" jsonschema:"OPTIONAL demand assigned to the window, in ORDERS (must not be negative; 0 is a real figure). When given it is used exactly as stated. When omitted, the plan uses the number of orders order-management has promised at this location inside the window (see get_expected_demand) and demand_source is orders; if there are none the call fails with missing-assigned-demand - the demand is never silently zero"`
 	UnitsPerOrder    *float64 `json:"units_per_order,omitempty" jsonschema:"workload conversion factor: UNIT per ORDER; required if any step is measured in UNIT"`
 	PackagesPerOrder *float64 `json:"packages_per_order,omitempty" jsonschema:"workload conversion factor: PACKAGE per ORDER; required if any step is measured in PACKAGE"`
+	// TasksPerOrder (docs/adr/0022) is additive and optional.
+	TasksPerOrder map[string]float64 `json:"tasks_per_order,omitempty" jsonschema:"OPTIONAL tasks per ORDER for a process type, keyed by process type (e.g. PACK 1.0); every value must be positive. A step's labour requirement is tasks x the labor-performance standard seconds of its task type, where tasks = assigned_demand x this factor (a PICK step uses the released order lines instead when demand_source is orders). A step without a factor or without a standard is reported known=false with a reason, never guessed"`
 }
 
 type planIDInput struct {
@@ -61,6 +63,42 @@ type capacityPlanOutput struct {
 	InboundLabourMinutes   float64 `json:"inbound_labour_minutes"`
 	InboundAverageHeads    float64 `json:"inbound_average_heads"`
 	InboundStandardMissing bool    `json:"inbound_standard_missing"`
+
+	// LabourRequirement (docs/adr/0022), additive and informational: the
+	// labour each path step requires, computed at creation; the REST body's
+	// twin. Never null.
+	LabourRequirement []labourRequirementOutput `json:"labour_requirement"`
+}
+
+// labourRequirementOutput is one step's labour requirement; known is false
+// (with a reason: no-labor-standard or no-task-factor) when it cannot be
+// computed honestly.
+type labourRequirementOutput struct {
+	ProcessType          string  `json:"process_type"`
+	StandardSeconds      float64 `json:"standard_seconds"`
+	StandardSiteScoped   bool    `json:"standard_site_scoped"`
+	Tasks                float64 `json:"tasks"`
+	RequiredLabourHours  float64 `json:"required_labour_hours"`
+	RequiredAverageHeads float64 `json:"required_average_heads"`
+	Known                bool    `json:"known"`
+	Reason               string  `json:"reason,omitempty"`
+}
+
+func toLabourRequirementOutput(items []capacityplan.LabourRequirement) []labourRequirementOutput {
+	out := make([]labourRequirementOutput, 0, len(items))
+	for _, r := range items {
+		out = append(out, labourRequirementOutput{
+			ProcessType:          string(r.ProcessType),
+			StandardSeconds:      r.StandardSeconds,
+			StandardSiteScoped:   r.StandardSiteScoped,
+			Tasks:                r.Tasks,
+			RequiredLabourHours:  r.RequiredLabourHours,
+			RequiredAverageHeads: r.RequiredAverageHeads,
+			Known:                r.Known,
+			Reason:               string(r.Reason),
+		})
+	}
+	return out
 }
 
 func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
@@ -88,6 +126,8 @@ func toCapacityPlanOutput(p *capacityplan.CapacityPlan) capacityPlanOutput {
 		InboundLabourMinutes:   p.Inbound().LabourMinutes,
 		InboundAverageHeads:    p.InboundAverageHeads(),
 		InboundStandardMissing: p.Inbound().StandardMissing,
+
+		LabourRequirement: toLabourRequirementOutput(p.LabourRequirement()),
 	}
 	if !p.PublishedAt().IsZero() {
 		publishedAt := p.PublishedAt().UTC().Format(time.RFC3339)
@@ -116,6 +156,7 @@ func (d Deps) createCapacityPlan(ctx context.Context, in createPlanInput) (capac
 		DemandFromOrders: in.AssignedDemand == nil,
 		UnitsPerOrder:    in.UnitsPerOrder,
 		PackagesPerOrder: in.PackagesPerOrder,
+		TasksPerOrder:    in.TasksPerOrder,
 	}
 	if in.AssignedDemand != nil {
 		cmd.AssignedDemand = *in.AssignedDemand

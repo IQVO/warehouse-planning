@@ -102,7 +102,7 @@ feeds the observed-capacity read model behind the advisory `GET
 /capacity-plans/{id}/variance`. Every other type on those two topics is ignored.
 See [ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback).
 
-A transiently failing message on any of the five consumed topics is retried
+A transiently failing message on any of the six consumed topics is retried
 up to 5 times and then published to `<topic>.dlq`
 (`warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`,
 `warehouse.order-management.events.dlq`, `warehouse.dock-scheduling.events.dlq`,

@@ -115,6 +115,10 @@ spec:
               value: {{ .Values.dockAppointments.consumerGroup | quote }}
             - name: OBSERVED_CAPACITY_CONSUMER_GROUP
               value: {{ .Values.observed.consumerGroup | quote }}
+            # Labour-standard consumer (docs/adr/0022, labor-performance's
+            # integration topic): always on, group from laborStandard.
+            - name: LABOR_STANDARD_CONSUMER_GROUP
+              value: {{ .Values.laborStandard.consumerGroup | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

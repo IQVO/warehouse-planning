@@ -73,7 +73,7 @@ make check-fast   # fmt-check + vet + arch-test + tests of changed packages: run
 make check        # fmt-check vet build lint test
 make check-all    # check + coverage (90% gate on domain+application) + arch-test + bdd
 make integration  # real Postgres/Kafka via testcontainers (needs Docker); not in check-all
-make mutation-fast  # gremlins on processcapacity, capacityplan, processpath (blocking in CI)
+make mutation-fast  # gremlins on MUTATION_FAST_PKGS in the Makefile (blocking in CI)
 make guide-lint   # these guides: skills load, references resolve, context budget
 ```
 

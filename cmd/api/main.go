@@ -1,7 +1,7 @@
 // Command api is the warehouse-planning composition root: it wires env
 // config into adapters, adapters into use cases, and use cases into the HTTP
-// router, the five Kafka consumers (labor capacity, storage capacity, order
-// demand, dock-scheduling appointments, observed task completions) and the outbox relay, all on real Postgres and real Kafka (ADR
+// router, the six Kafka consumers (labor capacity, storage capacity, order
+// demand, dock-scheduling appointments, observed task completions, labor-performance's labour standards) and the outbox relay, all on real Postgres and real Kafka (ADR
 // 0016): there is no in-memory mode, no log sink and no consumer that is off.
 //
 // Environment:
@@ -20,6 +20,7 @@
 //	DOCK_APPOINTMENT_CONSUMER_GROUP  stable group id of the dock-appointment consumer on dock-scheduling's topic (REQUIRED, ADR 0020)
 //	INBOUND_DEMAND_CONSUMER_GROUP    RETIRED (ADR 0017's inbound-receiving source): setting it is a boot error
 //	OBSERVED_CAPACITY_CONSUMER_GROUP stable group id of the task-completion consumer (REQUIRED, ADR 0017)
+//	LABOR_STANDARD_CONSUMER_GROUP    stable group id of the labour-standard consumer on labor-performance's topic (REQUIRED, ADR 0022)
 //	DEMAND_SITE_ID                   fallback site for orders without a site_id, and the site of every task completion (REQUIRED; ADR 0021)
 //	OTEL_EXPORTER_OTLP_ENDPOINT      OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY             wait after flipping /readyz before closing (default 5s)
@@ -175,6 +176,8 @@ func buildServer(
 			Demand:       expectedDemand,
 			Inbound:      inboundDemand,
 			Metrics:      planMetrics,
+			// ADR 0022: each step priced with the labour standards copy.
+			LaborStandards: ad.laborStandards,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans:      ad.capacityPlans,
@@ -245,6 +248,11 @@ type adapters struct {
 	inboundStandards    ports.InboundStandardRepository
 	observedCapacity    ports.ObservedCapacityRepository
 
+	// laborStandards is the local copy of labor-performance's engineered
+	// labour standards (ADR 0022), written by the labour-standard consumer
+	// and read by plan creation.
+	laborStandards ports.LaborStandardRepository
+
 	// pathLister and planLister are the list-read sides of processPaths and
 	// capacityPlans (the same repositories), behind GET /process-paths and
 	// GET /capacity-plans.
@@ -306,6 +314,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		inboundAppointments: postgres.NewInboundAppointmentRepo(pool),
 		inboundStandards:    postgres.NewInboundStandardRepo(pool),
 		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
+		laborStandards:      postgres.NewLaborStandardRepo(pool),
 		pathLister:          pathRepo,
 		planLister:          planRepo,
 		pool:                pool,

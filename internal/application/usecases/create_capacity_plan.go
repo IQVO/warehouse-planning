@@ -56,6 +56,14 @@ type CreateCapacityPlanCommand struct {
 
 	UnitsPerOrder    *float64
 	PackagesPerOrder *float64
+
+	// TasksPerOrder is the OPTIONAL tasks-per-order factor per process type
+	// (docs/adr/0022 decision 5), next to the WorkloadProfile factors: a step's
+	// tasks are AssignedDemand x its factor (PICK with demand from orders uses
+	// the released lines instead). Every factor must be positive
+	// (capacityplan.ErrNonPositiveTasksPerOrder); a step without one has an
+	// unknown labour requirement, never a guessed one.
+	TasksPerOrder map[string]float64
 }
 
 // CreateCapacityPlan computes the path capacity (reusing
@@ -80,6 +88,13 @@ type CreateCapacityPlan struct {
 	// demand. Nil means no inbound model is wired and the plan carries no
 	// inbound demand, exactly as before the model existed.
 	Inbound *GetInboundDemand
+
+	// LaborStandards is the local copy of labor-performance's engineered
+	// labour standards (docs/adr/0022): each path step is priced with the
+	// standard of its task type in force for the plan's site at the window
+	// start. Nil means no copy is wired: every step's labour requirement is
+	// unknown (no-labor-standard) and everything else is unchanged.
+	LaborStandards ports.LaborStandardRepository
 
 	// NewID mints the plan id (uuid.NewString when nil) and Now supplies
 	// the creation time (utcNow when nil); both are injectable
@@ -130,13 +145,18 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 	if err := capacityplan.ValidateRequired(cmd.WarehouseID, cmd.SiteID, cmd.Location, cmd.ProcessPathID); err != nil {
 		return nil, err
 	}
+	factors := taskFactors(cmd.TasksPerOrder)
+	if err := capacityplan.ValidateTasksPerOrder(factors); err != nil {
+		return nil, err
+	}
 
 	// Resolve the demand next: an omitted assigned_demand with no order
 	// data has always been rejected before any other check.
-	assignedDemand, source, err := uc.resolveDemand(ctx, cmd)
+	demand, err := uc.resolveDemand(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}
+	demand.TasksPerOrder = factors
 
 	window, err := processcapacity.NewCapacityWindow(cmd.WindowStart, cmd.WindowEnd)
 	if err != nil {
@@ -167,6 +187,10 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 	if err != nil {
 		return nil, err
 	}
+	labour, err := uc.resolveLabour(ctx, cmd.SiteID, window, demand, result.Steps)
+	if err != nil {
+		return nil, err
+	}
 
 	plan, err := capacityplan.Create(capacityplan.CreateParams{
 		ID:             newID(),
@@ -175,14 +199,15 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 		Location:       cmd.Location,
 		Window:         window,
 		ProcessPathID:  cmd.ProcessPathID,
-		AssignedDemand: assignedDemand,
-		DemandSource:   source,
+		AssignedDemand: demand.AssignedDemand,
+		DemandSource:   demand.Source,
 		PathRate:       result.NormalizedRate,
 		BottleneckStep: result.BottleneckStep,
 
 		BottleneckConstraint: result.BottleneckConstraint,
 		Warnings:             append(append([]string(nil), result.Warnings...), inboundWarnings...),
 		Inbound:              inboundDemand,
+		LabourRequirement:    labour,
 	}, now())
 	if err != nil {
 		return nil, err
@@ -200,31 +225,36 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 	return plan, nil
 }
 
-// resolveDemand returns the demand the plan is evaluated against and where
-// it came from. An explicit assigned_demand (DemandFromOrders false) is used
-// untouched. Otherwise it is the number of orders expected at the plan's
-// location in its window; no orders (or no model) is
-// ErrMissingAssignedDemand -- never a silent zero.
-func (uc *CreateCapacityPlan) resolveDemand(ctx context.Context, cmd CreateCapacityPlanCommand) (float64, capacityplan.DemandSource, error) {
+// resolveDemand returns the demand the plan is evaluated against and where it
+// came from. An explicit
+// assigned_demand (DemandFromOrders false) is used untouched. Otherwise it is
+// the number of orders expected at the plan's location in its window, with
+// the released lines of those orders (the PICK tasks, docs/adr/0022); no
+// orders (or no model) is ErrMissingAssignedDemand -- never a silent zero.
+func (uc *CreateCapacityPlan) resolveDemand(ctx context.Context, cmd CreateCapacityPlanCommand) (capacityplan.LabourDemand, error) {
 	if !cmd.DemandFromOrders {
-		return cmd.AssignedDemand, capacityplan.DemandSourceRequest, nil
+		return capacityplan.LabourDemand{AssignedDemand: cmd.AssignedDemand, Source: capacityplan.DemandSourceRequest}, nil
 	}
 	if uc.Demand == nil {
-		return 0, "", ErrMissingAssignedDemand
+		return capacityplan.LabourDemand{}, ErrMissingAssignedDemand
 	}
 	summary, err := uc.Demand.Handle(ctx, cmd.Location, cmd.WindowStart, cmd.WindowEnd)
 	if err != nil {
 		// An unusable window cannot have demand; the request is rejected
 		// the way an omitted assigned_demand always was.
 		if errors.Is(err, processcapacity.ErrInvalidWindow) {
-			return 0, "", ErrMissingAssignedDemand
+			return capacityplan.LabourDemand{}, ErrMissingAssignedDemand
 		}
-		return 0, "", err
+		return capacityplan.LabourDemand{}, err
 	}
 	if !summary.HasData() {
-		return 0, "", ErrMissingAssignedDemand
+		return capacityplan.LabourDemand{}, ErrMissingAssignedDemand
 	}
-	return float64(summary.Orders), capacityplan.DemandSourceOrders, nil
+	return capacityplan.LabourDemand{
+		AssignedDemand: float64(summary.Orders),
+		Source:         capacityplan.DemandSourceOrders,
+		ReleasedLines:  summary.ReleasedLines,
+	}, nil
 }
 
 // resolveInbound reads the inbound demand of the plan's (location, path,

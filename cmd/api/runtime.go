@@ -28,6 +28,7 @@ const (
 	envDemandConsumerGrp   = "DEMAND_CONSUMER_GROUP"
 	envDockGroup           = "DOCK_APPOINTMENT_CONSUMER_GROUP"
 	envObservedGroup       = "OBSERVED_CAPACITY_CONSUMER_GROUP"
+	envLaborStandardGroup  = "LABOR_STANDARD_CONSUMER_GROUP"
 	envDemandSiteID        = "DEMAND_SITE_ID"
 	envOutboxRelayInterval = "OUTBOX_RELAY_INTERVAL"
 	envOutboxMaxAttempts   = "OUTBOX_MAX_ATTEMPTS"
@@ -60,10 +61,10 @@ type runtimeEnv struct {
 	demandSiteID string
 }
 
-// consumerGroupEnvs are the five Kafka consumers of cmd/api, each with the
+// consumerGroupEnvs are the six Kafka consumers of cmd/api, each with the
 // env var that carries its STABLE group id (never a literal, never a default:
 // a default would let a locally run process join the live group).
-var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp, envDockGroup, envObservedGroup}
+var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp, envDockGroup, envObservedGroup, envLaborStandardGroup}
 
 // loadRuntime validates the environment before anything is opened or bound:
 // DATABASE_URL, KAFKA_BROKERS, every consumer group and DEMAND_SITE_ID are
@@ -153,7 +154,7 @@ type consumerSpec struct {
 	build                 func(brokers []string, group string) runner
 }
 
-// consumerSpecs lists the five consumers; they are always on.
+// consumerSpecs lists the six consumers; they are always on.
 func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProcessCapacityConstraint, logger *slog.Logger) []consumerSpec {
 	return []consumerSpec{
 		{"labor-capacity", inboundkafka.LaborTopic, envLaborGroup, func(brokers []string, group string) runner {
@@ -176,6 +177,12 @@ func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProces
 		{"observed-capacity", inboundkafka.FulfillmentTopic, envObservedGroup, func(brokers []string, group string) runner {
 			record := &usecases.RecordObservedCompletion{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Observed: ad.observedCapacity}
 			return inboundkafka.NewObservedCapacityConsumer(brokers, group, rt.demandSiteID, record, logger)
+		}},
+		// ADR 0022: labor-performance's engineered standards, into the local
+		// copy the capacity plans price their steps with.
+		{"labor-standards", inboundkafka.LaborPerformanceTopic, envLaborStandardGroup, func(brokers []string, group string) runner {
+			record := &usecases.RecordLaborStandard{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Standards: ad.laborStandards}
+			return inboundkafka.NewLaborStandardConsumer(brokers, group, record, logger)
 		}},
 	}
 }
