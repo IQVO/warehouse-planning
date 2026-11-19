@@ -78,6 +78,12 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
+          id: "api-reference/rest/compare-capacity-plans",
+          label: "Lay 2 to 5 capacity plan scenarios of one site and window side by side",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
           id: "api-reference/rest/get-capacity-plan",
           label: "Get a CapacityPlan",
           className: "api-method get",

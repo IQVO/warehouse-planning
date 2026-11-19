@@ -221,7 +221,7 @@ func registerDemandSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^I create a capacity plan for warehouse `+ts+` at site `+ts+` in location `+ts+` on path `+ts+` for the window `+ts+` to `+ts+` without assigned demand, units_per_order (\d+(?:\.\d+)?) and packages_per_order (\d+(?:\.\d+)?)$`, w.iCreateAPlanWithoutDemand)
 	sc.Step(`^the expected demand is (\d+) orders? and (\d+) released lines?$`, w.theExpectedDemandIs)
 	sc.Step(`^the expected demand as of is (null|`+ts+`)$`, func(raw string) error { return w.theExpectedDemandAsOfIs(strings.Trim(raw, `"`)) })
-	sc.Step(`^the capacity plan uses demand (\d+(?:\.\d+)?) from (orders|request) with shortage (\d+(?:\.\d+)?)$`, w.theCapacityPlanUsesDemand)
-	sc.Step(`^the stored capacity plan remembers its demand source is (orders|request)$`, w.theStoredPlanRemembersItsDemandSource)
+	sc.Step(`^the capacity plan uses demand (\d+(?:\.\d+)?) from (orders|request|forecast) with shortage (\d+(?:\.\d+)?)$`, w.theCapacityPlanUsesDemand)
+	sc.Step(`^the stored capacity plan remembers its demand source is (orders|request|forecast)$`, w.theStoredPlanRemembersItsDemandSource)
 	sc.Step(`^the outbox holds no capacity plan events$`, w.theOutboxHoldsNoCapacityPlanEvents)
 }

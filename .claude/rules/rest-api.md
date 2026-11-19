@@ -354,3 +354,6 @@ is half-open `[window_start, window_end)`.
 - `400 missing-location` / `malformed-window-start` / `malformed-window-end` /
   `invalid-capacity-window`. The route exists only when the demand read model is
   wired (always in `cmd/api`); it reads the table even when the consumer is off.
+
+- A static sub-resource read under a collection (e.g. `GET /capacity-plans/comparisons`) is registered beside `/{id}`; chi matches the static segment first, so the word is never read as an id. A handler test pins that it never reaches `GET /{id}`.
+- A read that answers from stored aggregates only (comparisons) must not recompute: it returns the figures as stored, so it is reproducible, and carries `x-pagination-exempt: view` when it returns a bounded set (2..5 items).

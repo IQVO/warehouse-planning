@@ -178,6 +178,8 @@ func buildServer(
 			Metrics:      planMetrics,
 			// ADR 0022: each step priced with the labour standards copy.
 			LaborStandards: ad.laborStandards,
+			// ADR 0024: demand_source forecast reads the workload forecasts.
+			Forecasts: ad.workloadForecasts,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans:      ad.capacityPlans,
@@ -205,6 +207,8 @@ func buildServer(
 		// Console remote list reads (REST only; no MCP tool).
 		ListProcessPaths:  &usecases.ListProcessPaths{Paths: ad.pathLister},
 		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: ad.planLister},
+		// ADR 0024 decision 4: scenarios side by side (REST only).
+		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: ad.capacityPlans},
 
 		// Readiness backs GET /readyz (graceful-shutdown fix): flipped to
 		// not-ready as the FIRST step of shutdown (serveUntilSignal).

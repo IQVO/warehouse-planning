@@ -101,7 +101,13 @@ REST `detail` carries the underlying error text; the MCP tools return only
 | 422 | `missing-step-capacity` | no registered window covers a step at that location (an empty location in the detail means the `location` query parameter was omitted), and no station standard can derive one | register capacity covering the window, or declare a station standard |
 | 422 | `empty-process-path-steps` | path without steps | send at least one step |
 | 422 | `negative-assigned-demand` | `assigned_demand` < 0 | 0 or more |
-| 422 | `missing-assigned-demand` | `assigned_demand` omitted and the demand read model has no orders for that location and window (or the consumer is off) | pass `assigned_demand`, or enable demand ingestion |
+| 422 | `missing-assigned-demand` | `assigned_demand` omitted and the demand read model has no orders for that location and window (or the consumer is off); with `demand_source: forecast`, no forecast bucket of `(site_id, forecast_path_id)` has a `cpt` in `[window_start, window_end)` | pass `assigned_demand`, enable demand ingestion, or `PUT` the forecast |
+| 422 | `unknown-demand-source` | `demand_source` other than `request`, `orders` or `forecast` | send one of the three |
+| 422 | `missing-units-per-order` | `demand_source: forecast` without `units_per_order` (forecast units are not orders, ADR 0024) | send `units_per_order` |
+| 422 | `demand-source-conflict` | an input the named source does not read (e.g. `assigned_demand` with `forecast`, `forecast_path_id` without it) | drop the input, or change `demand_source` |
+| 422 | `invalid-scenario` | `scenario` sent blank or longer than 64 characters | omit it, or send 1 to 64 characters |
+| 422 | `invalid-comparison-ids` | `GET /capacity-plans/comparisons` with fewer than 2, more than 5, or repeated ids | send 2 to 5 distinct ids |
+| 422 | `comparison-site-mismatch`, `comparison-window-mismatch` | the compared plans are not all of one site and one window (checked after every id is found; an unknown id is `404 capacity-plan-not-found`) | compare scenarios of the same site and window only |
 | 422 | `missing-required-field` | blank `warehouse_id`, `site_id`, `location` or `path_id` (the problem title omits `site_id`, the check does not) | send all four; `site_id` is required since [ADR 0012](/docs/adr/0012-canonical-site-id-on-capacity-plans) |
 | 422 | `non-positive-tasks-per-order` | a `tasks_per_order` factor ≤ 0 on `POST /capacity-plans` (ADR 0022) or on the variance read | send a positive factor, or omit the step's factor (its labour requirement is then unknown with reason `no-task-factor`) |
 | 500 | `internal-error` | infrastructure failure (database) | read `detail` and the pod logs |

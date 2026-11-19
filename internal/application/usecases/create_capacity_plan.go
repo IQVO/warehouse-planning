@@ -54,6 +54,22 @@ type CreateCapacityPlanCommand struct {
 	// stated figure always wins and behaves exactly as before.
 	DemandFromOrders bool
 
+	// DemandSource is the OPTIONAL demand source the request named
+	// (docs/adr/0024 decision 1): "request", "orders", "forecast" or empty
+	// for the default (request when assigned_demand is stated, orders when it
+	// is omitted). An input the named source does not read is refused
+	// (capacityplan.ErrDemandSourceConflict); see requestedSource.
+	DemandSource string
+	// ForecastPathID names the WorkloadForecast a forecast demand is read
+	// from; empty is the plan's ProcessPathID. Both are canonicalised
+	// (workloadforecast.CanonicalPathID) before the lookup.
+	ForecastPathID string
+
+	// Scenario is the OPTIONAL what-if label (docs/adr/0024 decision 2): nil
+	// is no label; a set one must be 1 to 64 characters
+	// (capacityplan.ErrInvalidScenario), so an empty string is refused.
+	Scenario *string
+
 	UnitsPerOrder    *float64
 	PackagesPerOrder *float64
 
@@ -81,6 +97,11 @@ type CreateCapacityPlan struct {
 	// demand model is wired: an omitted assigned_demand then fails with
 	// ErrMissingAssignedDemand exactly as before the model existed.
 	Demand *GetExpectedDemand
+
+	// Forecasts is the WorkloadForecast store (docs/adr/0023) a
+	// demand_source forecast reads (docs/adr/0024). Nil means no forecast is
+	// wired: a forecast demand then fails with ErrMissingAssignedDemand.
+	Forecasts ports.WorkloadForecastRepository
 
 	// Inbound is the dock-appointment demand read (docs/adr/0017): the
 	// appointments starting in the window priced with the declared inbound
@@ -138,15 +159,8 @@ func (uc *CreateCapacityPlan) Handle(ctx context.Context, cmd CreateCapacityPlan
 }
 
 func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlanCommand) (*capacityplan.CapacityPlan, error) {
-	// A blank identifying field is refused before anything is looked up or
-	// derived, so it is never reported as a missing step capacity, an unknown
-	// path or a missing demand (openapi, ADR 0012, troubleshooting:
-	// 422 missing-required-field).
-	if err := capacityplan.ValidateRequired(cmd.WarehouseID, cmd.SiteID, cmd.Location, cmd.ProcessPathID); err != nil {
-		return nil, err
-	}
-	factors := taskFactors(cmd.TasksPerOrder)
-	if err := capacityplan.ValidateTasksPerOrder(factors); err != nil {
+	factors, scenario, err := validateCommand(cmd)
+	if err != nil {
 		return nil, err
 	}
 
@@ -201,6 +215,8 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 		ProcessPathID:  cmd.ProcessPathID,
 		AssignedDemand: demand.AssignedDemand,
 		DemandSource:   demand.Source,
+		ForecastPathID: forecastPathOf(cmd),
+		Scenario:       scenario,
 		PathRate:       result.NormalizedRate,
 		BottleneckStep: result.BottleneckStep,
 
@@ -226,14 +242,22 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 }
 
 // resolveDemand returns the demand the plan is evaluated against and where it
-// came from. An explicit
-// assigned_demand (DemandFromOrders false) is used untouched. Otherwise it is
+// came from, by the source requestedSource settles on. A stated
+// assigned_demand (source request) is used untouched; the forecast source is
+// forecastDemand. Otherwise it is
 // the number of orders expected at the plan's location in its window, with
 // the released lines of those orders (the PICK tasks, docs/adr/0022); no
 // orders (or no model) is ErrMissingAssignedDemand -- never a silent zero.
 func (uc *CreateCapacityPlan) resolveDemand(ctx context.Context, cmd CreateCapacityPlanCommand) (capacityplan.LabourDemand, error) {
-	if !cmd.DemandFromOrders {
+	source, err := requestedSource(cmd)
+	if err != nil {
+		return capacityplan.LabourDemand{}, err
+	}
+	switch source {
+	case capacityplan.DemandSourceRequest:
 		return capacityplan.LabourDemand{AssignedDemand: cmd.AssignedDemand, Source: capacityplan.DemandSourceRequest}, nil
+	case capacityplan.DemandSourceForecast:
+		return uc.forecastDemand(ctx, cmd)
 	}
 	if uc.Demand == nil {
 		return capacityplan.LabourDemand{}, ErrMissingAssignedDemand

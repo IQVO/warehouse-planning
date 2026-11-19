@@ -40,7 +40,9 @@ func stateOf(p *capacityplan.CapacityPlan) capacityplan.RehydrateParams {
 		CreatedAt:          p.CreatedAt(),
 		PublishedAt:        p.PublishedAt(),
 
-		DemandSource: p.DemandSource(),
+		DemandSource:   p.DemandSource(),
+		ForecastPathID: p.ForecastPathID(),
+		Scenario:       p.Scenario(),
 
 		BottleneckConstraint: p.BottleneckConstraint(),
 		Warnings:             p.Warnings(),
@@ -70,15 +72,15 @@ func (r *CapacityPlanRepo) FindByID(_ context.Context, id string) (*capacityplan
 	return capacityplan.Rehydrate(state), nil
 }
 
-// ListRecent returns up to limit plans, newest first (created_at, then id,
-// both descending), optionally restricted to one location. Like FindByID it
-// returns fresh copies.
-func (r *CapacityPlanRepo) ListRecent(_ context.Context, location string, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
+// ListRecent returns up to limit plans matching filter, newest first
+// (created_at, then id, both descending). Like FindByID it returns fresh
+// copies.
+func (r *CapacityPlanRepo) ListRecent(_ context.Context, filter capacityplan.ListFilter, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	matching := make([]capacityplan.RehydrateParams, 0, len(r.store))
 	for _, state := range r.store {
-		if location == "" || state.Location == location {
+		if filter.Matches(capacityplan.Rehydrate(state)) {
 			matching = append(matching, state)
 		}
 	}

@@ -48,6 +48,9 @@ func (s *Server) handleCreateCapacityPlan(w http.ResponseWriter, r *http.Request
 		WindowEnd:        windowEnd,
 		ProcessPathID:    req.PathID,
 		DemandFromOrders: req.AssignedDemand == nil,
+		DemandSource:     req.DemandSource,
+		ForecastPathID:   req.ForecastPathID,
+		Scenario:         req.Scenario,
 		UnitsPerOrder:    req.UnitsPerOrder,
 		PackagesPerOrder: req.PackagesPerOrder,
 		TasksPerOrder:    req.TasksPerOrder,
@@ -92,19 +95,24 @@ func (s *Server) handleGetCapacityPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toCapacityPlanResponse(plan))
 }
 
-// handleListCapacityPlans backs GET /capacity-plans?location=: the most
-// recently created plans, newest first, each in GET /capacity-plans/{id}'s
-// shape, one keyset page at a time ({items,nextCursor}; ordered by created_at
-// then id, both descending). location is optional (omitted = every location)
-// and is repeated on every page request. 200 with an empty items list when
-// nothing matches. The route exists only when the ListCapacityPlans use case
-// is wired.
+// handleListCapacityPlans backs GET /capacity-plans: the most recently
+// created plans, newest first, each in GET /capacity-plans/{id}'s shape, one
+// keyset page at a time ({items,nextCursor}; ordered by created_at then id,
+// both descending). location, site_id, path_id, window_start and window_end
+// are optional, additive filters (docs/adr/0024: a plan matches every one
+// that is sent; omitted or empty = not filtered) and are repeated on every
+// page request. 200 with an empty items list when nothing matches. The route
+// exists only when the ListCapacityPlans use case is wired.
 func (s *Server) handleListCapacityPlans(w http.ResponseWriter, r *http.Request) {
-	limit, after, ok := pageParams(w, r, "location")
+	limit, after, ok := pageParams(w, r, listPlanFilters...)
 	if !ok {
 		return
 	}
-	plans, err := s.ListCapacityPlans.Handle(r.Context(), r.URL.Query().Get("location"), after, page.FetchSize(limit))
+	filter, ok := planListFilter(w, r)
+	if !ok {
+		return
+	}
+	plans, err := s.ListCapacityPlans.Handle(r.Context(), filter, after, page.FetchSize(limit))
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -143,6 +151,8 @@ func toCapacityPlanResponse(p *capacityplan.CapacityPlan) capacityPlanResponse {
 		PathID:             p.ProcessPathID(),
 		AssignedDemand:     p.AssignedDemand(),
 		DemandSource:       string(p.DemandSource()),
+		ForecastPathID:     p.ForecastPathID(),
+		Scenario:           p.Scenario(),
 		Status:             string(p.Status()),
 		PathCapacity:       p.PathCapacity(),
 		BottleneckStep:     string(p.BottleneckStep()),

@@ -18,38 +18,39 @@ import (
 // recordingPlanLister records what the use case asked the port for and
 // answers with canned values.
 type recordingPlanLister struct {
-	location string
-	after    *pagecursor.Cursor
-	limit    int
-	calls    int
-	plans    []*capacityplan.CapacityPlan
-	err      error
+	filter capacityplan.ListFilter
+	after  *pagecursor.Cursor
+	limit  int
+	calls  int
+	plans  []*capacityplan.CapacityPlan
+	err    error
 }
 
-func (r *recordingPlanLister) ListRecent(_ context.Context, location string, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
+func (r *recordingPlanLister) ListRecent(_ context.Context, filter capacityplan.ListFilter, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
 	r.calls++
-	r.location, r.after, r.limit = location, after, limit
+	r.filter, r.after, r.limit = filter, after, limit
 	return r.plans, r.err
 }
 
-func TestListCapacityPlans_PassesLocationCursorAndLimitThrough(t *testing.T) {
+func TestListCapacityPlans_PassesFilterCursorAndLimitThrough(t *testing.T) {
 	lister := &recordingPlanLister{}
 	after := &pagecursor.Cursor{Sort: "2026-10-04T09:00:00Z", ID: "plan-1"}
-	if _, err := (&ListCapacityPlans{Plans: lister}).Handle(context.Background(), "SIM1", after, 37); err != nil {
+	filter := capacityplan.ListFilter{Location: "SIM1", SiteID: "SIM1", PathID: "p", WindowStart: &planWindowStart, WindowEnd: &planWindowEnd}
+	if _, err := (&ListCapacityPlans{Plans: lister}).Handle(context.Background(), filter, after, 37); err != nil {
 		t.Fatal(err)
 	}
-	if lister.limit != 37 || lister.location != "SIM1" || lister.calls != 1 || lister.after != after {
-		t.Errorf("port saw limit=%d location=%q calls=%d after=%v", lister.limit, lister.location, lister.calls, lister.after)
+	if lister.limit != 37 || lister.filter != filter || lister.calls != 1 || lister.after != after {
+		t.Errorf("port saw limit=%d filter=%+v calls=%d after=%v", lister.limit, lister.filter, lister.calls, lister.after)
 	}
 }
 
 func TestListCapacityPlans_NeverReturnsNilAndPropagatesErrors(t *testing.T) {
-	got, err := (&ListCapacityPlans{Plans: &recordingPlanLister{plans: nil}}).Handle(context.Background(), "", nil, 10)
+	got, err := (&ListCapacityPlans{Plans: &recordingPlanLister{plans: nil}}).Handle(context.Background(), capacityplan.ListFilter{}, nil, 10)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Errorf("nil from the port => %#v, %v; want empty non-nil slice", got, err)
 	}
 	boom := errors.New("boom")
-	if _, err := (&ListCapacityPlans{Plans: &recordingPlanLister{err: boom}}).Handle(context.Background(), "", nil, 10); !errors.Is(err, boom) {
+	if _, err := (&ListCapacityPlans{Plans: &recordingPlanLister{err: boom}}).Handle(context.Background(), capacityplan.ListFilter{}, nil, 10); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want boom", err)
 	}
 }
@@ -70,7 +71,7 @@ func TestListCapacityPlans_ReturnsStoredPlansNewestFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := (&ListCapacityPlans{Plans: plans}).Handle(context.Background(), "SIM1", nil, 2)
+	got, err := (&ListCapacityPlans{Plans: plans}).Handle(context.Background(), capacityplan.ListFilter{Location: "SIM1"}, nil, 2)
 	if err != nil {
 		t.Fatal(err)
 	}

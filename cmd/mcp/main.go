@@ -147,6 +147,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		inboundStandards:    postgres.NewInboundStandardRepo(pool),
 		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
 		laborStandards:      postgres.NewLaborStandardRepo(pool),
+		workloadForecasts:   postgres.NewWorkloadForecastRepo(pool),
 	})
 	if err != nil {
 		pool.Close()
@@ -176,6 +177,10 @@ type repositories struct {
 	// ADR 0022: the labour standards copy cmd/api's consumer writes; read
 	// only here (cmd/mcp never starts a consumer).
 	laborStandards ports.LaborStandardRepository
+
+	// ADR 0024: the workload forecasts a demand_source forecast reads (read
+	// only here; cmd/api's PUT /workload-forecasts writes them).
+	workloadForecasts ports.WorkloadForecastRepository
 }
 
 // newDeps assembles the MCP dependencies (the SAME use cases the REST adapter
@@ -205,7 +210,7 @@ func newDeps(r repositories) (inboundmcp.Deps, error) {
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 			Demand: expectedDemand, Inbound: inboundDemand, Metrics: planMetrics,
-			LaborStandards: r.laborStandards,
+			LaborStandards: r.laborStandards, Forecasts: r.workloadForecasts,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
