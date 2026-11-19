@@ -3,10 +3,12 @@
 // site. It is wes-work-planning's ChargeForecast moved here with its invariant
 // unchanged (at least one bucket) and a site added to its identity.
 //
-// One forecast per (site id, path id); a new receipt replaces the buckets as
-// a whole. A receipt whose buckets equal the stored ones changes nothing: no
-// event, no version bump. The pick-load annotations wes carried per bucket
-// (sku, pick unit, handles, cube, weight) are not moved: nothing read them.
+// One forecast per (site id, path id); the path id is held in its canonical
+// form (CanonicalPathID: trimmed, upper case), so "pick" and " PICK " are one
+// forecast. A new receipt replaces the buckets as a whole. A receipt whose
+// buckets equal the stored ones changes nothing: no event, no version bump.
+// The pick-load annotations wes carried per bucket (sku, pick unit, handles,
+// cube, weight) are not moved: nothing read them.
 //
 // The package performs NO I/O and imports nothing from this module.
 package workloadforecast
@@ -14,12 +16,23 @@ package workloadforecast
 import (
 	"errors"
 	"slices"
+	"strings"
 	"time"
 )
 
+// CanonicalPathID is the one form of a process-path code on the requirement
+// side (docs/adr/0023): trimmed, upper case. Every forecast and labour plan
+// key, every stored row and every published path_id carries it, so a code
+// sent as "pick" and one sent as " PICK " name the same path (the LABOR
+// keying and the station tally already read path codes upper-cased). A code
+// blank after trimming stays blank and is refused by the constructors.
+func CanonicalPathID(pathID string) string {
+	return strings.ToUpper(strings.TrimSpace(pathID))
+}
+
 var (
 	// ErrRequiredField is returned when the site id or the path id is blank
-	// or the receipt time is zero.
+	// (the path id after trimming) or the receipt time is zero.
 	ErrRequiredField = errors.New("workloadforecast: site id, path id and the receipt time are required")
 
 	// ErrNoBuckets is wes's charge.ErrNoBuckets, moved verbatim: a forecast
@@ -59,8 +72,10 @@ type Forecast struct {
 }
 
 // New validates a first receipt and returns the forecast at version 1 with
-// its WorkloadForecastReceived event.
+// its WorkloadForecastReceived event. The path id is stored and published in
+// its canonical form.
 func New(siteID, pathID string, buckets []Bucket, receivedAt time.Time) (*Forecast, Received, error) {
+	pathID = CanonicalPathID(pathID)
 	if err := validate(siteID, pathID, buckets, receivedAt); err != nil {
 		return nil, Received{}, err
 	}
@@ -70,8 +85,9 @@ func New(siteID, pathID string, buckets []Bucket, receivedAt time.Time) (*Foreca
 
 // Rehydrate rebuilds a stored forecast. It re-checks every invariant, so a
 // corrupt row surfaces as an error instead of a forecast nobody could have
-// received.
+// received, and holds the path id in its canonical form.
 func Rehydrate(siteID, pathID string, buckets []Bucket, receivedAt time.Time, version int64) (*Forecast, error) {
+	pathID = CanonicalPathID(pathID)
 	if err := validate(siteID, pathID, buckets, receivedAt); err != nil {
 		return nil, err
 	}
@@ -81,11 +97,13 @@ func Rehydrate(siteID, pathID string, buckets []Bucket, receivedAt time.Time, ve
 	return &Forecast{siteID: siteID, pathID: pathID, buckets: slices.Clone(buckets), receivedAt: receivedAt, version: version}, nil
 }
 
-// Receive applies a new receipt for the same (site, path). The buckets are
-// replaced as a whole and the version goes up by one; the event is returned
-// with changed=true. Buckets equal to the stored ones (same order) change
-// nothing: changed=false, no event, the version and the receipt time stay.
+// Receive applies a new receipt for the same (site, path); the path ids are
+// compared in their canonical form. The buckets are replaced as a whole and
+// the version goes up by one; the event is returned with changed=true.
+// Buckets equal to the stored ones (same order) change nothing:
+// changed=false, no event, the version and the receipt time stay.
 func (f *Forecast) Receive(siteID, pathID string, buckets []Bucket, receivedAt time.Time) (Received, bool, error) {
+	pathID = CanonicalPathID(pathID)
 	if err := validate(siteID, pathID, buckets, receivedAt); err != nil {
 		return Received{}, false, err
 	}
@@ -104,7 +122,7 @@ func (f *Forecast) Receive(siteID, pathID string, buckets []Bucket, receivedAt t
 // SiteID is the canonical facility-layout site code the forecast is for.
 func (f *Forecast) SiteID() string { return f.siteID }
 
-// PathID is the process path the volume is due on.
+// PathID is the process path the volume is due on, in its canonical form.
 func (f *Forecast) PathID() string { return f.pathID }
 
 // Buckets returns a copy of the CPT buckets in receipt order.

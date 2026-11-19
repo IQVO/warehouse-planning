@@ -30,12 +30,13 @@ func (d Drift) ShouldRaise(last int, hasLast bool) bool {
 	return d.Detected() && (!hasLast || d.Heads != last)
 }
 
-// Event is the LabourPlanDriftDetected event for this drift.
+// Event is the LabourPlanDriftDetected event for this drift, its path id in
+// the canonical form.
 func (d Drift) Event(siteID, shiftID, pathID string, at time.Time) DriftDetected {
 	return DriftDetected{
 		SiteID:         siteID,
 		ShiftID:        shiftID,
-		PathID:         pathID,
+		PathID:         CanonicalPathID(pathID),
 		PlannedHeads:   d.PlannedHeads,
 		CommittedHeads: d.CommittedHeads,
 		DriftHeads:     d.Heads,

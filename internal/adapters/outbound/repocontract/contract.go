@@ -61,8 +61,10 @@ const (
 	siteB  = "SIM2"
 	shift1 = "2026-11-18-day"
 	shift2 = "2026-11-18-night"
-	pathP  = "pick-rebin-pack"
-	pathQ  = "pick-pack"
+	// Path codes are canonical (trimmed, upper case): the only form the
+	// domain hands a repository.
+	pathP = "PICK-REBIN-PACK"
+	pathQ = "PICK-PACK"
 )
 
 var ctx = context.Background()
