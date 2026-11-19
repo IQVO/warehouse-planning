@@ -22,6 +22,7 @@ func TestForecastAndLabourPlanDoublesSatisfyTheRepositoryContract(t *testing.T) 
 		return repocontract.Fixture{
 			UoW:       memory.NewUnitOfWork(forecasts, plans, commitments),
 			Forecasts: forecasts, Plans: plans, Commitments: commitments,
+			CapacityPlans: memory.NewCapacityPlanRepo(),
 		}
 	})
 }

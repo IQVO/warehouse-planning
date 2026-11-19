@@ -355,10 +355,13 @@ paths:
         The most recently created plans, newest first (ties broken by id,
         descending), each in exactly the shape of GET /capacity-plans/{id},
         one keyset page at a time (limit + cursor; follow nextCursor until it
-        is absent). `location` restricts the list to one location (repeat it
-        on every page request); omitted means every location. 200 with an
-        empty items list when nothing matches. Read-only; there is no MCP tool
-        for it.
+        is absent). `location`, `site_id`, `path_id`, `window_start` and
+        `window_end` are optional, ADDITIVE filters (docs/adr/0024): a plan is
+        listed only when it matches every filter sent; an omitted or empty one
+        does not filter (repeat them on every page request). Together
+        site_id, path_id and the window list the what-if scenarios of one
+        window. 200 with an empty items list when nothing matches. Read-only;
+        there is no MCP tool for it.
       parameters:
         - name: location
           in: query
@@ -366,6 +369,41 @@ paths:
           schema:
             type: string
           example: SIM1
+        - name: site_id
+          in: query
+          required: false
+          description: Only plans of this canonical site (exact match).
+          schema:
+            type: string
+          example: SIM1
+        - name: path_id
+          in: query
+          required: false
+          description: Only plans evaluating this ProcessPath id (exact match).
+          schema:
+            type: string
+          example: pick-rebin-pack
+        - name: window_start
+          in: query
+          required: false
+          description: >
+            Only plans whose window starts at this instant (RFC 3339; equal
+            instants match in any zone). Malformed: 400 malformed-window-start.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T08:00:00Z"
+        - name: window_end
+          in: query
+          required: false
+          description: >
+            Only plans whose window ends at this instant (RFC 3339). Malformed:
+            400 malformed-window-end; with window_start, an end that is not
+            after the start is 400 invalid-capacity-window.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T16:00:00Z"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -376,7 +414,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/CapacityPlanPage"
         "400":
-          $ref: "#/components/responses/PageBadRequest"
+          description: >
+            invalid-limit, invalid-cursor, unknown-query-parameter,
+            malformed-window-start, malformed-window-end or
+            invalid-capacity-window.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
         "500":
           $ref: "#/components/responses/InternalError"
     post:
@@ -476,7 +521,8 @@ paths:
             input the source does not read (demand-source-conflict),
             demand_source forecast without units_per_order
             (missing-units-per-order) or with no forecast bucket in the window
-            (missing-assigned-demand).
+            (missing-assigned-demand); a scenario label that is empty or longer
+            than 64 characters (invalid-scenario).
           content:
             application/problem+json:
               schema:
@@ -2012,6 +2058,16 @@ components:
             wes path PICK), which need not be path_id. Defaults to path_id.
             Read in its canonical form (trimmed, upper case).
           example: PICK
+        scenario:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: >
+            OPTIONAL what-if label (docs/adr/0024), 1 to 64 characters, stored
+            and returned. Several DRAFT plans of one (site_id, path_id, window)
+            are scenarios (see GET /capacity-plans/comparisons). An empty or
+            longer label is 422 invalid-scenario.
+          example: second pack line open
     LabourRequirement:
       type: object
       description: >
@@ -2116,6 +2172,12 @@ components:
             forecast the demand was read from; present only when
             demand_source is "forecast".
           example: PICK
+        scenario:
+          type: string
+          description: >
+            Additive (docs/adr/0024). The plan's what-if label; absent when it
+            carries none.
+          example: second pack line open
         status:
           type: string
           enum: [DRAFT, PUBLISHED]

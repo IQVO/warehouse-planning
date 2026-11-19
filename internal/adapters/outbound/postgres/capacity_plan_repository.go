@@ -47,15 +47,15 @@ func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPla
 			id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 			assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 			status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
-			inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement, forecast_path_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, NULLIF($23, ''))
+			inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement, forecast_path_id, scenario)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, NULLIF($23, ''), NULLIF($24, ''))
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			published_at = EXCLUDED.published_at
 	`, p.ID(), p.WarehouseID(), p.SiteID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
 		p.AssignedDemand(), p.PathCapacity(), string(p.BottleneckStep()), p.CapacityOverWindow(), p.Shortage(),
 		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings, string(p.DemandSource()),
-		p.Inbound().Appointments, p.Inbound().LabourMinutes, p.Inbound().StandardMissing, string(labour), p.ForecastPathID())
+		p.Inbound().Appointments, p.Inbound().LabourMinutes, p.Inbound().StandardMissing, string(labour), p.ForecastPathID(), p.Scenario())
 	return err
 }
 
@@ -80,10 +80,11 @@ func (r *CapacityPlanRepo) FindByID(ctx context.Context, id string) (*capacitypl
 	return plan, nil
 }
 
-// ListRecent returns up to limit plans, newest first (created_at DESC, id
-// DESC so the order is total), optionally restricted to one location. It
-// never locks a row: a list is a plain read, in or out of a UnitOfWork.
-func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
+// ListRecent returns up to limit plans matching filter, newest first
+// (created_at DESC, id DESC so the order is total); every filter field that
+// is set must match. It never locks a row: a list is a plain read, in or out
+// of a UnitOfWork.
+func (r *CapacityPlanRepo) ListRecent(ctx context.Context, filter capacityplan.ListFilter, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
 	var afterAt *time.Time
 	afterID := ""
 	if after != nil {
@@ -96,9 +97,13 @@ func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, afte
 	rows, err := queryFor(ctx, r.pool).Query(ctx, `
 		SELECT `+planColumns+` FROM capacity_plans
 		WHERE ($1::text = '' OR location = $1::text)
-		  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2::timestamptz, $3::text))
+		  AND ($2::text = '' OR site_id = $2::text)
+		  AND ($3::text = '' OR process_path_id = $3::text)
+		  AND ($4::timestamptz IS NULL OR window_start = $4::timestamptz)
+		  AND ($5::timestamptz IS NULL OR window_end = $5::timestamptz)
+		  AND ($6::timestamptz IS NULL OR (created_at, id) < ($6::timestamptz, $7::text))
 		ORDER BY created_at DESC, id DESC
-		LIMIT $4`, location, afterAt, afterID, limit)
+		LIMIT $8`, filter.Location, filter.SiteID, filter.PathID, filter.WindowStart, filter.WindowEnd, afterAt, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +128,7 @@ const planColumns = `id, warehouse_id, site_id, location, window_start, window_e
 		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
 		       inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement,
-		       COALESCE(forecast_path_id, '')`
+		       COALESCE(forecast_path_id, ''), COALESCE(scenario, '')`
 
 // scanPlan rehydrates one capacity_plans row selected with planColumns.
 func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
@@ -140,7 +145,7 @@ func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
 		&p.ID, &p.WarehouseID, &p.SiteID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
 		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
 		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource,
-		&p.Inbound.Appointments, &p.Inbound.LabourMinutes, &p.Inbound.StandardMissing, &labour, &p.ForecastPathID)
+		&p.Inbound.Appointments, &p.Inbound.LabourMinutes, &p.Inbound.StandardMissing, &labour, &p.ForecastPathID, &p.Scenario)
 	if err != nil {
 		return nil, err
 	}

@@ -28,6 +28,9 @@ type Fixture struct {
 	Forecasts   ports.WorkloadForecastRepository
 	Plans       ports.LabourPlanRepository
 	Commitments ports.CommittedHeadsRepository
+	// CapacityPlans is the CapacityPlan store: its scenario label, forecast
+	// path and additive list filters (docs/adr/0024).
+	CapacityPlans CapacityPlanStore
 }
 
 type named struct {
@@ -47,6 +50,7 @@ func Run(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		{"labour plan list", listCases},
 		{"unit of work", unitOfWorkCases},
 		{"committed heads", committedHeadsCases},
+		{"capacity plans", capacityPlanCases},
 	}
 	for _, g := range groups {
 		for _, c := range g.cases {

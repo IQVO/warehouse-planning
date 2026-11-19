@@ -24,6 +24,7 @@ func newForecastPlanServer(t *testing.T) (*httptest.Server, *memory.WorkloadFore
 	forecasts := memory.NewWorkloadForecastRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
 	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	clock := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
@@ -32,8 +33,11 @@ func newForecastPlanServer(t *testing.T) (*httptest.Server, *memory.WorkloadFore
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: outboundkafka.NewEncoder(), UnitOfWork: uow,
 			Forecasts: forecasts,
+			// One minute apart, so "newest first" never hangs on a clock tie.
+			Now: func() time.Time { clock = clock.Add(time.Minute); return clock },
 		},
-		CapacityPlans: plans,
+		CapacityPlans:     plans,
+		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: plans},
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)

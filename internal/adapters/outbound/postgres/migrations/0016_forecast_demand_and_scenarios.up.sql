@@ -18,3 +18,15 @@ ALTER TABLE capacity_plans
 ALTER TABLE capacity_plans
     ADD COLUMN forecast_path_id TEXT
     CHECK (forecast_path_id IS NULL OR forecast_path_id <> '');
+
+-- scenario: the optional what-if label of a plan (decision 2). Several DRAFT
+-- plans of one (site_id, process_path_id, window) are scenarios. NULL is no
+-- label; a label is 1 to 64 characters (capacityplan.MaxScenarioLength).
+ALTER TABLE capacity_plans
+    ADD COLUMN scenario TEXT
+    CHECK (scenario IS NULL OR char_length(scenario) BETWEEN 1 AND 64);
+
+-- The additive list filters (site_id, path_id, window) and the comparison
+-- read look plans up by site, path and window, newest first.
+CREATE INDEX capacity_plans_site_path_window_idx
+    ON capacity_plans (site_id, process_path_id, window_start, window_end, created_at DESC);

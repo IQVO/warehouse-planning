@@ -49,6 +49,7 @@ func slugFor(err error) (slug string, ok bool) {
 		{capacityplan.ErrUnknownDemandSource, "unknown-demand-source"},
 		{capacityplan.ErrMissingUnitsPerOrder, "missing-units-per-order"},
 		{capacityplan.ErrDemandSourceConflict, "demand-source-conflict"},
+		{capacityplan.ErrInvalidScenario, "invalid-scenario"},
 	}
 	for _, entry := range catalog {
 		if errors.Is(err, entry.target) {

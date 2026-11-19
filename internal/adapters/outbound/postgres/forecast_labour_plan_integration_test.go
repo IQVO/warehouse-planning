@@ -32,14 +32,15 @@ func TestForecastAndLabourPlanRepos_SatisfyTheRepositoryContract(t *testing.T) {
 	pool := newMigratedPool(t)
 	repocontract.Run(t, func(t *testing.T) repocontract.Fixture {
 		t.Helper()
-		if _, err := pool.Exec(context.Background(), `TRUNCATE workload_forecasts, labour_plans, labour_plan_commitments`); err != nil {
+		if _, err := pool.Exec(context.Background(), `TRUNCATE workload_forecasts, labour_plans, labour_plan_commitments, capacity_plans`); err != nil {
 			t.Fatal(err)
 		}
 		return repocontract.Fixture{
-			UoW:         postgres.NewUnitOfWork(pool),
-			Forecasts:   postgres.NewWorkloadForecastRepo(pool),
-			Plans:       postgres.NewLabourPlanRepo(pool),
-			Commitments: postgres.NewCommittedHeadsRepo(pool),
+			UoW:           postgres.NewUnitOfWork(pool),
+			Forecasts:     postgres.NewWorkloadForecastRepo(pool),
+			Plans:         postgres.NewLabourPlanRepo(pool),
+			Commitments:   postgres.NewCommittedHeadsRepo(pool),
+			CapacityPlans: postgres.NewCapacityPlanRepo(pool),
 		}
 	})
 }

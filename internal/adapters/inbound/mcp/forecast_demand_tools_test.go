@@ -43,3 +43,21 @@ func TestCreateCapacityPlan_FromTheForecast(t *testing.T) {
 	args["demand_source"] = "inbound"
 	h.fail(t, "create_capacity_plan", args, "unknown-demand-source")
 }
+
+// create_capacity_plan takes the scenario label (docs/adr/0024 decision 2) and
+// get_capacity_plan returns it.
+func TestCreateCapacityPlan_ScenarioLabel(t *testing.T) {
+	h := newHarness(t)
+	h.seedSection43(t, "FC01", "tote")
+	args := planArgs("FC01", "tote", 100)
+	args["scenario"] = "second pack line open"
+	plan := h.ok(t, "create_capacity_plan", args)
+	if plan["scenario"] != "second pack line open" {
+		t.Fatalf("plan = %v", plan)
+	}
+	if got := h.ok(t, "get_capacity_plan", map[string]any{"id": plan["id"]}); got["scenario"] != "second pack line open" {
+		t.Fatalf("stored plan = %v", got)
+	}
+	args["scenario"] = ""
+	h.fail(t, "create_capacity_plan", args, "invalid-scenario")
+}

@@ -65,6 +65,11 @@ type CreateCapacityPlanCommand struct {
 	// (workloadforecast.CanonicalPathID) before the lookup.
 	ForecastPathID string
 
+	// Scenario is the OPTIONAL what-if label (docs/adr/0024 decision 2): nil
+	// is no label; a set one must be 1 to 64 characters
+	// (capacityplan.ErrInvalidScenario), so an empty string is refused.
+	Scenario *string
+
 	UnitsPerOrder    *float64
 	PackagesPerOrder *float64
 
@@ -154,15 +159,8 @@ func (uc *CreateCapacityPlan) Handle(ctx context.Context, cmd CreateCapacityPlan
 }
 
 func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlanCommand) (*capacityplan.CapacityPlan, error) {
-	// A blank identifying field is refused before anything is looked up or
-	// derived, so it is never reported as a missing step capacity, an unknown
-	// path or a missing demand (openapi, ADR 0012, troubleshooting:
-	// 422 missing-required-field).
-	if err := capacityplan.ValidateRequired(cmd.WarehouseID, cmd.SiteID, cmd.Location, cmd.ProcessPathID); err != nil {
-		return nil, err
-	}
-	factors := taskFactors(cmd.TasksPerOrder)
-	if err := capacityplan.ValidateTasksPerOrder(factors); err != nil {
+	factors, scenario, err := validateCommand(cmd)
+	if err != nil {
 		return nil, err
 	}
 
@@ -218,6 +216,7 @@ func (uc *CreateCapacityPlan) handle(ctx context.Context, cmd CreateCapacityPlan
 		AssignedDemand: demand.AssignedDemand,
 		DemandSource:   demand.Source,
 		ForecastPathID: forecastPathOf(cmd),
+		Scenario:       scenario,
 		PathRate:       result.NormalizedRate,
 		BottleneckStep: result.BottleneckStep,
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
 
@@ -46,6 +47,30 @@ func forecastPathOf(cmd CreateCapacityPlanCommand) string {
 		return path
 	}
 	return workloadforecast.CanonicalPathID(cmd.ProcessPathID)
+}
+
+// validateCommand refuses what is wrong with a command on its own, before
+// anything is looked up or derived: a blank identifying field (so it is never
+// reported as a missing step capacity, an unknown path or a missing demand;
+// ADR 0012, 422 missing-required-field), a non-positive tasks-per-order
+// factor and a scenario label that is set but empty or longer than 64
+// characters (docs/adr/0024 decision 2). It returns the keyed factors and
+// the label ("" for none).
+func validateCommand(cmd CreateCapacityPlanCommand) (map[processcapacity.ProcessType]float64, string, error) {
+	if err := capacityplan.ValidateRequired(cmd.WarehouseID, cmd.SiteID, cmd.Location, cmd.ProcessPathID); err != nil {
+		return nil, "", err
+	}
+	factors := taskFactors(cmd.TasksPerOrder)
+	if err := capacityplan.ValidateTasksPerOrder(factors); err != nil {
+		return nil, "", err
+	}
+	if cmd.Scenario == nil {
+		return factors, "", nil
+	}
+	if err := capacityplan.ValidateScenario(*cmd.Scenario); err != nil {
+		return nil, "", err
+	}
+	return factors, *cmd.Scenario, nil
 }
 
 // forecastDemand is the demand of a demand_source forecast: the units of the

@@ -132,6 +132,7 @@ func problemCatalog() []struct {
 		{capacityplan.ErrUnknownDemandSource, problemInfo{"unknown-demand-source", "demand_source must be request, orders or forecast"}},
 		{capacityplan.ErrMissingUnitsPerOrder, problemInfo{"missing-units-per-order", "units_per_order is required with demand_source forecast"}},
 		{capacityplan.ErrDemandSourceConflict, problemInfo{"demand-source-conflict", "The request names an input its demand_source does not read"}},
+		{capacityplan.ErrInvalidScenario, problemInfo{"invalid-scenario", "scenario must be 1 to 64 characters"}},
 	}
 }
 
@@ -140,6 +141,7 @@ func problemCatalog() []struct {
 func isPlanScenarioValidation(err error) bool {
 	for _, target := range []error{
 		capacityplan.ErrUnknownDemandSource, capacityplan.ErrMissingUnitsPerOrder, capacityplan.ErrDemandSourceConflict,
+		capacityplan.ErrInvalidScenario,
 	} {
 		if errors.Is(err, target) {
 			return true

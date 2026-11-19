@@ -102,6 +102,10 @@ type CapacityPlan struct {
 	demandSource   DemandSource
 	forecastPathID string
 
+	// scenario is the optional what-if label of the plan (docs/adr/0024
+	// decision 2); empty is no label. Informational: no event carries it.
+	scenario string
+
 	// pathCapacity is the ORDER/HOUR rate of the path (the quantity of
 	// the normalized ProcessPathCapacity expressed per hour).
 	pathCapacity       float64
@@ -156,6 +160,10 @@ type CreateParams struct {
 	DemandSource   DemandSource
 	ForecastPathID string
 
+	// Scenario is the optional what-if label (docs/adr/0024); empty is no
+	// label, anything else must be 1 to 64 characters (ErrInvalidScenario).
+	Scenario string
+
 	// BottleneckConstraint and Warnings come from the composed path
 	// capacity (processcapacity.ComposeProcessPathCapacity).
 	BottleneckConstraint processcapacity.ConstraintType
@@ -202,6 +210,9 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 	if p.Inbound.Appointments < 0 || p.Inbound.LabourMinutes < 0 {
 		return nil, ErrNegativeInbound
 	}
+	if err := validateOptionalScenario(p.Scenario); err != nil {
+		return nil, err
+	}
 
 	perHour := p.PathRate.Quantity() / p.PathRate.Period().Hours()
 	over := perHour * p.Window.Duration().Hours()
@@ -216,6 +227,7 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 		assignedDemand:     p.AssignedDemand,
 		demandSource:       sourceOrRequest(p.DemandSource),
 		forecastPathID:     forecastPathFor(p.DemandSource, p.ForecastPathID),
+		scenario:           p.Scenario,
 		pathCapacity:       perHour,
 		bottleneckStep:     p.BottleneckStep,
 		capacityOverWindow: over,
@@ -265,9 +277,10 @@ type RehydrateParams struct {
 	PublishedAt        time.Time
 
 	// DemandSource: empty reads back as DemandSourceRequest.
-	// ForecastPathID: empty for rows stored before migration 0016.
+	// ForecastPathID and Scenario: empty for rows stored before migration 0016.
 	DemandSource   DemandSource
 	ForecastPathID string
+	Scenario       string
 
 	BottleneckConstraint processcapacity.ConstraintType
 	Warnings             []string
@@ -292,6 +305,7 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 		assignedDemand:     p.AssignedDemand,
 		demandSource:       sourceOrRequest(p.DemandSource),
 		forecastPathID:     p.ForecastPathID,
+		scenario:           p.Scenario,
 		pathCapacity:       p.PathCapacity,
 		bottleneckStep:     p.BottleneckStep,
 		capacityOverWindow: p.CapacityOverWindow,
@@ -404,6 +418,10 @@ func (c *CapacityPlan) DemandSource() DemandSource { return c.demandSource }
 // ForecastPathID returns the canonical path code of the WorkloadForecast the
 // demand was read from; empty unless DemandSource is DemandSourceForecast.
 func (c *CapacityPlan) ForecastPathID() string { return c.forecastPathID }
+
+// Scenario returns the plan's what-if label (docs/adr/0024); empty when it
+// carries none.
+func (c *CapacityPlan) Scenario() string { return c.scenario }
 
 // sourceOrRequest maps the zero value to DemandSourceRequest.
 func sourceOrRequest(s DemandSource) DemandSource {

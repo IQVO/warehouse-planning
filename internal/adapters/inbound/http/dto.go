@@ -101,6 +101,9 @@ type createCapacityPlanRequest struct {
 	// usecases.CreateCapacityPlanCommand.
 	DemandSource   string `json:"demand_source"`
 	ForecastPathID string `json:"forecast_path_id"`
+	// Scenario is the OPTIONAL what-if label (docs/adr/0024 decision 2), 1 to
+	// 64 characters; a pointer so an explicit "" is refused, not dropped.
+	Scenario *string `json:"scenario"`
 }
 
 // capacityPlanResponse is the CapacityPlan representation returned by all
@@ -133,6 +136,9 @@ type capacityPlanResponse struct {
 	// docs/adr/0004.
 	DemandSource   string `json:"demand_source"`
 	ForecastPathID string `json:"forecast_path_id,omitempty"`
+	// Scenario is the plan's what-if label (docs/adr/0024); absent when it
+	// carries none. Additive.
+	Scenario string `json:"scenario,omitempty"`
 	// BottleneckConstraint (the constraint type binding the bottleneck
 	// step, e.g. LABOR or STATION; empty for plans created before it was
 	// recorded) and Warnings (never null) are additive, see ADR 0002.

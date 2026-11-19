@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/cucumber/godog"
 )
@@ -67,6 +68,35 @@ func (w *world) theCapacityPlanReadTheForecastOfPath(want string) error {
 	return nil
 }
 
+// iCreateALabelledPlan creates a plan with a stated demand (units_per_order
+// 1) and the scenario label (docs/adr/0024 decision 2).
+func (w *world) iCreateALabelledPlan(ctx context.Context, warehouse, site, location, pathID, start, end string, demand float64, label string) error {
+	body := planRequest(warehouse, site, location, pathID, start, end)
+	body["assigned_demand"], body["units_per_order"], body["scenario"] = demand, 1, label
+	return w.createPlan(ctx, body)
+}
+
+// theCapacityPlanListHoldsTheScenarios checks the scenario labels of a list
+// page, in order ("a, b").
+func (w *world) theCapacityPlanListHoldsTheScenarios(want string) error {
+	var page struct {
+		Items []struct {
+			Scenario string `json:"scenario"`
+		} `json:"items"`
+	}
+	if err := w.decode(&page); err != nil {
+		return err
+	}
+	got := make([]string, 0, len(page.Items))
+	for _, item := range page.Items {
+		got = append(got, item.Scenario)
+	}
+	if strings.Join(got, ", ") != want {
+		return fmt.Errorf("listed scenarios %q, want %q", strings.Join(got, ", "), want)
+	}
+	return nil
+}
+
 func registerScenarioSteps(sc *godog.ScenarioContext, w *world) {
 	const ts = `"([^"]*)"`
 	const plan = `^I create a capacity plan for warehouse ` + ts + ` at site ` + ts + ` in location ` + ts + ` on path ` + ts + ` for the window ` + ts + ` to ` + ts
@@ -78,4 +108,6 @@ func registerScenarioSteps(sc *godog.ScenarioContext, w *world) {
 		return w.iCreateAPlanFromTheForecast(ctx, wh, site, loc, path, start, end, "", "")
 	})
 	sc.Step(`^the capacity plan read the forecast of path `+ts+`$`, w.theCapacityPlanReadTheForecastOfPath)
+	sc.Step(plan+` with assigned demand (\d+(?:\.\d+)?) labelled `+ts+`$`, w.iCreateALabelledPlan)
+	sc.Step(`^the capacity plan list holds the scenarios `+ts+`$`, w.theCapacityPlanListHoldsTheScenarios)
 }

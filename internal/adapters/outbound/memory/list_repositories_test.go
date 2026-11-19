@@ -97,7 +97,7 @@ func TestCapacityPlanRepo_ListRecentNewestFirstFilteredAndLimited(t *testing.T) 
 	repo := memory.NewCapacityPlanRepo()
 	base := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 
-	got, err := repo.ListRecent(ctx, "", nil, 10)
+	got, err := repo.ListRecent(ctx, capacityplan.ListFilter{}, nil, 10)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("ListRecent on empty = %#v, %v; want empty non-nil slice, nil", got, err)
 	}
@@ -110,23 +110,23 @@ func TestCapacityPlanRepo_ListRecentNewestFirstFilteredAndLimited(t *testing.T) 
 		}
 	}
 
-	all, _ := repo.ListRecent(ctx, "", nil, 10)
+	all, _ := repo.ListRecent(ctx, capacityplan.ListFilter{}, nil, 10)
 	if listedIDs(all) != "[p-newest p-middle p-other-site p-oldest]" {
 		t.Errorf("all locations = %s, want newest first", listedIDs(all))
 	}
-	sim1, _ := repo.ListRecent(ctx, "SIM1", nil, 10)
+	sim1, _ := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, nil, 10)
 	if listedIDs(sim1) != "[p-newest p-middle p-oldest]" {
 		t.Errorf("SIM1 = %s, want only SIM1, newest first", listedIDs(sim1))
 	}
-	limited, _ := repo.ListRecent(ctx, "SIM1", nil, 2)
+	limited, _ := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, nil, 2)
 	if listedIDs(limited) != "[p-newest p-middle]" {
 		t.Errorf("limit 2 = %s, want the 2 newest", listedIDs(limited))
 	}
-	exact, _ := repo.ListRecent(ctx, "SIM1", nil, 3)
+	exact, _ := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, nil, 3)
 	if len(exact) != 3 {
 		t.Errorf("limit == matches returned %d, want 3", len(exact))
 	}
-	none, err := repo.ListRecent(ctx, "NOWHERE", nil, 10)
+	none, err := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "NOWHERE"}, nil, 10)
 	if err != nil || none == nil || len(none) != 0 {
 		t.Errorf("unknown location = %#v, %v; want empty non-nil slice", none, err)
 	}
@@ -141,7 +141,7 @@ func TestCapacityPlanRepo_ListRecentTiesBrokenByIDDescendingAndReturnsCopies(t *
 			t.Fatal(err)
 		}
 	}
-	got, _ := repo.ListRecent(ctx, "SIM1", nil, 10)
+	got, _ := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, nil, 10)
 	if listedIDs(got) != "[plan-c plan-b plan-a]" {
 		t.Fatalf("tie order = %s, want id descending", listedIDs(got))
 	}
@@ -200,7 +200,7 @@ func TestCapacityPlanRepo_ListRecentWalksTiesWithoutDuplicatesOrSkips(t *testing
 	seen := map[string]bool{}
 	var after *pagecursor.Cursor
 	for {
-		rows, err := repo.ListRecent(ctx, "SIM1", after, 2)
+		rows, err := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, after, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
