@@ -78,23 +78,29 @@ func TestPinnedAsyncAPICoversSubscriptions_LaborPerformance(t *testing.T) {
 func TestGoldenEventsDecode_LaborPerformance(t *testing.T) {
 	for _, message := range []string{laborStandardDefinedMsg, laborStandardRevisedMsg} {
 		for _, ex := range laborPerformanceGoldenExamples(t, message) {
-			t.Run(message+"/"+ex.Name, func(t *testing.T) {
-				consumer, repo := newStandardContractHarness()
-				ctx := context.Background()
-				for range 2 { // the second pass is the replay
-					if err := consumer.HandleMessage(ctx, goldenJSON(t, ex.Payload)); err != nil {
-						t.Fatalf("handle golden example: %v", err)
-					}
-					if repo.Len() != 1 {
-						t.Fatalf("golden example recorded %d standards, want exactly 1", repo.Len())
-					}
-				}
-				id := ex.Payload["data"].(map[string]any)["standard_id"].(string)
-				if _, ok := repo.Get(id); !ok {
-					t.Errorf("standard %q from the golden example is not in the local copy", id)
-				}
-			})
+			t.Run(message+"/"+ex.Name, func(t *testing.T) { assertGoldenStandardRecordedOnce(t, ex) })
 		}
+	}
+}
+
+// assertGoldenStandardRecordedOnce handles one golden example twice (the
+// second pass is the replay) and expects exactly one stored standard, the
+// example's own standard_id.
+func assertGoldenStandardRecordedOnce(t *testing.T, ex pinnedExample) {
+	t.Helper()
+	consumer, repo := newStandardContractHarness()
+	ctx := context.Background()
+	for range 2 {
+		if err := consumer.HandleMessage(ctx, goldenJSON(t, ex.Payload)); err != nil {
+			t.Fatalf("handle golden example: %v", err)
+		}
+		if repo.Len() != 1 {
+			t.Fatalf("golden example recorded %d standards, want exactly 1", repo.Len())
+		}
+	}
+	id := ex.Payload["data"].(map[string]any)["standard_id"].(string)
+	if _, ok := repo.Get(id); !ok {
+		t.Errorf("standard %q from the golden example is not in the local copy", id)
 	}
 }
 
