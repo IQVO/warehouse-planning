@@ -176,6 +176,8 @@ func buildServer(
 			Demand:       expectedDemand,
 			Inbound:      inboundDemand,
 			Metrics:      planMetrics,
+			// ADR 0022: each step priced with the labour standards copy.
+			LaborStandards: ad.laborStandards,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans:      ad.capacityPlans,

@@ -95,6 +95,10 @@ type world struct {
 	// consumers); see features_inbound_observed_test.go.
 	io inboundObservedState
 
+	// ls holds the ADR 0022 state (labour-standard consumer and copy); see
+	// features_labour_test.go.
+	ls labourState
+
 	// doc holds the documentation-derived steps' state; see
 	// steps_doc_rules_test.go.
 	doc docRulesState
@@ -128,6 +132,7 @@ func (w *world) start() {
 	w.planClock = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	w.w2 = newWave2State(repo, outboxRepo, encoder, uow)
 	w.io = newInboundObservedState()
+	w.ls = newLabourState()
 	w.doc = newDocRulesState()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
@@ -146,6 +151,9 @@ func (w *world) start() {
 			// The dock-appointment read model prices appointments with the
 			// declared inbound standard (ADR 0017), as cmd/api wires it.
 			Inbound: w.io.getInboundDemand,
+			// The labour standards copy the labour-standard consumer
+			// writes prices each step (ADR 0022), as cmd/api wires it.
+			LaborStandards: w.ls.standards,
 			// Each plan is created one minute after the previous one, so
 			// "newest first" in the list scenarios never hangs on a clock tie.
 			Now: w.nextPlanTime,
@@ -696,5 +704,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerListSteps(sc, w)
 	registerWave2Steps(sc, w)
 	registerInboundObservedSteps(sc, w)
+	registerLabourSteps(sc, w)
 	registerDocRulesSteps(sc, w)
 }

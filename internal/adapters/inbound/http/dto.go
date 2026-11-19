@@ -92,6 +92,10 @@ type createCapacityPlanRequest struct {
 	AssignedDemand   *float64 `json:"assigned_demand"`
 	UnitsPerOrder    *float64 `json:"units_per_order"`
 	PackagesPerOrder *float64 `json:"packages_per_order"`
+	// TasksPerOrder is the OPTIONAL tasks-per-order factor per process type
+	// (docs/adr/0022): the step's tasks are assigned_demand x the factor.
+	// Every value must be positive (422 non-positive-tasks-per-order).
+	TasksPerOrder map[string]float64 `json:"tasks_per_order"`
 }
 
 // capacityPlanResponse is the CapacityPlan representation returned by all
@@ -137,6 +141,27 @@ type capacityPlanResponse struct {
 	InboundLabourMinutes   float64 `json:"inbound_labour_minutes"`
 	InboundAverageHeads    float64 `json:"inbound_average_heads"`
 	InboundStandardMissing bool    `json:"inbound_standard_missing"`
+
+	// LabourRequirement is the labour each step of the path requires
+	// (docs/adr/0022), in path order, computed when the plan was created;
+	// never null ([] for plans stored before it). Additive and informational:
+	// the shortage and the bottleneck do not depend on it.
+	LabourRequirement []labourRequirementItem `json:"labour_requirement"`
+}
+
+// labourRequirementItem is one step's labour requirement: tasks x the
+// labor-performance standard seconds of the step's task type. known is false
+// (with a reason, and zero figures) when no standard is in force or the
+// step's tasks cannot be counted -- never a guessed number.
+type labourRequirementItem struct {
+	ProcessType          string  `json:"process_type"`
+	StandardSeconds      float64 `json:"standard_seconds"`
+	StandardSiteScoped   bool    `json:"standard_site_scoped"`
+	Tasks                float64 `json:"tasks"`
+	RequiredLabourHours  float64 `json:"required_labour_hours"`
+	RequiredAverageHeads float64 `json:"required_average_heads"`
+	Known                bool    `json:"known"`
+	Reason               string  `json:"reason,omitempty"`
 }
 
 // declareStationStandardRequest is PUT /station-standards/{location}/

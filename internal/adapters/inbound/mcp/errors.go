@@ -44,6 +44,7 @@ func slugFor(err error) (slug string, ok bool) {
 		{inbound.ErrNegativeASNMinutes, "negative-asn-minutes"},
 		{inbound.ErrNonFiniteMinutes, "non-finite-minutes"},
 		{observed.ErrNonPositiveTasksPerOrder, "non-positive-tasks-per-order"},
+		{capacityplan.ErrNonPositiveTasksPerOrder, "non-positive-tasks-per-order"},
 	}
 	for _, entry := range catalog {
 		if errors.Is(err, entry.target) {

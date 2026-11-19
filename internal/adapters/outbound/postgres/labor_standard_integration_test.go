@@ -45,7 +45,9 @@ func TestLaborStandardRepo_RecordsFactsAndResolvesLikeTheInMemoryAdapter(t *test
 	travel := int64(15)
 	standards := []laborstandard.Standard{
 		lsStandard(t, "std-1", func(p *laborstandard.Params) { p.TravelComponentSeconds = &travel }),
-		lsStandard(t, "std-2", func(p *laborstandard.Params) { p.EffectiveFrom, p.AsOf, p.ExpectedSeconds = lsFrom.Add(24*time.Hour), lsFrom.Add(24*time.Hour), 40 }),
+		lsStandard(t, "std-2", func(p *laborstandard.Params) {
+			p.EffectiveFrom, p.AsOf, p.ExpectedSeconds = lsFrom.Add(24*time.Hour), lsFrom.Add(24*time.Hour), 40
+		}),
 		lsStandard(t, "std-3", func(p *laborstandard.Params) { p.SiteCode, p.ExpectedSeconds = "SIM1", 50 }),
 		lsStandard(t, "std-4", func(p *laborstandard.Params) { p.SiteCode, p.EffectiveFrom = "SIM1", lsWindow.Add(time.Second) }),
 		lsStandard(t, "std-5", func(p *laborstandard.Params) { p.HandlingUnit, p.SiteCode = laborstandard.HandlingUnitCase, "SIM1" }),
@@ -67,6 +69,17 @@ func TestLaborStandardRepo_RecordsFactsAndResolvesLikeTheInMemoryAdapter(t *test
 		t.Fatalf("Record of an id already stored = %v, %v; want false, nil", recorded, err)
 	}
 
+	assertInForceLikeMemory(ctx, t, pg, mem)
+	got, _, err := pg.InForce(ctx, "SIM3", "PICK", lsFrom.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStd1(t, got)
+}
+
+// assertInForceLikeMemory asks both copies the same InForce questions.
+func assertInForceLikeMemory(ctx context.Context, t *testing.T, pg *postgres.LaborStandardRepo, mem *memory.LaborStandardRepo) {
+	t.Helper()
 	for _, q := range []struct {
 		site, taskType string
 		at             time.Time
@@ -90,10 +103,11 @@ func TestLaborStandardRepo_RecordsFactsAndResolvesLikeTheInMemoryAdapter(t *test
 			t.Fatalf("InForce(%s, %s, %s) = %q (%v), memory %q (%v), want %q", q.site, q.taskType, q.at, got.ID(), ok, want.ID(), wantOK, q.wantID)
 		}
 	}
-	got, _, err := pg.InForce(ctx, "SIM3", "PICK", lsFrom.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+}
+
+// assertStd1 checks every field of std-1 read back from Postgres.
+func assertStd1(t *testing.T, got laborstandard.Standard) {
+	t.Helper()
 	if got.ExpectedSeconds() != 45 || got.TravelComponentSeconds() == nil || *got.TravelComponentSeconds() != 15 ||
 		!got.EffectiveFrom().Equal(lsFrom) || !got.AsOf().Equal(lsFrom) || got.SiteCode() != "" {
 		t.Fatalf("std-1 read back as %+v", got)
@@ -113,7 +127,7 @@ func TestLaborStandardRepo_ClaimAndRecordCommitOrRollBackTogether(t *testing.T) 
 
 	err := uow.Do(ctx, func(ctx context.Context) error {
 		if claimed, err := processed.Claim(ctx, "labor-standard-consumer", "evt-1"); err != nil || !claimed {
-			return fmt.Errorf("claim = %v, %v", claimed, err)
+			return fmt.Errorf("claim = %v: %w", claimed, err)
 		}
 		if _, err := repo.Record(ctx, s); err != nil {
 			return err
@@ -183,6 +197,10 @@ func TestMigration0013_ChecksAndDownUp(t *testing.T) {
 	var tables int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_name = 'labor_standards'").Scan(&tables); err != nil || tables != 0 {
 		t.Fatalf("labor_standards survived the down migration: %d, %v", tables, err)
+	}
+	var columns int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.columns WHERE table_name = 'capacity_plans' AND column_name = 'labour_requirement'").Scan(&columns); err != nil || columns != 0 {
+		t.Fatalf("capacity_plans.labour_requirement survived the down migration: %d, %v", columns, err)
 	}
 	if err := m.Up(); err != nil {
 		t.Fatalf("up again: %v", err)

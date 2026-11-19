@@ -208,6 +208,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 
 		inboundAppointments: postgres.NewInboundAppointmentRepo(pool),
 		inboundStandards:    postgres.NewInboundStandardRepo(pool),
+		laborStandards:      postgres.NewLaborStandardRepo(pool),
 	})
 	if err != nil {
 		pool.Close()
@@ -232,6 +233,10 @@ type repositories struct {
 	// ADR 0017.
 	inboundAppointments ports.InboundAppointmentRepository
 	inboundStandards    ports.InboundStandardRepository
+
+	// ADR 0022: the labour standards copy cmd/api's consumer writes; read
+	// only here (cmd/a2a never starts a consumer).
+	laborStandards ports.LaborStandardRepository
 }
 
 // newDeps assembles the A2A dependencies (the SAME use cases the REST and MCP
@@ -252,6 +257,7 @@ func newDeps(r repositories) (inbounda2a.Deps, error) {
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 			Demand: expectedDemand, Inbound: inboundDemand, Metrics: planMetrics,
+			LaborStandards: r.laborStandards,
 		},
 	}, nil
 }

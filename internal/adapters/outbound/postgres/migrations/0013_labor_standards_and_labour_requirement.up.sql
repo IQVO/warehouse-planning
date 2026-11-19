@@ -1,6 +1,6 @@
 -- 0013_labor_standards_and_labour_requirement.up.sql: the local copy of
--- labor-performance's engineered labour standards (docs/adr/0022). Purely
--- additive.
+-- labor-performance's engineered labour standards, and the labour each step of a
+-- capacity plan requires (docs/adr/0022). Purely additive.
 --
 -- labor_standards: ONE row per labor-performance standard id, fed only by its
 -- LaborStandardDefined / LaborStandardRevised integration events
@@ -30,3 +30,12 @@ CREATE TABLE labor_standards (
 -- every site) in force at a window start.
 CREATE INDEX idx_labor_standards_task_site_effective
     ON labor_standards (task_type, site_code, effective_from) WHERE handling_unit = '';
+
+-- capacity_plans.labour_requirement: per step of the plan's path, the labour its
+-- demand requires (process_type, standard_seconds, standard_site_scoped, tasks,
+-- required_labour_hours, required_average_heads, known, reason), computed when
+-- the plan is created and stored with it, like the path capacity: a later
+-- revision of a standard never rewrites a stored plan. Informational: no
+-- published event carries it. Plans stored before this migration read '[]'.
+ALTER TABLE capacity_plans
+    ADD COLUMN labour_requirement JSONB NOT NULL DEFAULT '[]'::jsonb;

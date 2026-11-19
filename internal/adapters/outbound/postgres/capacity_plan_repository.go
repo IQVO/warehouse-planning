@@ -38,20 +38,24 @@ func (r *CapacityPlanRepo) Save(ctx context.Context, p *capacityplan.CapacityPla
 	if warnings == nil {
 		warnings = []string{} // the column is NOT NULL: never encode a nil slice
 	}
-	_, err := queryFor(ctx, r.pool).Exec(ctx, `
+	labour, err := encodeLabourRequirement(p.LabourRequirement())
+	if err != nil {
+		return err
+	}
+	_, err = queryFor(ctx, r.pool).Exec(ctx, `
 		INSERT INTO capacity_plans (
 			id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 			assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 			status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
-			inbound_appointments, inbound_labour_minutes, inbound_standard_missing)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			published_at = EXCLUDED.published_at
 	`, p.ID(), p.WarehouseID(), p.SiteID(), p.Location(), p.Window().Start(), p.Window().End(), p.ProcessPathID(),
 		p.AssignedDemand(), p.PathCapacity(), string(p.BottleneckStep()), p.CapacityOverWindow(), p.Shortage(),
 		string(p.Status()), p.CreatedAt(), publishedAt, string(p.BottleneckConstraint()), warnings, string(p.DemandSource()),
-		p.Inbound().Appointments, p.Inbound().LabourMinutes, p.Inbound().StandardMissing)
+		p.Inbound().Appointments, p.Inbound().LabourMinutes, p.Inbound().StandardMissing, string(labour))
 	return err
 }
 
@@ -118,7 +122,7 @@ func (r *CapacityPlanRepo) ListRecent(ctx context.Context, location string, afte
 const planColumns = `id, warehouse_id, site_id, location, window_start, window_end, process_path_id,
 		       assigned_demand, path_capacity, bottleneck_step, capacity_over_window, shortage,
 		       status, created_at, published_at, bottleneck_constraint, warnings, demand_source,
-		       inbound_appointments, inbound_labour_minutes, inbound_standard_missing`
+		       inbound_appointments, inbound_labour_minutes, inbound_standard_missing, labour_requirement`
 
 // scanPlan rehydrates one capacity_plans row selected with planColumns.
 func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
@@ -129,13 +133,17 @@ func scanPlan(row pgx.Row) (*capacityplan.CapacityPlan, error) {
 		bottleneckConstraint   string
 		demandSource           string
 		publishedAt            *time.Time
+		labour                 []byte
 	)
 	err := row.Scan(
 		&p.ID, &p.WarehouseID, &p.SiteID, &p.Location, &windowStart, &windowEnd, &p.ProcessPathID,
 		&p.AssignedDemand, &p.PathCapacity, &bottleneck, &p.CapacityOverWindow, &p.Shortage,
 		&status, &p.CreatedAt, &publishedAt, &bottleneckConstraint, &p.Warnings, &demandSource,
-		&p.Inbound.Appointments, &p.Inbound.LabourMinutes, &p.Inbound.StandardMissing)
+		&p.Inbound.Appointments, &p.Inbound.LabourMinutes, &p.Inbound.StandardMissing, &labour)
 	if err != nil {
+		return nil, err
+	}
+	if p.LabourRequirement, err = decodeLabourRequirement(labour); err != nil {
 		return nil, err
 	}
 
