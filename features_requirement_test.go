@@ -70,6 +70,22 @@ func labourPlanPath(pathID, shiftID, siteID string) string {
 	return "/labour-plans/" + siteID + "/" + shiftID + "/" + pathID
 }
 
+// theResponsePathIDIs checks the path_id of a forecast or labour plan
+// response: the canonical path code (trimmed, upper case), whatever case the
+// request used.
+func (w *world) theResponsePathIDIs(want string) error {
+	var body struct {
+		PathID string `json:"path_id"`
+	}
+	if err := w.decode(&body); err != nil {
+		return err
+	}
+	if body.PathID != want {
+		return fmt.Errorf("expected path_id %q, got %s", want, string(w.body))
+	}
+	return nil
+}
+
 func (w *world) iCommitALabourPlanWithHeads(ctx context.Context, pathID, shiftID, siteID string, heads int, rate, hours float64, stations int) error {
 	return w.record(ctx, http.MethodPut, labourPlanPath(pathID, shiftID, siteID), map[string]any{
 		"planned_heads": heads, "rate_units_per_hour": rate, "hours": hours, "installed_stations": stations,
@@ -144,4 +160,5 @@ func registerRequirementSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^I list the labour plans of shift "([^"]*)" at site "([^"]*)"$`, w.iListTheLabourPlans)
 	sc.Step(`^the labour plan list holds the paths "([^"]*)"$`, w.theLabourPlanListHolds)
 	sc.Step(`^the outbox holds (\d+) ([A-Za-z]+) events?$`, w.theOutboxHoldsEvents)
+	sc.Step(`^the response path id is "([^"]*)"$`, w.theResponsePathIDIs)
 }

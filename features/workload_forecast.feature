@@ -34,3 +34,20 @@ Feature: The workload forecast of a process path at a site
     Then the response status is 422
     And the problem detail type is "negative-bucket-quantity"
     And the outbox holds 0 WorkloadForecastReceived events
+
+  # One canonical process-path code (trimmed, upper case): a path in any case names one
+  # forecast, stored and published in upper case.
+  Scenario: A path code in any case names one forecast, stored in upper case
+    Given I receive a workload forecast for path "pick" at site "SIM1" with buckets "2026-11-19T07:00:00Z=500"
+    When I receive a workload forecast for path "Pick" at site "SIM1" with buckets "2026-11-19T07:00:00Z=500"
+    Then the response status is 200
+    And the response path id is "PICK"
+    And the workload forecast is at version 1 with total quantity 500
+    And the outbox holds 1 WorkloadForecastReceived event
+
+  Scenario: A forecast received as "pick" is read as "PICK"
+    Given I receive a workload forecast for path "pick" at site "SIM1" with buckets "2026-11-19T07:00:00Z=500"
+    When I send GET "/workload-forecasts/SIM1/PICK"
+    Then the response status is 200
+    And the response path id is "PICK"
+    And the workload forecast is at version 1 with total quantity 500

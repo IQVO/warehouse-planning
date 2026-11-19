@@ -48,8 +48,8 @@ func (w *world) workforceCommittedHeadsWithoutShift(heads int, pathID, siteID, e
 	return w.deliverLabor(typeShiftPlanCommitted, eventID, committedLine(heads, pathID, "", siteID), driftCommitTime)
 }
 
-// theLastDriftIs reads the data of the newest LabourPlanDriftDetected in the outbox.
-func (w *world) theLastDriftIs(planned, committed, drift int) error {
+// lastDrift is the newest LabourPlanDriftDetected in the outbox.
+func (w *world) lastDrift() ([]byte, error) {
 	var last []byte
 	for _, m := range w.outbox.Messages() {
 		if strings.HasSuffix(m.EventType, "."+labourplan.EventLabourPlanDriftDetected) {
@@ -57,7 +57,16 @@ func (w *world) theLastDriftIs(planned, committed, drift int) error {
 		}
 	}
 	if last == nil {
-		return fmt.Errorf("the outbox holds no %s", labourplan.EventLabourPlanDriftDetected)
+		return nil, fmt.Errorf("the outbox holds no %s", labourplan.EventLabourPlanDriftDetected)
+	}
+	return last, nil
+}
+
+// theLastDriftIs reads the data of the newest LabourPlanDriftDetected in the outbox.
+func (w *world) theLastDriftIs(planned, committed, drift int) error {
+	last, err := w.lastDrift()
+	if err != nil {
+		return err
 	}
 	var env struct {
 		Data struct {
@@ -75,8 +84,31 @@ func (w *world) theLastDriftIs(planned, committed, drift int) error {
 	return nil
 }
 
+// theLastDriftIsForPath checks the path of the newest LabourPlanDriftDetected:
+// its data.path_id and the last segment of its subject (the Kafka key).
+func (w *world) theLastDriftIsForPath(want string) error {
+	last, err := w.lastDrift()
+	if err != nil {
+		return err
+	}
+	var env struct {
+		Subject string `json:"subject"`
+		Data    struct {
+			PathID string `json:"path_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(last, &env); err != nil {
+		return err
+	}
+	if env.Data.PathID != want || !strings.HasSuffix(env.Subject, "/"+want) {
+		return fmt.Errorf("expected the drift of path %q, got %s", want, string(last))
+	}
+	return nil
+}
+
 func registerDriftSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^workforce-management committed (-?\d+) heads for path "([^"]*)" in shift "([^"]*)" at site "([^"]*)" as event "([^"]*)"$`, w.workforceCommittedHeads)
 	sc.Step(`^workforce-management committed (-?\d+) heads for path "([^"]*)" at site "([^"]*)" without a shift as event "([^"]*)"$`, w.workforceCommittedHeadsWithoutShift)
 	sc.Step(`^the last LabourPlanDriftDetected has (\d+) planned heads, (\d+) committed heads and a drift of (-?\d+)$`, w.theLastDriftIs)
+	sc.Step(`^the last LabourPlanDriftDetected is for path "([^"]*)"$`, w.theLastDriftIsForPath)
 }

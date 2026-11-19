@@ -72,11 +72,13 @@ func (uc *ReceiveWorkloadForecast) Handle(ctx context.Context, cmd ReceiveWorklo
 	return res, nil
 }
 
-// receive is one attempt: the whole load-decide-save in one unit of work.
+// receive is one attempt: the whole load-decide-save in one unit of work. The
+// load reads the canonical key (workloadforecast.CanonicalPathID), the form
+// the aggregate stores, so any spelling of the path finds its forecast.
 func (uc *ReceiveWorkloadForecast) receive(ctx context.Context, cmd ReceiveWorkloadForecastCommand, at time.Time) (ReceiveWorkloadForecastResult, error) {
 	var res ReceiveWorkloadForecastResult
 	err := uc.UnitOfWork.Do(ctx, func(ctx context.Context) error {
-		stored, found, err := uc.Forecasts.Get(ctx, cmd.SiteID, cmd.PathID)
+		stored, found, err := uc.Forecasts.Get(ctx, cmd.SiteID, workloadforecast.CanonicalPathID(cmd.PathID))
 		if err != nil {
 			return err
 		}
@@ -103,15 +105,16 @@ func (uc *ReceiveWorkloadForecast) receive(ctx context.Context, cmd ReceiveWorkl
 	return res, err
 }
 
-// GetWorkloadForecast reads the stored forecast of (site id, path id). It is
-// a pure read: it neither mutates the forecast nor queues an event.
+// GetWorkloadForecast reads the stored forecast of (site id, path id), the
+// path id in its canonical form (any spelling finds it). It is a pure read:
+// it neither mutates the forecast nor queues an event.
 type GetWorkloadForecast struct {
 	Forecasts ports.WorkloadForecastRepository
 }
 
 // Handle returns the forecast, or ErrWorkloadForecastNotFound.
 func (uc *GetWorkloadForecast) Handle(ctx context.Context, siteID, pathID string) (*workloadforecast.Forecast, error) {
-	f, found, err := uc.Forecasts.Get(ctx, siteID, pathID)
+	f, found, err := uc.Forecasts.Get(ctx, siteID, workloadforecast.CanonicalPathID(pathID))
 	if err != nil {
 		return nil, err
 	}

@@ -64,3 +64,21 @@ Feature: The shift labour plan of a process path at a site
     When I list the labour plans of shift "S1" at site "SIM1"
     Then the response status is 200
     And the labour plan list holds the paths "PACK, PICK, SORT"
+
+  # One canonical process-path code (trimmed, upper case) keys the plan and its forecast
+  # read: a path in any case names one plan, stored and published in upper case.
+  Scenario: A plan PUT as "pick" is read as "PICK" and revised as "Pick"
+    Given I commit a labour plan for path "pick" in shift "S1" at site "SIM1" with 7 planned heads, rate 10 units per hour, 8 hours and 12 installed stations
+    And I commit a labour plan for path "Pick" in shift "S1" at site "SIM1" with 7 planned heads, rate 10 units per hour, 8 hours and 12 installed stations
+    When I send GET "/labour-plans/SIM1/S1/PICK"
+    Then the response status is 200
+    And the response path id is "PICK"
+    And the labour plan has 7 planned heads from "request" at version 1
+    And the outbox holds 1 LabourPlanCommitted event
+
+  Scenario: A forecast received as "Pick" derives the heads of a plan PUT as "PICK"
+    Given I receive a workload forecast for path "Pick" at site "SIM1" with buckets "2026-11-19T07:00:00Z=500, 2026-11-19T13:59:00Z=300"
+    When I commit a labour plan for path "PICK" in shift "S1" at site "SIM1" without planned heads, rate 10 units per hour, 8 hours, 12 installed stations and shift start "2026-11-19T06:00:00Z"
+    Then the response status is 201
+    And the response path id is "PICK"
+    And the labour plan has 10 planned heads from "forecast" at version 1

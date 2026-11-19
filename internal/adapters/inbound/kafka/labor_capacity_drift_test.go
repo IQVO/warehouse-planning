@@ -159,6 +159,28 @@ func wantCommitment(t *testing.T, h laborDriftHarness, heads, lastDrift int) {
 	}
 }
 
+func TestLaborConsumerDrift_ACommitmentMeetsThePlanWhateverTheCaseOfItsPath(t *testing.T) {
+	h := newLaborDriftHarness()
+	h.plan(t, 7) // PUT as "pick"
+	if err := h.deliver(t, "evt-1", 10, func(d map[string]any) { d["path_id"] = "PICK" }); err != nil {
+		t.Fatal(err)
+	}
+	// The same commitment under another spelling is the same key: no news.
+	if err := h.deliver(t, "evt-2", 10, func(d map[string]any) { d["path_id"] = " Pick " }); err != nil {
+		t.Fatal(err)
+	}
+	drifts := h.driftData(t)
+	if len(drifts) != 2 {
+		t.Fatalf("%d LabourPlanDriftDetected rows, want one drift (integration + analytics)", len(drifts))
+	}
+	for _, d := range drifts {
+		if d["path_id"] != "PICK" || d["drift_heads"] != 3.0 {
+			t.Fatalf("drift data = %v, want path_id PICK and drift_heads 3", d)
+		}
+	}
+	wantCommitment(t, h, 10, 3)
+}
+
 func TestLaborConsumerDrift_ARedeliveredEventRaisesNothing(t *testing.T) {
 	h := newLaborDriftHarness()
 	h.plan(t, 7)
