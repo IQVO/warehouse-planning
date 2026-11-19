@@ -104,6 +104,14 @@ unleash:
     # `!= 0` guard, which would leave an equivalent boundary mutant). The
     # threshold (99) is unchanged.
     #
+    # Re-measured 2026-11-19 (workload forecast + labour plan, ADR 0023), local
+    # gremlins v0.6.0: ./internal/domain/workloadforecast 21/21 killed and
+    # ./internal/domain/labourplan 56/56 killed, efficacy and mutant coverage
+    # 100.00%; both added to `make mutation-fast`. The window predicate uses
+    # time.Compare (>= / <) so gremlins mutates its bounds; the tests pin
+    # start-inclusive / end-exclusive and every count, rate and hours bound on
+    # the boundary value itself. The threshold (99) is unchanged.
+    #
     # 99 locks in today's quality and fails CI the moment a single mutant
     # survives, mirroring the 90% coverage gate's "just under what we
     # already achieve" approach -- never copied from a sibling repo.
