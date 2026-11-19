@@ -210,6 +210,12 @@ classDiagram
     +WindowStart, WindowEnd
     +BottleneckStep, PathCapacity
   }
+  class CapacityPlanSuperseded {
+    <<DomainEvent>>
+    +PlanID (the older plan), SupersededBy
+    +WarehouseID, SiteID, Location, PathID
+    +WindowStart, WindowEnd
+  }
   class ProcessPath {
     <<Entity>>
     -id string
@@ -245,6 +251,7 @@ classDiagram
   Event <|.. CapacityPlanPublished
   Event <|.. CapacityShortageDetected
   Event <|.. BottleneckDetected
+  Event <|.. CapacityPlanSuperseded
   CapacityPlanCreated *-- Header
   CapacityPlanPublished *-- Header
   CapacityShortageDetected *-- Header

@@ -76,7 +76,7 @@ internal/
   domain/                     pure business logic
     processpath/              ProcessPath aggregate (steps, standards)
     processcapacity/          ProcessCapacity aggregate (registered capacity constraints)
-    capacityplan/             CapacityPlan aggregate (DRAFT -> PUBLISHED, shortage, bottleneck, labour requirement per step)
+    capacityplan/             CapacityPlan aggregate (DRAFT -> PUBLISHED -> SUPERSEDED, shortage, bottleneck, labour requirement per step)
     laborstandard/            local copy of labor-performance's labour standards + Resolve (ADR 0022)
     workloadforecast/         WorkloadForecast aggregate (CPT buckets per site and path, ADR 0023)
     labourplan/               LabourPlan aggregate, DeriveHeads, the commitment and the drift (ADR 0023)
@@ -252,7 +252,7 @@ Card), `MIGRATIONS_DATABASE_URL`, `MIGRATIONS_PATH`,
 
 ### Analytics read side
 
-An additive analytical read side (ADR 0005): the four capacity-plan events
+An additive analytical read side (ADR 0005): the capacity-plan events (the projector acknowledges `CapacityPlanSuperseded` without projecting it)
 are written to `warehouse.warehouse-planning.analytics` in the same outbox
 transaction, `cmd/planning-projector` (admin `:8091`) projects them into a
 SEPARATE analytical database (applying `analytics/migrations` itself), and

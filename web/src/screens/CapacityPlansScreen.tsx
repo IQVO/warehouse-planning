@@ -75,6 +75,8 @@ function PlansTable({
       const error = toApiError(err);
       if (error.slug === "capacity-plan-already-published") {
         setNotice(`Plan ${plan.id} was already published; the list now shows its current state.`);
+      } else if (error.slug === "capacity-plan-superseded") {
+        setNotice(`Plan ${plan.id} was superseded by a newer published plan; the list now shows its current state.`);
       } else {
         setProblem(error);
       }
@@ -149,7 +151,7 @@ function PlansTable({
               {
                 key: "status",
                 header: "Status",
-                render: (p) => <StatusPill status={p.status} tone={p.status === "PUBLISHED" ? "success" : "progress"} size="sm" />,
+                render: (p) => <StatusPill status={p.status} tone={p.status === "PUBLISHED" ? "success" : p.status === "SUPERSEDED" ? "neutral" : "progress"} size="sm" />,
               },
               {
                 key: "actions",

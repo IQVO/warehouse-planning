@@ -137,14 +137,18 @@ paths:
   (ORDER/HOUR, from `ComputeProcessPathCapacity`), `BottleneckStep`,
   `CapacityOverWindow` (= `PathCapacity` x window hours) and `Shortage`
   (= `max(0, demand - capacityOverWindow)`, never negative; demand exactly
-  equal to the capacity is NOT a shortage), `Status` DRAFT | PUBLISHED, plus
+  equal to the capacity is NOT a shortage), `Status` DRAFT | PUBLISHED | SUPERSEDED (terminal, docs/adr/0024 decision 3), plus
   the informational composition outcome `BottleneckConstraint` (the
   constraint type binding the bottleneck step, e.g. STATION) and `Warnings`
   (no published event carries them).
   The aggregate does no I/O: `Create` takes the already-computed path rate and
   bottleneck plus an explicit id and time. `Publish` moves DRAFT -> PUBLISHED
   and returns `ErrAlreadyPublished` on a second call (never a silent double
-  publish). Events are plain structs it accumulates; `PullEvents()` hands each
+  publish). `Supersede(by, at)` moves a PUBLISHED plan to SUPERSEDED (`superseded_by` = by) and
+  records `CapacityPlanSuperseded`; it returns `ErrSuperseded` on a SUPERSEDED plan and
+  `ErrNotSupersedable` on a DRAFT, a blank `by` or the plan's own id. `Publish` returns
+  `ErrSuperseded` on a SUPERSEDED plan. The `SupersedeKey` is `(site_id, location, path_id,
+  window)`; at most one PUBLISHED plan per key (partial unique index, migration 0017). Events are plain structs it accumulates; `PullEvents()` hands each
   over exactly once. `Rehydrate` rebuilds a stored plan for repositories
   without events.
 
@@ -169,7 +173,7 @@ recorded). The INTEGRATION payload does not serialize it: only the analytics
 stream does (ADR 0005, `integration-events.md`). Since ADR 0012 it also
 carries `SiteID`, serialized ADDITIVELY as `site_id` on the v1 integration
 payload (`omitempty`: a pre-migration-0008 plan publishes without it, and a
-legacy payload without it still decodes). The same four events are written
+legacy payload without it still decodes). The same five events are written
 to both the integration and the analytics topic by the outbox; the analytical
 side (`internal/analytics/report`, `analyticsstore`) is a projection built from
 them and the domain never imports it.
