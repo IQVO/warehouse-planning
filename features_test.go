@@ -176,8 +176,11 @@ func (w *world) start() {
 		// Every POST/PATCH sits behind the Idempotency-Key middleware.
 		UnitOfWork: uow, Idempotency: memory.NewIdempotencyStore(),
 	}
-	// ADR 0023: the workload forecast and the labour plan (features_requirement_test.go).
-	wireRequirementSide(s, outboxRepo, encoder, tallyRepo)
+	// ADR 0023: the workload forecast and the labour plan (features_requirement_test.go),
+	// and the labour plan drift between the plans and the labor consumer
+	// (features_drift_test.go).
+	plans := wireRequirementSide(s, outboxRepo, encoder, tallyRepo, w.w2.commitments)
+	w.w2.wireDrift(plans, outboxRepo, encoder)
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
 	w.planID = ""
@@ -708,5 +711,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerInboundObservedSteps(sc, w)
 	registerLabourSteps(sc, w)
 	registerRequirementSteps(sc, w)
+	registerDriftSteps(sc, w)
 	registerDocRulesSteps(sc, w)
 }
