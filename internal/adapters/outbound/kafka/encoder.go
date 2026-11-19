@@ -1,6 +1,7 @@
-// Package kafka is the outbound Kafka adapter: it encodes CapacityPlan and
-// ProcessCapacity domain events into CloudEvents 1.0 outbox messages
-// (Encoder) and writes drained outbox rows to the broker (RelaySink).
+// Package kafka is the outbound Kafka adapter: it encodes CapacityPlan,
+// ProcessCapacity, WorkloadForecast and LabourPlan domain events into
+// CloudEvents 1.0 outbox messages (Encoder) and writes drained outbox rows to
+// the broker (RelaySink).
 // Envelopes are built ONLY through internal/adapters/kafka/cloudevents.
 package kafka
 

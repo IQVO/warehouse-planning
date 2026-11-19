@@ -11,7 +11,9 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/labourplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
 
 func pickZoneAWindowTimes() (time.Time, time.Time) {
@@ -294,5 +296,17 @@ func (failingEncoder) EncodeCapacityPlanEvents(events ...capacityplan.Event) ([]
 }
 
 func (failingEncoder) EncodeProcessCapacityEvents(events ...processcapacity.Event) ([]outbox.Message, error) {
+	return nil, errors.New("encoder down")
+}
+
+func (failingEncoder) EncodeWorkloadForecastEvents(...workloadforecast.Received) ([]outbox.Message, error) {
+	return nil, errors.New("encoder down")
+}
+
+func (failingEncoder) EncodeLabourPlanCommitted(...labourplan.Committed) ([]outbox.Message, error) {
+	return nil, errors.New("encoder down")
+}
+
+func (failingEncoder) EncodeLabourPlanDriftDetected(...labourplan.DriftDetected) ([]outbox.Message, error) {
 	return nil, errors.New("encoder down")
 }
