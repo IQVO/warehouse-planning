@@ -29,7 +29,7 @@ sidebar_position: 1
 | --- | --- |
 | `process-capacities` | `POST /process-capacities`, `GET /process-capacities` |
 | `process-paths` | `GET /process-paths`, `POST /process-paths`, `GET /process-paths/{id}/capacity` |
-| `capacity-plans` | `GET /capacity-plans`, `POST /capacity-plans`, `GET /capacity-plans/comparisons`, `GET /capacity-plans/{id}`, `POST /capacity-plans/{id}/publish` |
+| `capacity-plans` | `GET /capacity-plans`, `POST /capacity-plans`, `GET /capacity-plans/comparisons`, `GET /capacity-plans/{id}`, `POST /capacity-plans/{id}/publications` |
 | `station-capacity` | `PUT /station-standards/{location}/{process_type}`, `GET /station-standards`, `GET /storage-capacity` |
 | `demand` | `GET /demand` |
 | `reports` | `GET /reports/bottleneck-frequency`, `GET /reports/shortage-trend`, `GET /reports/plan-throughput`, `GET /reports/freshness` (served by `cmd/planning-reports` on `:8092`, not by `cmd/api`) |

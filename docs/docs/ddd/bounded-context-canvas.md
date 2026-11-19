@@ -183,6 +183,7 @@ Consequences; ADR 0023).
 | Operator / remote | Publish capacity plan | Command | REST `POST /capacity-plans/{id}/publications`; MCP `publish_capacity_plan` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get capacity plan | Query | REST `GET /capacity-plans/{id}`; MCP `get_capacity_plan` | OHS |
 | `warehouse-console` remote | List capacity plans | Query | REST `GET /capacity-plans` | OHS |
+| Operator / remote | Compare plan scenarios | Query | REST `GET /capacity-plans/comparisons?ids=` (ADR 0024) | OHS |
 | Operator / remote | Declare station standard | Command | REST `PUT /station-standards/{location}/{process_type}`; MCP `declare_station_standard` | OHS |
 | Operator / remote / `warehouse-ops-agent` | List station standards | Query | REST `GET /station-standards`; MCP `list_station_standards` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get storage capacity | Query | REST `GET /storage-capacity`; MCP `get_storage_capacity` | OHS |

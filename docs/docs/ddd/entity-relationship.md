@@ -60,7 +60,9 @@ erDiagram
     timestamptz published_at "nullable"
     text bottleneck_constraint "0005, default empty"
     text_array warnings "0005"
-    text demand_source "0006, request or orders"
+    text demand_source "0006/0016, request, orders or forecast"
+    text forecast_path_id "0016, nullable; forecast source only"
+    text scenario "0016, nullable, 1 to 64 characters"
     text site_id "0008, default empty; required for new plans"
     integer inbound_appointments "0009, dock-appointment demand the plan was created against"
     double_precision inbound_labour_minutes "0009"
@@ -190,7 +192,7 @@ erDiagram
 ```
 
 Source: `internal/adapters/outbound/postgres/migrations/0001_process_capacity.up.sql`
-through `0015_labour_plan_drift.up.sql`, `internal/adapters/outbound/postgres/migrate.go`.
+through `0016_forecast_demand_and_scenarios.up.sql`, `internal/adapters/outbound/postgres/migrate.go`.
 Omits: the indexes (`idx_capacity_plans_warehouse_window`,
 `idx_outbox_events_unpublished` partial on `published_at IS NULL`,
 `idx_order_demand_location_promise`, `idx_inbound_appointments_location_window`

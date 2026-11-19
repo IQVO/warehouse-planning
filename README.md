@@ -492,7 +492,7 @@ by its own nginx workload (chart `frontend.enabled=true`, image
 
 Besides the endpoints in `.claude/rules/rest-api.md`, the remote needed two
 list reads (REST only, no MCP tool): `GET /process-paths` and
-`GET /capacity-plans?location=&limit=` (newest first, keyset page `{items,nextCursor}`, `limit` default 100, max 500).
+`GET /capacity-plans?location=&site_id=&path_id=&window_start=&window_end=&limit=` (every filter optional and additive; newest first, keyset page `{items,nextCursor}`, `limit` default 100, max 500), and `GET /capacity-plans/comparisons?ids=` (2 to 5 plans of one site and window, side by side, exactly as stored; ADR 0024).
 
 ---
 
