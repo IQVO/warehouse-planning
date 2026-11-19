@@ -79,6 +79,12 @@ type Server struct {
 	// 404), so a Server built without them behaves exactly as before.
 	ReceiveWorkloadForecast *usecases.ReceiveWorkloadForecast
 	GetWorkloadForecast     *usecases.GetWorkloadForecast
+	// CommitLabourPlan, GetLabourPlan and ListLabourPlans back PUT and GET
+	// /labour-plans/{site_id}/{shift_id}/{path_id} and GET /labour-plans
+	// (same nil rule).
+	CommitLabourPlan *usecases.CommitLabourPlan
+	GetLabourPlan    *usecases.GetLabourPlan
+	ListLabourPlans  *usecases.ListLabourPlans
 
 	// UnitOfWork and Idempotency back the Idempotency-Key middleware on every
 	// POST/PATCH route (fleet REST API guideline, docs/adr/0019): the key row

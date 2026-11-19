@@ -69,7 +69,8 @@ func statusFor(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, usecases.ErrProcessPathNotFound),
 		errors.Is(err, usecases.ErrCapacityPlanNotFound),
-		errors.Is(err, usecases.ErrWorkloadForecastNotFound):
+		errors.Is(err, usecases.ErrWorkloadForecastNotFound),
+		errors.Is(err, usecases.ErrLabourPlanNotFound):
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
@@ -123,6 +124,8 @@ func problemCatalog() []struct {
 		{labourplan.ErrInvalidRate, problemInfo{"non-positive-rate", "rate_units_per_hour must be positive"}},
 		{labourplan.ErrInvalidHours, problemInfo{"non-positive-hours", "hours must be positive"}},
 		{labourplan.ErrThroughputNotFinite, problemInfo{"throughput-not-finite", "rate_units_per_hour x planned_heads x hours must be a finite number"}},
+		{usecases.ErrMissingPlannedHeads, problemInfo{"missing-planned-heads", "planned_heads is required when it cannot be derived from the workload forecast"}},
+		{usecases.ErrLabourPlanNotFound, problemInfo{"labour-plan-not-found", "No labour plan exists for this site, shift and path"}},
 		{ports.ErrVersionConflict, problemInfo{"version-conflict", "The stored version moved twice during this request; retry it"}},
 	}
 }
@@ -135,6 +138,7 @@ func isRequirementValidation(err error) bool {
 		workloadforecast.ErrMissingCPT, workloadforecast.ErrNegativeQuantity,
 		labourplan.ErrRequiredField, labourplan.ErrInvalidCount, labourplan.ErrHeadsExceedStations,
 		labourplan.ErrInvalidRate, labourplan.ErrInvalidHours, labourplan.ErrThroughputNotFinite,
+		usecases.ErrMissingPlannedHeads,
 	} {
 		if errors.Is(err, target) {
 			return true

@@ -28,6 +28,15 @@ func (s *Server) registerRequirementRoutes(r chi.Router) {
 	if s.GetWorkloadForecast != nil {
 		r.Get("/workload-forecasts/{site_id}/{path_id}", s.handleGetWorkloadForecast)
 	}
+	if s.CommitLabourPlan != nil {
+		r.Put("/labour-plans/{site_id}/{shift_id}/{path_id}", s.handleCommitLabourPlan)
+	}
+	if s.GetLabourPlan != nil {
+		r.Get("/labour-plans/{site_id}/{shift_id}/{path_id}", s.handleGetLabourPlan)
+	}
+	if s.ListLabourPlans != nil {
+		r.Get("/labour-plans", s.handleListLabourPlans)
+	}
 }
 
 // receiveWorkloadForecastRequest is PUT /workload-forecasts/{site_id}/
