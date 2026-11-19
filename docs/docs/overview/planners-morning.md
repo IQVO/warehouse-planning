@@ -26,8 +26,10 @@ Before you start:
   [Quickstart](/docs/overview/quickstart)); the routes are REST only, there is
   no MCP tool and no A2A skill for them (ADR 0023 decision 7).
 - The `PUT`s take **no** `Idempotency-Key`: they are naturally idempotent.
-- Ids are matched **exactly as sent**. `PICK` and `pick` are two keys, here and
-  in the drift against workforce-management's commitments.
+- `site_id` and `shift_id` are matched **exactly as sent**. `path_id` is a
+  process-path code: trimmed and upper-cased everywhere on this side (stored,
+  published, and in the drift against workforce-management's commitments), so
+  `pick` and `PICK` are the same path.
 
 ## 1. Send the workload forecast
 

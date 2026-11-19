@@ -119,8 +119,8 @@ and their reads. Slugs from `internal/adapters/inbound/http/errors.go`,
 | 400 | `malformed-shift-start` | a `shift_start` that is not RFC 3339 | as above |
 | 400 | `missing-site-id`, `missing-shift-id` | `GET /labour-plans` without `site_id` or `shift_id` | send both, on every page |
 | 400 | `invalid-limit`, `invalid-cursor`, `unknown-query-parameter` | as for the other collection GETs | follow `nextCursor` and repeat both filters |
-| 404 | `workload-forecast-not-found` | no forecast was received for that `(site_id, path_id)`; ids match exactly as sent (`pick` is not `PICK`) | `PUT` the forecast, or read with the ids it was sent under |
-| 404 | `labour-plan-not-found` | no plan was committed for that `(site_id, shift_id, path_id)`; ids match exactly as sent | as above |
+| 404 | `workload-forecast-not-found` | no forecast was received for that `(site_id, path_id)`; `site_id` matches exactly as sent; `path_id` is case-insensitive (`pick` finds `PICK`) | `PUT` the forecast, or read with the site it was sent under |
+| 404 | `labour-plan-not-found` | no plan was committed for that `(site_id, shift_id, path_id)`; `site_id` and `shift_id` match exactly as sent, `path_id` is case-insensitive | as above |
 | 409 | `version-conflict` | another writer moved the stored version twice while this `PUT` was applied (the use case re-runs once on the first conflict) | retry the request; the `PUT` is idempotent |
 | 422 | `no-forecast-buckets` | `buckets` empty or absent | send at least one bucket |
 | 422 | `missing-cpt`, `missing-bucket-quantity` | a bucket without `cpt` or without `quantity` | send both on every bucket |
@@ -160,7 +160,7 @@ Inspect a key with
 | No drift after a labour plan `PUT` | the `PUT` changed nothing, so no trigger ran | expected; the drift is surfaced only by a changed plan |
 | No drift after a `ShiftPlanCommitted`, no commitment row either | the line carried no `shift_id` (it still registers the LABOR constraint), or the event id was already claimed (a redelivery does nothing) | the producer must send `shift_id`; `SELECT * FROM processed_events WHERE consumer = 'labor-capacity-consumer' AND event_id = '<id>'` |
 | A commitment row exists, `last_drift_heads` is NULL | no labour plan existed for the key when the commitment arrived | expected: the next plan `PUT` for that key compares and raises |
-| The plan and the commitment are both there, but they never meet | keys match **exactly as sent**: site (`site_code`, else `building_id`), `shift_id` and `path_id` are compared byte for byte (trimmed on the consumer side); only the LABOR constraint upper-cases `path_id`. A plan under `PICK` and a commitment under `pick` are two keys | send the same ids on both sides |
+| The plan and the commitment are both there, but they never meet | the site (`site_code`, else `building_id`) and `shift_id` are compared exactly as sent (trimmed on the consumer side). `path_id` is NOT the cause: it is trimmed and upper-cased on both sides (`labourplan.CanonicalPathID`), so a plan under `pick` meets a commitment under `PICK` | send the same site and shift ids on both sides |
 | Log `skipping the labour plan drift of a ShiftPlanCommitted with an invalid commitment` | the line's heads were below 0 (or above 2147483647); the LABOR step was still processed | fix the producer |
 | A drift was raised although the LABOR constraint was skipped (`skipping ShiftPlanCommitted that failed domain validation`) | accepted limit: the commitment is workforce-management's fact, so it is recorded whatever the LABOR registration decided | none; the two steps are independent |
 | `committed_heads` went back to an older value | accepted limit: there is no stale-event guard on `observed_at`; the per-key Kafka order of workforce-management's topic is relied on | the producer must keep one key on one partition |

@@ -163,7 +163,7 @@ erDiagram
   labour_plan_commitments {
     text site_id PK "0015"
     text shift_id PK
-    text path_id PK "as sent, not upper-cased"
+    text path_id PK "canonical: trimmed, upper case"
     integer committed_heads "CHECK at least 0"
     timestamptz observed_at "CloudEvents time of ShiftPlanCommitted"
     integer last_drift_heads "nullable until a drift was computed"
@@ -230,8 +230,9 @@ logical and deliberately has no foreign key:
   `labour_plans` reads `workload_forecasts` only when heads are derived (and
   keeps the number, not a reference), and `labour_plan_commitments` may hold a
   key no plan has yet (a commitment that arrived first) or a plan may have no
-  commitment. The keys match exactly as sent; `path_id` is not upper-cased on
-  this side (only the LABOR constraint upper-cases it).
+  commitment. Site and shift match exactly as sent; `path_id` is stored in its canonical
+  form (trimmed, upper case) in all three tables, like the LABOR constraint's
+  `ProcessType`.
 - `labor_standards` holds facts, not a current value: the standard a plan uses
   is resolved at read time; `capacity_plans.labour_requirement` stores the
   result, so a later revision never rewrites a stored plan (ADR 0022).

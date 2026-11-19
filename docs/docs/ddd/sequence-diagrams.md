@@ -510,7 +510,7 @@ sequenceDiagram
   participant CR as CommittedHeadsRepository
   participant PR as LabourPlanRepository
   participant OB as OutboxRepository
-  L->>UC: Handle(site, shift_id, path_id as sent, planned_heads as committed heads, event time)
+  L->>UC: Handle(site, shift_id, CanonicalPathID(path_id), planned_heads as committed heads, event time)
   alt blank id, or heads below 0 or above 2147483647
     UC-->>L: rejection, logged and skipped, the LABOR step stays
   else valid
