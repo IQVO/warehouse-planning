@@ -48,6 +48,10 @@ tags:
     description: Operator-declared inbound labour standards and the inbound demand of a site, read from the local read model fed by dock-scheduling's dock appointment events (ADR 0017, source switched by ADR 0020).
   - name: observed-capacity
     description: Advisory planned-versus-observed variance of a capacity plan, from the local read model fed by fulfillment-execution's task completions (ADR 0017).
+  - name: workload-forecasts
+    description: The volume a process path is expected to receive at a site, as CPT buckets (ADR 0023; moved from wes-work-planning's charge forecast).
+  - name: labour-plans
+    description: The heads a process path needs for one shift at a site, sent or derived from the workload forecast (ADR 0023; moved from wes-work-planning's path plan).
   - name: reports
     description: >
       Read-only analytics reports (ADR 0005) served by the separate planning-reports binary on port 8092,
@@ -940,6 +944,219 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
         "500":
           $ref: "#/components/responses/InternalError"
+  /workload-forecasts/{site_id}/{path_id}:
+    put:
+      operationId: receiveWorkloadForecast
+      summary: Receive the workload forecast of a process path at a site
+      tags: [workload-forecasts]
+      description: >
+        Stores the volume a process path is expected to receive at a site, as CPT buckets
+        (docs/adr/0023 decision 1; it was wes-work-planning's charge forecast). One forecast per
+        (site_id, path_id); a receipt replaces the buckets as a whole. 201 with version 1 for a
+        first receipt; 200 with version + 1 when the buckets changed; 200 with the stored
+        forecast, its version and received_at unchanged, when the buckets equal the stored ones
+        (same order): nothing is written and no event is raised. A receipt that changed something
+        raises WorkloadForecastReceived (integration and analytics topics, asyncapi.yaml) in the
+        same transaction. The PUT is naturally idempotent and takes no Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceiveWorkloadForecastRequest"
+      responses:
+        "200":
+          description: The buckets replaced the stored ones (version + 1), or equal them (nothing changed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkloadForecastResponse"
+        "201":
+          description: A first receipt; the forecast is stored at version 1.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkloadForecastResponse"
+        "400":
+          description: Malformed JSON (a fractional quantity included) or a cpt that is not RFC 3339 (malformed-json, malformed-cpt).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: The stored version moved twice while the receipt was applied (version-conflict); retry it.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            No bucket (no-forecast-buckets), a bucket without cpt (missing-cpt) or quantity
+            (missing-bucket-quantity), or a negative quantity (negative-bucket-quantity).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: getWorkloadForecast
+      summary: Read the workload forecast of a process path at a site
+      tags: [workload-forecasts]
+      description: The stored forecast of (site_id, path_id), buckets in receipt order.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      responses:
+        "200":
+          description: The stored forecast.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkloadForecastResponse"
+        "404":
+          description: No forecast was received for (site_id, path_id) (workload-forecast-not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /labour-plans/{site_id}/{shift_id}/{path_id}:
+    put:
+      operationId: commitLabourPlan
+      summary: Commit the labour plan of a process path for a shift at a site
+      tags: [labour-plans]
+      description: >
+        Stores the heads a process path needs for one shift at one site, at a planned rate for a
+        number of hours (docs/adr/0023 decision 2; it was wes-work-planning's path plan).
+        planned_heads must not exceed installed_stations, hours and the rate must be positive and
+        rate x heads x hours finite. When planned_heads is omitted it is DERIVED:
+        ceil(forecast units with a cpt in [shift_start, shift_start + hours) / (rate x hours)),
+        which needs shift_start and a stored workload forecast for (site_id, path_id) with at
+        least one bucket in the shift; otherwise 422 missing-planned-heads (zero buckets in the
+        shift is no data, never zero heads). heads_source says which happened. When the facility
+        tally knows fewer stations of the activity named like the path (the path id upper-cased)
+        than installed_stations, the plan is still stored with the number as sent and the answer
+        carries a warning. 201 with version 1 for a first commit; 200 with version + 1 for a
+        revision; 200 with the stored plan and version unchanged when the plan equals the stored
+        one (no event). A change raises LabourPlanCommitted (integration and analytics topics,
+        asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no
+        Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/ShiftIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommitLabourPlanRequest"
+      responses:
+        "200":
+          description: The plan was revised (version + 1), or equals the stored one (nothing changed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanResponse"
+        "201":
+          description: A first commit; the plan is stored at version 1.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanResponse"
+        "400":
+          description: Malformed JSON (a fractional head or station count included) or a shift_start that is not RFC 3339 (malformed-json, malformed-shift-start).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: The stored version moved twice while the plan was committed (version-conflict); retry it.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            planned_heads above installed_stations (heads-exceed-stations), omitted heads that cannot
+            be derived (missing-planned-heads), a head or station count below 0 or above 2147483647
+            (invalid-count), installed_stations omitted (missing-installed-stations), a rate or hours
+            not above zero (non-positive-rate, non-positive-hours), or rate x heads x hours not finite
+            (throughput-not-finite).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: getLabourPlan
+      summary: Read the labour plan of a process path for a shift at a site
+      tags: [labour-plans]
+      description: The stored plan of (site_id, shift_id, path_id), with the station warning computed against the facility tally at read time.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/ShiftIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      responses:
+        "200":
+          description: The stored plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanResponse"
+        "404":
+          description: No plan was committed for (site_id, shift_id, path_id) (labour-plan-not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /labour-plans:
+    get:
+      operationId: listLabourPlans
+      summary: List the labour plans of a shift at a site
+      tags: [labour-plans]
+      description: >
+        The plans of one (site_id, shift_id), ordered by path id, one keyset page at a time (limit +
+        cursor; follow nextCursor until it is absent). Both filters are required and are repeated on
+        every page request.
+      parameters:
+        - name: site_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: shift_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: 2026-11-19-early
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of plans (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanPage"
+        "400":
+          description: site_id or shift_id missing (missing-site-id, missing-shift-id), or invalid-limit, invalid-cursor, unknown-query-parameter.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /reports/bottleneck-frequency:
     servers:
       - url: http://localhost:8092
@@ -1115,6 +1332,30 @@ components:
       description: Opaque keyset cursor from the previous page's nextCursor. Repeat the filters on every page request.
       schema:
         type: string
+    SiteIDPath:
+      name: site_id
+      in: path
+      required: true
+      description: Canonical facility-layout site code (ADR 0012).
+      schema:
+        type: string
+      example: SIM1
+    ShiftIDPath:
+      name: shift_id
+      in: path
+      required: true
+      description: The shift the labour plan is for (the planner's shift identifier, also carried by workforce-management's shift plan).
+      schema:
+        type: string
+      example: 2026-11-19-early
+    PathIDPath:
+      name: path_id
+      in: path
+      required: true
+      description: The process path. Upper-cased, it names the facility-tally activity whose stations the labour plan's warning compares with.
+      schema:
+        type: string
+      example: PICK
     ReportFrom:
       name: from
       in: query
@@ -2107,3 +2348,162 @@ components:
         advisory:
           type: boolean
           description: Always true. The variance never changes the planned capacity or republishes a plan.
+    ForecastBucket:
+      type: object
+      required: [cpt, quantity]
+      properties:
+        cpt:
+          type: string
+          format: date-time
+          description: The critical pull time the units are due at (RFC 3339; answered in UTC).
+          example: "2026-11-19T10:00:00Z"
+        quantity:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Whole units due at the cpt.
+          example: 120
+    ReceiveWorkloadForecastRequest:
+      type: object
+      required: [buckets]
+      properties:
+        buckets:
+          type: array
+          minItems: 1
+          description: Every bucket of the forecast; they replace the stored ones as a whole.
+          items:
+            $ref: "#/components/schemas/ForecastBucket"
+    WorkloadForecastResponse:
+      type: object
+      required: [site_id, path_id, buckets, total_quantity, received_at, version]
+      properties:
+        site_id:
+          type: string
+          example: SIM1
+        path_id:
+          type: string
+          example: PICK
+        buckets:
+          type: array
+          description: The stored buckets, in receipt order.
+          items:
+            $ref: "#/components/schemas/ForecastBucket"
+        total_quantity:
+          type: integer
+          format: int64
+          description: The sum of every bucket's quantity.
+          example: 200
+        received_at:
+          type: string
+          format: date-time
+          description: When the current buckets were received; an identical receipt keeps it.
+          example: "2026-11-19T05:00:00Z"
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 1 for a first receipt, + 1 per receipt that changed the buckets.
+          example: 1
+    CommitLabourPlanRequest:
+      type: object
+      required: [rate_units_per_hour, hours, installed_stations]
+      properties:
+        planned_heads:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: >
+            The heads the path needs for the shift, at most installed_stations. Omitted: derived
+            from the stored workload forecast, which needs shift_start (else 422
+            missing-planned-heads).
+          example: 10
+        rate_units_per_hour:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Planned units per head per hour.
+          example: 10
+        hours:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Length of the shift in hours; the shift window is [shift_start, shift_start + hours).
+          example: 8
+        installed_stations:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: The stations the path has for the shift. Stored as sent; the facility tally only adds a warning.
+          example: 12
+        shift_start:
+          type: string
+          format: date-time
+          description: Optional start of the shift (RFC 3339). Needed to derive omitted heads.
+          example: "2026-11-19T06:00:00Z"
+    LabourPlanResponse:
+      type: object
+      required: [site_id, shift_id, path_id, planned_heads, rate_units_per_hour, hours, installed_stations, heads_source, version, warnings]
+      properties:
+        site_id:
+          type: string
+          example: SIM1
+        shift_id:
+          type: string
+          example: 2026-11-19-early
+        path_id:
+          type: string
+          example: PICK
+        planned_heads:
+          type: integer
+          minimum: 0
+          example: 10
+        rate_units_per_hour:
+          type: number
+          format: double
+          example: 10
+        hours:
+          type: number
+          format: double
+          example: 8
+        installed_stations:
+          type: integer
+          minimum: 0
+          example: 12
+        shift_start:
+          type: string
+          format: date-time
+          description: Absent when the plan was committed without one.
+          example: "2026-11-19T06:00:00Z"
+        heads_source:
+          type: string
+          enum: [request, forecast]
+          description: request when planned_heads was sent; forecast when it was derived from the workload forecast.
+          example: forecast
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 1 for a first commit, + 1 per commit that changed the plan.
+          example: 1
+        warnings:
+          type: array
+          description: >
+            Advisory, computed against the facility tally on every read (never stored, never null):
+            a warning when the tally knows fewer stations of the activity named like the path than
+            installed_stations. The number is reported as sent, never replaced.
+          items:
+            type: string
+    LabourPlanPage:
+      type: object
+      description: One keyset page of labour plans of a (site, shift), ordered by path id.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabourPlanResponse"
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.

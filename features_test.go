@@ -176,6 +176,8 @@ func (w *world) start() {
 		// Every POST/PATCH sits behind the Idempotency-Key middleware.
 		UnitOfWork: uow, Idempotency: memory.NewIdempotencyStore(),
 	}
+	// ADR 0023: the workload forecast and the labour plan (features_requirement_test.go).
+	wireRequirementSide(s, outboxRepo, encoder, tallyRepo)
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
 	w.planID = ""
@@ -705,5 +707,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerWave2Steps(sc, w)
 	registerInboundObservedSteps(sc, w)
 	registerLabourSteps(sc, w)
+	registerRequirementSteps(sc, w)
 	registerDocRulesSteps(sc, w)
 }

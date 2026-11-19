@@ -180,6 +180,56 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "workload-forecasts",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/workload-forecasts",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/receive-workload-forecast",
+          label: "Receive the workload forecast of a process path at a site",
+          className: "api-method put",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-workload-forecast",
+          label: "Read the workload forecast of a process path at a site",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "labour-plans",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/labour-plans",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/commit-labour-plan",
+          label: "Commit the labour plan of a process path for a shift at a site",
+          className: "api-method put",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-labour-plan",
+          label: "Read the labour plan of a process path for a shift at a site",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/list-labour-plans",
+          label: "List the labour plans of a shift at a site",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "reports",
       link: {
         type: "doc",
