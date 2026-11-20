@@ -27,8 +27,8 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 	"github.com/claudioed/warehouse-planning/internal/domain/demand"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 func realOrderEvent(t *testing.T, id, typ, orderID string, at time.Time, promise string, lines int) []byte {
