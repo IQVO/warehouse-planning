@@ -78,6 +78,15 @@ func TestNewAcceptsEveryProcessTypeOfTheClosedSet(t *testing.T) {
 	}
 }
 
+func TestNewAcceptsTheFirstVersion(t *testing.T) {
+	p := valid()
+	p.Version = 1
+	f, err := New(p)
+	if err != nil || f.Version() != 1 {
+		t.Fatalf("version 1 (the first message of a flow) = %+v, %v; want accepted", f, err)
+	}
+}
+
 func TestRetiredFlowIsNotActive(t *testing.T) {
 	p := valid()
 	p.Status = StatusRetired

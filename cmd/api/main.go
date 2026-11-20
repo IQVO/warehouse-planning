@@ -117,8 +117,9 @@ func run(ctx context.Context) error {
 		Outbox: ad.outbox, Encoder: encoder, UnitOfWork: ad.uow,
 	}
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: pathRepo, ProcessCapacities: pcRepo,
-		StationStandards: ad.stationStandards, Tally: ad.tallyReader,
+		ProcessPaths:      &usecases.FlowFirstPathFinder{Flows: ad.processFlows, Local: pathRepo},
+		ProcessCapacities: pcRepo,
+		StationStandards:  ad.stationStandards, Tally: ad.tallyReader,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: ad.orderDemand}
 	readiness := newReadiness(ad.pool.Ping, rt.brokers)
@@ -206,7 +207,8 @@ func buildServer(
 		GetInboundDemand:             inboundDemand,
 		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: ad.capacityPlans, Observed: ad.observedCapacity},
 		// Console remote list reads (REST only; no MCP tool).
-		ListProcessPaths:  &usecases.ListProcessPaths{Paths: ad.pathLister},
+		ListProcessPaths:  &usecases.ListProcessPaths{Paths: &usecases.FlowFirstPathLister{Flows: ad.processFlows, Local: ad.pathLister}},
+		GetProcessPath:    &usecases.GetProcessPath{Paths: pathCapacity.ProcessPaths},
 		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: ad.planLister},
 		// ADR 0024 decision 4: scenarios side by side (REST only).
 		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: ad.capacityPlans},

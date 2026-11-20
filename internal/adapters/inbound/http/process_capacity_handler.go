@@ -73,6 +73,11 @@ type Server struct {
 	ListProcessPaths  *usecases.ListProcessPaths
 	ListCapacityPlans *usecases.ListCapacityPlans
 
+	// GetProcessPath backs GET /process-paths/{id} (docs/adr/0025): the path an
+	// id resolves to, a process flow first, with its read-only source. Nil
+	// leaves the route unregistered.
+	GetProcessPath *usecases.GetProcessPath
+
 	// CompareCapacityPlans backs GET /capacity-plans/comparisons
 	// (docs/adr/0024 decision 4; REST only, no MCP tool). Nil leaves the
 	// route unregistered.
@@ -150,6 +155,9 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/process-capacities", s.handleGetEffectiveProcessCapacity)
 	r.Post("/process-paths", s.idempotent(s.handleRegisterProcessPath))
 	r.Get("/process-paths/{id}/capacity", s.handleGetProcessPathCapacity)
+	if s.GetProcessPath != nil {
+		r.Get("/process-paths/{id}", s.handleGetProcessPath)
+	}
 	r.Post("/capacity-plans", s.idempotent(s.handleCreateCapacityPlan))
 	r.Post("/capacity-plans/{id}/publications", s.idempotent(s.handlePublishCapacityPlan))
 	// The static comparisons route is registered before /capacity-plans/{id};

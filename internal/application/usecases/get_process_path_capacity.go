@@ -9,10 +9,11 @@ import (
 
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
-// ErrProcessPathNotFound is returned when no ProcessPath is registered
-// under the requested id.
+// ErrProcessPathNotFound is returned when no ProcessPath (an ACTIVE process
+// flow or a locally declared path) is known under the requested id.
 var ErrProcessPathNotFound = errors.New("usecases: no ProcessPath registered for this id")
 
 // GetProcessPathCapacityCommand carries everything needed to compute one
@@ -38,6 +39,9 @@ type GetProcessPathCapacityCommand struct {
 // step and the constraint type binding that step, every step's composed
 // result in path order, and the composition warnings.
 type GetProcessPathCapacityResult struct {
+	// Source says where the path came from (docs/adr/0025): a process flow
+	// consumed from process-path-management, or a locally declared path.
+	Source               processpath.Source
 	NormalizedRate       processcapacity.CapacityRate
 	BottleneckStep       processcapacity.ProcessType
 	BottleneckConstraint processcapacity.ConstraintType
@@ -59,7 +63,10 @@ type GetProcessPathCapacityResult struct {
 // Nothing derived is ever stored, so late declarations and facility changes
 // are picked up on the next read.
 type GetProcessPathCapacity struct {
-	ProcessPaths      ports.ProcessPathRepository
+	// ProcessPaths resolves a path id: in production the flow-first resolver
+	// (FlowFirstPathFinder, docs/adr/0025): an ACTIVE process flow, else the
+	// locally declared path.
+	ProcessPaths      ports.ProcessPathFinder
 	ProcessCapacities ports.ProcessCapacityRepository
 	StationStandards  ports.StationStandardRepository
 	Tally             ports.StorageTallyReader
@@ -116,6 +123,7 @@ func (uc *GetProcessPathCapacity) Handle(ctx context.Context, cmd GetProcessPath
 		return GetProcessPathCapacityResult{}, err
 	}
 	return GetProcessPathCapacityResult{
+		Source:               path.Source(),
 		NormalizedRate:       composed.Rate,
 		BottleneckStep:       composed.BottleneckStep,
 		BottleneckConstraint: composed.BottleneckConstraint,

@@ -115,6 +115,7 @@ type wireEnvelope struct {
 	Data  struct {
 		PathCapacity *struct {
 			PathID               string  `json:"pathId"`
+			Source               string  `json:"source"`
 			Location             string  `json:"location"`
 			WindowStart          string  `json:"windowStart"`
 			WindowEnd            string  `json:"windowEnd"`
@@ -217,6 +218,14 @@ func wantProblem(t *testing.T, env wireEnvelope, status int, slug string) {
 	}
 }
 
+// requireLocalSource: the path the harness declares is a local one (docs/adr/0025).
+func requireLocalSource(t *testing.T, source string) {
+	t.Helper()
+	if source != "local" {
+		t.Fatalf("source = %q, want local (a path declared here)", source)
+	}
+}
+
 func capacityArgs(location, pathID string) map[string]any {
 	return map[string]any{
 		"pathId": pathID, "location": location, "windowStart": winStart, "windowEnd": winEnd,
@@ -248,6 +257,7 @@ func TestWirePathCapacityReadsTheSection43Numbers(t *testing.T) {
 	if pc.NormalizedRate != 1000 || pc.NormalizedUnit != "ORDER" || pc.BottleneckStep != "REBIN" || pc.BottleneckConstraint != "LABOR" {
 		t.Fatalf("path capacity = %+v, want 1000 ORDER/h bound by REBIN (LABOR)", pc)
 	}
+	requireLocalSource(t, pc.Source)
 	if len(pc.Steps) != 3 || pc.Warnings == nil || pc.WindowStart != winStart || pc.WindowEnd != winEnd {
 		t.Fatalf("steps/warnings/window = %+v", pc)
 	}

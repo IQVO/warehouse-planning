@@ -1,0 +1,71 @@
+---
+id: get-process-path
+title: "Get the ProcessPath an id resolves to"
+description: "The ProcessPath an id resolves to: an ACTIVE process flow consumed from process-path-management first (its steps are the stages' process types in order), else the locally declared path (docs/adr/0025). `source` is read-only, `flow` or `local`. A flow with no locally declared path is a 200; a RETIRED flow does not resolve, so the locally declared path of that id, if any, is returned. Read-only."
+sidebar_label: "Get the ProcessPath an id resolves to"
+hide_title: true
+hide_table_of_contents: true
+api: eJztWN9v2zgS/lcGfDkbK9vaIsUW6sMil/qK3PXaXOLuPXQLZCyOLW4oUktSdtTA//tiSMk/GrfAHXDAPeyTE5EzHM58M98nPQnbkMOgrLmWohBrCjfOluT9DYZKZOJx0uBambhjQo9UN0EUYqNoKzIRcO1F8Uk0yWTSYKi8+JwJSb50qmEjUYhFRXDkFdCAkuDIW70hD8EW/OjyanH9yxx6X7DSdgulNb6tScLK2RqOj5nUaHBNNZkAK+V8gJEKHnygxgM6glAR+IBr8n/Z+wxdQx6UAeskuXEGpH3aqW2JWncgqdToSAKfASNpSz9D6WZ5/uLleAr33raupHtQHhyhnFijuwzuOdh7sA7uo6P7KVymC2xVqMDYb/hXHhBe5PlrQLidL65v52+SmbTkwdgwJCkDb78Tp11BqDCAkhmoFaDpshRhaJ0hOYXbIdbpr0ZkokGHNQVyXL0nYbAmUQglRSYUF6xJtXf0e6scSVEE11ImfFlRjaJ4EpxIUQgfnDJrscsEPWLdaH7WqPJh4mipzKTB8kHsPrMj31jjybPtizznn+cQ6e8qj7EyFZkorQlkAhth02hVRjDOfvNs+fQ8Krv8jcpwEv+ndLl40UxEkPBvLCbjtXHcBkGlCJU8e8eUpjMLyd9hBZ3DjnMZqPZnLHb7o5+tZYJMW3PAjAORiVhwEXOI8oPR3VCM0/xdSqmCYqDsYfkcvf+uqG+MiJoSa4qNVQwAjnj8LxpwpAJslfFgN+QAE0qPoEng+Swlx9nQIXwQr++BHDvl5sPdAmYn4yQh9oCvPi9BhfjvEVbuUk45vWdWb3sMit2Od1zkF89R+N6enUJo5Ld7uDWSHM+z0Ul2jA2TlW2NHH8Hwo2zS031D/8ZlOPacEdGH4aW4SwpoNKxh31Ak5B9esHbv13BT6/yn6A/GZINh3jaAun85+hcWVcjM0DrlDgk+mxTxLAOS8oEWpPjtT7Sc2b72M+2zVFdOfw3yU+q6Mtzc+XSQGvosaEyMIhR6dYRjBB8sI54Yts2LO0jkHPWjadwafyWuLjo4bg8MOL4nUE92W+Fl4+PgNGAW8cQoz86lj0s0MC1pLqxgUzZTf5BXQSTs1p7WGL5EJsD12tHawwEZYVmTXEPs1kfm7Nbv2cAR8F14IjJuGwD9Q3yJ8L+1wiLLBfIeGVN4s0H6kRxViFlYoO6pUEpMQfWFCrbS6xIwaEShTiddbMnJXeccHKbgZxbp0UhqhCaYjaLI6iyPhSv8ld59KvMysar9IFv0VFlW0+TRqMxKamnNbpCA6FSHvZ7DwqpIpBUMwDRe7U2JCFYUCGDtdqQibAsW+d47GtcWpfFucieM2AINcwIGUuv9Ky0ZkOddRHUy3a1IhdZJThUJvif4aZCT/Aj0GNjPcseZCIbRMAVNliqwIhfKzZir9EXh1raumm5s2m1ojLaOQz0unf6Im4yjCitvpwqCyh7z8PmCxjOutFoPIz2CegTsvHTgTjTvgx8ZR1rzAyWNgRNhsqHMWwr6wm0WlHZlZqANmSCB024Yfp1tl1XgBAcGo8lXwj10OsjTwToO1Nio6Yd1no8hbuUzP3BxZBeDwG1VgM/r7BUWoVuorGzbYCKDzR2OLNpQ8/HyoHdmtc8n5L+t26yp7X+tLuARqKTMDoyb+KEi+tjnnlcAOsH+n53+dcPt/vi2FCd1houF3A7v3wDi+t/zk/kSf5inO3teILimqCxXqVLzoYzobQtO7IrQPAqUJT6GEUP1FaSnv5qrpz1flK2ISizhiVVuFG2dXspQm6jSgJroLEuAHdSkeZ/enPYj7BvDVIe/e8/vuNp7bAM5GD08Yc8z/Mxv1vs9ZXycJFfRFnLwuQgCbJh2+8tuQ4u8hxq1Dz4SE54DpMPk7QWmcDEG8bHsLTyWxa8xKGVVmuKsIK380VPUD4atebB2K1Jzif71wBYcX/24RyeqnB4EenR8fqosm/nCw9qbZhIe8cHY8+RnAStPK/6RK1/v/vwHrYVhsiZPFSuEoFNFl1DCQuDz2i9UqRlqk86Uk5hvuF4o2ZUHh6oIwnL7mvGTSHffFz0d+gbhz0ZDK2Lmk4NNiHBEB9i4zxQd3yPYLljWuNsHDpJ4DpIoz2q50E9LLtE1rzRpeZAaDQqMwn0GCIwZnCRv+S+90pSGsjM4gypaazcrCLUofoSQ4oPGOfdF6BHxVltQ7zF/g2eNbezS/JZLFmDru/3Y89RLTC7JC7Ipz9O814/YBn1Q/86+JxIoOY2RmWYm7IjZvLFbLZWoWqX09LWs+t//fJhdoaHdpnQqiQW4YdjPr5/d301f383fxP5t7E+1GiONrylkCr4vS8IX3Pc00EQ/fn54f/t80OvurgRZrEnGBkRTU+9Lvr6k1ImCiVZbLL24eWnpyV6+uj0bseP4+QSxafPLLycwiVLoU9PQirPf0tRrFD7r9+aj0Eyuu317xi+FeHwdm+6I30nsl4GKil2n3eZqAgluSN9eFmWdCIJn33EOJGHb+cLsdv9AWCt1wg=
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/warehouse-planning
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Get the ProcessPath an id resolves to"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/process-paths/{id}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The ProcessPath an id resolves to: an ACTIVE process flow consumed from process-path-management first (its steps are the stages' process types in order), else the locally declared path (docs/adr/0025). `source` is read-only, `flow` or `local`. A flow with no locally declared path is a 200; a RETIRED flow does not resolve, so the locally declared path of that id, if any, is returned. Read-only.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-process-path.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-process-path.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-process-path.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

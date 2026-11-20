@@ -119,7 +119,11 @@ func (w *world) start() {
 	standards, tallyRepo, processed := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo(), memory.NewProcessedEventRepo()
 	uow := memory.NewUnitOfWork(repo, planRepo, outboxRepo)
 	encoder := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
+	// ADR 0025: a process flow resolves a path id before the locally declared
+	// path, as cmd/api wires it.
+	w.pf = newFlowState()
+	pathFinder := &usecases.FlowFirstPathFinder{Flows: w.pf.flows, Local: pathRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathFinder, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
 	w.facility = &inboundkafka.StorageCapacityConsumer{
 		Tally: tallyRepo, ProcessedEvents: processed, UoW: memory.NewUnitOfWork(tallyRepo, processed),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -139,7 +143,6 @@ func (w *world) start() {
 	w.w2 = newWave2State(repo, outboxRepo, encoder, uow)
 	w.io = newInboundObservedState()
 	w.ls = newLabourState()
-	w.pf = newFlowState()
 	w.doc = newDocRulesState()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
@@ -167,7 +170,8 @@ func (w *world) start() {
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:       planRepo,
-		ListProcessPaths:    &usecases.ListProcessPaths{Paths: pathRepo},
+		ListProcessPaths:    &usecases.ListProcessPaths{Paths: &usecases.FlowFirstPathLister{Flows: w.pf.flows, Local: pathRepo}},
+		GetProcessPath:      &usecases.GetProcessPath{Paths: pathFinder},
 		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: planRepo},
 		// ADR 0024 decision 4, as cmd/api wires it.
 		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: planRepo},

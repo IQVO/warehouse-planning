@@ -67,6 +67,9 @@ func registerAndCheckPath(t *testing.T, h *harness, want featureExpectation) {
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PACK", "FC01", 1800, "PACKAGE"))
 
 	path := h.ok(t, "register_process_path", map[string]any{"id": "tote-path", "name": "Tote path", "steps": []string{"PICK", "REBIN", "PACK"}})
+	if path["source"] != "local" {
+		t.Fatalf("register_process_path source = %v, want local", path["source"])
+	}
 	if path["id"] != "tote-path" || !reflect.DeepEqual(path["steps"], []any{"PICK", "REBIN", "PACK"}) {
 		t.Fatalf("path = %v", path)
 	}

@@ -3,6 +3,7 @@ package main_test
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -98,10 +99,65 @@ func (w *world) localFlowIsAbsent(flowID string) error {
 	return nil
 }
 
+func (w *world) iAskForProcessPath(ctx context.Context, id string) error {
+	return w.record(ctx, http.MethodGet, "/process-paths/"+id, nil)
+}
+
+func (w *world) theProcessPathIs(source, steps string) error {
+	var got struct {
+		Source string   `json:"source"`
+		Steps  []string `json:"steps"`
+	}
+	if err := w.decode(&got); err != nil {
+		return err
+	}
+	if got.Source != source || strings.Join(got.Steps, ", ") != steps {
+		return fmt.Errorf("path = source %q, steps %s; want source %q, steps %s", got.Source, strings.Join(got.Steps, ", "), source, steps)
+	}
+	return nil
+}
+
+func (w *world) theListedPathsAre(want string) error {
+	var page struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Source string `json:"source"`
+		} `json:"items"`
+	}
+	if err := w.decode(&page); err != nil {
+		return err
+	}
+	got := make([]string, 0, len(page.Items))
+	for _, it := range page.Items {
+		got = append(got, it.ID+":"+it.Source)
+	}
+	if strings.Join(got, ", ") != want {
+		return fmt.Errorf("listed paths = %s; want %s", strings.Join(got, ", "), want)
+	}
+	return nil
+}
+
+func (w *world) thePathCapacityStatesSource(source string) error {
+	var got struct {
+		Source string `json:"source"`
+	}
+	if err := w.decode(&got); err != nil {
+		return err
+	}
+	if got.Source != source {
+		return fmt.Errorf("path capacity source = %q; want %q (%s)", got.Source, source, w.body)
+	}
+	return nil
+}
+
 func registerFlowSteps(sc *godog.ScenarioContext, w *world) {
 	const ts = `\"([^\"]*)\"`
 	sc.Step(`^process-path-management published (ProcessFlowDefined|ProcessFlowRevised|ProcessFlowRetired) `+ts+` named `+ts+` at version (\d+) with stages ([A-Z, ]+)$`, w.processFlowPublished)
 	sc.Step(`^process-path-management redelivers its last process flow message$`, w.processFlowRedelivered)
 	sc.Step(`^the local copy holds flow `+ts+` at version (\d+) with stages ([A-Z, ]+) and status (ACTIVE|RETIRED)$`, w.localFlowIs)
 	sc.Step(`^the local copy holds no flow `+ts+`$`, w.localFlowIsAbsent)
+	sc.Step(`^I ask for process path `+ts+`$`, w.iAskForProcessPath)
+	sc.Step(`^the process path comes from a (flow|local) source with steps ([A-Z, ]+)$`, w.theProcessPathIs)
+	sc.Step(`^the listed process paths are `+ts+`$`, w.theListedPathsAre)
+	sc.Step(`^the process path capacity response states source `+ts+`$`, w.thePathCapacityStatesSource)
 }
