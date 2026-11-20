@@ -206,37 +206,25 @@ paths:
           $ref: "#/components/responses/InternalError"
     post:
       operationId: registerProcessPath
-      summary: Register (seed) a ProcessPath read model
+      summary: "Retired (ADR-0025 stage 2): the local process-path declaration moved to process-path-management"
+      deprecated: true
       tags: [process-paths]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       description: >
-        Seeds a ProcessPath read model (id, name, an ordered non-empty list
-        of step process types) directly, since there is no event-driven
-        sync from process-path-management yet (a later phase). Re-posting
-        an existing id replaces the stored path wholesale.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegisterProcessPathRequest"
+        Always answers 410 process-path-moved: the local declaration retired
+        (docs/adr/0025 stage 2). A path's ordered steps now come from the
+        process flows this context consumes from process-path-management
+        (ProcessFlowDefined/Revised/Retired); declare a flow there as
+        PUT /process-flows/{flowId}. Nothing is decoded, recorded or
+        published for ANY body. GET /process-paths stays.
       responses:
-        "201":
-          description: ProcessPath registered.
-          headers:
-            Idempotency-Replayed:
-              $ref: "#/components/headers/IdempotencyReplayed"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProcessPathResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/KeyReused"
-        "422":
-          description: Empty step list.
+        "410":
+          description: The local process-path declaration retired; declare a flow on process-path-management instead.
           content:
             application/problem+json:
               schema:
@@ -1957,25 +1945,6 @@ components:
           type: string
         instance:
           type: string
-    RegisterProcessPathRequest:
-      type: object
-      required:
-        - id
-        - name
-        - steps
-      properties:
-        id:
-          type: string
-          example: pick-rebin-pack
-        name:
-          type: string
-          example: Pick-Rebin-Pack
-        steps:
-          type: array
-          minItems: 1
-          items:
-            type: string
-          example: ["PICK", "REBIN", "PACK"]
     ProcessPathResponse:
       type: object
       required: [id, name, steps, source]

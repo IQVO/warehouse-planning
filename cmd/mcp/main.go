@@ -212,7 +212,6 @@ func newDeps(r repositories) (inboundmcp.Deps, error) {
 			Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 		},
 		ProcessCapacities:      r.processCapacities,
-		RegisterProcessPath:    &usecases.RegisterProcessPath{Repo: r.processPaths},
 		GetProcessPathCapacity: pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,

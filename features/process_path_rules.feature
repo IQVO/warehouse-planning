@@ -1,27 +1,30 @@
 # Derived from: apis/openapi.yaml (POST /process-paths, GET /process-paths/{id}/capacity),
-# docs/adr/0003-window-coverage-semantics.md, .claude/rules/domain-model.md
-# (ProcessPath, WorkloadProfile, Step composition), errors.go (problem-type slugs).
+# docs/adr/0025-process-flows-from-process-path-management.md (stage 2: the local
+# declaration retired; POST answers 410), docs/adr/0003-window-coverage-semantics.md,
+# .claude/rules/domain-model.md, errors.go (problem-type slugs).
 @bdd
 Feature: ProcessPath registration and path capacity rules
   As a warehouse planner
   I want path capacity to follow the registration, normalization and window-coverage rules
   So that a path's bottleneck is never computed from a wrong, shadowed or un-normalizable figure
 
-  Scenario: A process path without steps is rejected, a malformed body is a 400, and re-registering an id replaces the path wholesale
-    When I register a process path "empty" named "Empty" with no steps
-    Then the response status is 422
-    And the problem detail type is "empty-process-path-steps"
+  Scenario: The retired local declaration answers 410 for any body, and re-seeding an id replaces the path wholesale
     When I send POST "/process-paths" with body:
       """
       {"id": "broken", "name":
       """
-    Then the response status is 400
-    And the problem detail type is "malformed-json"
+    Then the response status is 410
+    And the problem detail type is "process-path-moved"
+    When I send POST "/process-paths" with body:
+      """
+      {"id": "any", "name": "Any", "steps": ["PICK"]}
+      """
+    Then the response status is 410
+    And the problem detail type is "process-path-moved"
     When I list the process paths
     Then the process path list is empty
     When I register a process path "pick-rebin-pack" named "Pick-Rebin-Pack" with steps PICK, REBIN, PACK
     And I register a process path "pick-rebin-pack" named "Pack only" with steps PACK
-    Then the response status is 201
     When I list the process paths
     Then the process path list is "pick-rebin-pack=PACK"
 

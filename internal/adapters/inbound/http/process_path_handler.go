@@ -12,32 +12,17 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
-// handleRegisterProcessPath backs POST /process-paths: seeds a ProcessPath
-// read model (id/name/ordered steps). There is no event-driven sync from
-// process-path-management yet (a later phase) -- this is the only way a
-// ProcessPath becomes known to this service for now.
+// handleRegisterProcessPath backs POST /process-paths: ADR 0025 stage 2. The
+// local declaration retired; the route answers 410 process-path-moved for ANY
+// body, naming process-path-management's PUT /process-flows/{flowId}. Nothing
+// is decoded, recorded or published (the Idempotency-Key check still runs
+// first, as on every POST). GET /process-paths stays -- the console remote
+// lists paths with it; stage 3 drops the local table and declaration code.
 func (s *Server) handleRegisterProcessPath(w http.ResponseWriter, r *http.Request) {
-	var req registerProcessPathRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	steps := make([]processpath.ProcessType, 0, len(req.Steps))
-	for _, step := range req.Steps {
-		steps = append(steps, processpath.ProcessType(step))
-	}
-
-	path, err := s.RegisterProcessPath.Handle(r.Context(), usecases.RegisterProcessPathCommand{
-		ID:    req.ID,
-		Name:  req.Name,
-		Steps: steps,
-	})
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, toProcessPathResponse(path))
+	writeProblem(w, http.StatusGone, problemInfo{
+		slug:  "process-path-moved",
+		title: "Process-path declaration moved to process-path-management",
+	}, "the local process-path declaration retired (ADR-0025 stage 2): declare the flow on process-path-management as PUT /process-flows/{flowId}; this context consumes ProcessFlowDefined/Revised/Retired", r.URL.Path)
 }
 
 // handleListProcessPaths backs GET /process-paths: the locally declared paths

@@ -12,8 +12,12 @@ Producer side: process-path-management ADR 0042 (the `ProcessFlow` aggregate). S
 [ADR 0001](0001-warehouse-planning-bounded-context.md) (2026-10-03) and amends hard rule 5 of
 `CLAUDE.md`. Implemented after ADR 0022 to ADR 0024.
 
-Stage 1 implemented (2026-11-20): PR #156 (migration `0018`). Stages 2 and 3 are decided,
-not built: the 410 waits on the live cluster check that every local path has a flow.
+Stage 1 implemented (2026-11-20): PR #156 (migration `0018`). Stage 2 implemented (2026-11-20):
+the live cluster (v2.0.3) runs both ends, no local path exists without a flow (the site's one
+path, PICK, is flow-owned), so `POST /process-paths` answers `410 process-path-moved` naming
+process-path-management's `PUT /process-flows/{flowId}`; the `register_process_path` MCP tool
+went with it. `GET /process-paths` stays. Stage 3 (drop the local table and declaration code)
+is the next change.
 
 ## Context
 

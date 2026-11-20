@@ -341,7 +341,7 @@ Write side:
 | Method | Path | Purpose | Success |
 |---|---|---|---|
 | `POST` | `/process-capacities` | RegisterProcessCapacityConstraint | `201` + `Location` |
-| `POST` | `/process-paths` | RegisterProcessPath | `201` + `Location` |
+| `POST` | `/process-paths` | retired (ADR 0025 stage 2): `410 process-path-moved`, naming process-path-management's `PUT /process-flows/{flowId}` | `410` |
 | `POST` | `/capacity-plans` | CreateCapacityPlan (DRAFT; shortage + bottleneck) | `201` + `Location` |
 | `POST` | `/capacity-plans/{id}/publications` | PublishCapacityPlan | `200` |
 | `PUT` | `/station-standards/{location}/{process_type}` | DeclareStationStandard | `200` |
@@ -439,8 +439,8 @@ migrations on start). Reads: `get_capacity_plan`,
 `get_storage_capacity`, `list_station_standards`. Writes (this surface is
 NOT read-only, unlike most siblings): `create_capacity_plan`,
 `publish_capacity_plan`, `declare_inbound_labour_standard`,
-`declare_station_standard`, `register_process_capacity_constraint`,
-`register_process_path`. See `.claude/rules/mcp.md` and
+`declare_station_standard`, `register_process_capacity_constraint`.
+(`register_process_path` retired with ADR 0025 stage 2.) See `.claude/rules/mcp.md` and
 [the MCP tools page](docs/docs/mcp/tools.md).
 
 ### Running the A2A agent in Kubernetes

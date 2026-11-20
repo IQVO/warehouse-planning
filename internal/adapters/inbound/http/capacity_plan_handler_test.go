@@ -24,6 +24,7 @@ const (
 type planServer struct {
 	*httptest.Server
 	outbox *memory.OutboxRepo
+	paths  *memory.ProcessPathRepo
 }
 
 // newPlanServer wires the full Phase 4 surface over in-memory adapters,
@@ -47,12 +48,12 @@ func newPlanServer(t *testing.T) *planServer {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return &planServer{Server: srv, outbox: ob}
+	return &planServer{Server: srv, outbox: ob, paths: paths}
 }
 
 // seedPlanFixture registers PICK/REBIN/PACK capacities for the 8h plan
 // window at PATH-ZONE-A plus the pick-rebin-pack path.
-func seedPlanFixture(t *testing.T, srv *httptest.Server) {
+func seedPlanFixture(t *testing.T, srv *httptest.Server, paths *memory.ProcessPathRepo) {
 	t.Helper()
 	for _, reg := range []struct {
 		process string
@@ -68,9 +69,7 @@ func seedPlanFixture(t *testing.T, srv *httptest.Server) {
 			t.Fatalf("register %s: %d %s", reg.process, status, body)
 		}
 	}
-	if status, _, body := registerProcessPath(t, srv, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"}); status != http.StatusCreated {
-		t.Fatalf("register path: %d %s", status, body)
-	}
+	seedLocalPath(t, paths, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
 }
 
 func planBody(demand any) map[string]any {
@@ -126,7 +125,7 @@ func problemType(t *testing.T, body []byte) string {
 
 func TestHandler_CapacityPlan_WorkedExample(t *testing.T) {
 	srv := newPlanServer(t)
-	seedPlanFixture(t, srv.Server)
+	seedPlanFixture(t, srv.Server, srv.paths)
 
 	status, headers, body := postJSON(t, srv.Server, "/capacity-plans", planBody(12000))
 	if status != http.StatusCreated {
@@ -210,7 +209,7 @@ func assertOutboxTypes(t *testing.T, ob *memory.OutboxRepo, names ...string) {
 
 func TestHandler_CapacityPlan_WithinCapacityHasNoShortage(t *testing.T) {
 	srv := newPlanServer(t)
-	seedPlanFixture(t, srv.Server)
+	seedPlanFixture(t, srv.Server, srv.paths)
 	status, _, body := postJSON(t, srv.Server, "/capacity-plans", planBody(6000))
 	if status != http.StatusCreated {
 		t.Fatalf("create = %d: %s", status, body)
@@ -248,7 +247,7 @@ func TestHandler_CapacityPlan_CreateRejections(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newPlanServer(t)
-			seedPlanFixture(t, srv.Server)
+			seedPlanFixture(t, srv.Server, srv.paths)
 			body := planBody(12000)
 			tc.mutate(body)
 			status, headers, resp := postJSON(t, srv.Server, "/capacity-plans", body)

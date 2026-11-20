@@ -4,40 +4,7 @@ import (
 	"context"
 
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
-
-type registerProcessPathInput struct {
-	ID    string   `json:"id" jsonschema:"the process path's id, e.g. tote-path; registering an existing id replaces its name and steps"`
-	Name  string   `json:"name" jsonschema:"a human-readable name"`
-	Steps []string `json:"steps" jsonschema:"the ordered, non-empty list of step process types, e.g. [PICK, REBIN, PACK]"`
-}
-
-// processPathOutput is a path as the tools return it; source is read-only
-// (docs/adr/0025): "flow" for a process flow consumed from
-// process-path-management, "local" for a path declared with this tool.
-type processPathOutput struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Steps  []string `json:"steps"`
-	Source string   `json:"source"`
-}
-
-func (d Deps) registerProcessPath(ctx context.Context, in registerProcessPathInput) (processPathOutput, error) {
-	steps := make([]processpath.ProcessType, 0, len(in.Steps))
-	for _, step := range in.Steps {
-		steps = append(steps, processpath.ProcessType(step))
-	}
-	path, err := d.RegisterProcessPath.Handle(ctx, usecases.RegisterProcessPathCommand{ID: in.ID, Name: in.Name, Steps: steps})
-	if err != nil {
-		return processPathOutput{}, mapError(err)
-	}
-	out := make([]string, 0, len(path.Steps()))
-	for _, step := range path.Steps() {
-		out = append(out, string(step))
-	}
-	return processPathOutput{ID: path.ID(), Name: path.Name(), Steps: out, Source: string(path.Source())}, nil
-}
 
 type getPathCapacityInput struct {
 	ID               string   `json:"id" jsonschema:"the registered process path's id"`

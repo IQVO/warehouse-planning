@@ -22,12 +22,12 @@ var (
 // read model wired in, exactly as cmd/mcp wires it.
 func newDemandHarness(t *testing.T) (*harness, *memory.OrderDemandRepo) {
 	t.Helper()
-	deps, outboxRepo, tallyRepo := newStack()
+	deps, outboxRepo, tallyRepo, paths := newStack()
 	orders := memory.NewOrderDemandRepo()
 	expected := &usecases.GetExpectedDemand{Demand: orders}
 	deps.GetExpectedDemand = expected
 	deps.CreateCapacityPlan.Demand = expected
-	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo}, orders
+	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo, paths: paths}, orders
 }
 
 func seedMCPOrder(t *testing.T, repo *memory.OrderDemandRepo, id, location string, promise time.Time, lines int, asOf time.Time) {

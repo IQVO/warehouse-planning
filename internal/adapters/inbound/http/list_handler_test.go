@@ -22,7 +22,7 @@ import (
 
 // newListServer is newPlanServer plus the two list use cases, with a clock
 // that advances one minute per created plan so "newest first" is observable.
-func newListServer(t *testing.T) *httptest.Server {
+func newListServer(t *testing.T) (*httptest.Server, *memory.ProcessPathRepo) {
 	t.Helper()
 	pcs, paths, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
@@ -46,7 +46,7 @@ func newListServer(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, paths
 }
 
 type plansListJSON struct {
@@ -76,7 +76,7 @@ func planIDs(plans []map[string]any) []string {
 }
 
 func TestHandler_ListProcessPaths(t *testing.T) {
-	srv := newListServer(t)
+	srv, paths := newListServer(t)
 
 	status, headers, body := getPath(t, srv, "/process-paths")
 	if status != http.StatusOK {
@@ -89,8 +89,8 @@ func TestHandler_ListProcessPaths(t *testing.T) {
 		t.Errorf("empty body = %q, want an empty array (never null)", body)
 	}
 
-	registerProcessPath(t, srv, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
-	registerProcessPath(t, srv, "a-simple", "Simple", []string{"PACK"})
+	seedLocalPath(t, paths, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
+	seedLocalPath(t, paths, "a-simple", "Simple", []string{"PACK"})
 
 	status, _, body = getPath(t, srv, "/process-paths")
 	if status != http.StatusOK {
@@ -131,9 +131,9 @@ func assertListItemsMatchSingleGets(t *testing.T, srv *httptest.Server, items []
 
 // seedThreePlans creates three plans at PATH-ZONE-A (demands 1000, 2000, 3000,
 // oldest first) and publishes the oldest; it returns their ids oldest first.
-func seedThreePlans(t *testing.T, srv *httptest.Server) []string {
+func seedThreePlans(t *testing.T, srv *httptest.Server, paths *memory.ProcessPathRepo) []string {
 	t.Helper()
-	seedPlanFixture(t, srv)
+	seedPlanFixture(t, srv, paths)
 	var ids []string
 	for i := 0; i < 3; i++ {
 		status, _, body := postJSON(t, srv, "/capacity-plans", planBody(float64(1000*(i+1))))
@@ -149,8 +149,8 @@ func seedThreePlans(t *testing.T, srv *httptest.Server) []string {
 }
 
 func TestHandler_ListCapacityPlans_NewestFirstInTheSingleGetShape(t *testing.T) {
-	srv := newListServer(t)
-	ids := seedThreePlans(t, srv)
+	srv, paths := newListServer(t)
+	ids := seedThreePlans(t, srv, paths)
 
 	status, headers, body := getPath(t, srv, "/capacity-plans?location=PATH-ZONE-A")
 	if status != http.StatusOK {
@@ -176,8 +176,8 @@ func TestHandler_ListCapacityPlans_NewestFirstInTheSingleGetShape(t *testing.T) 
 }
 
 func TestHandler_ListCapacityPlans_LimitAndLocationFilters(t *testing.T) {
-	srv := newListServer(t)
-	ids := seedThreePlans(t, srv)
+	srv, paths := newListServer(t)
+	ids := seedThreePlans(t, srv, paths)
 
 	_, _, body := getPath(t, srv, "/capacity-plans?location=PATH-ZONE-A&limit=2")
 	if got := planIDs(decodePlansList(t, body).Items); fmt.Sprint(got) != fmt.Sprint([]string{ids[2], ids[1]}) {
@@ -199,8 +199,8 @@ func TestHandler_ListCapacityPlans_LimitAndLocationFilters(t *testing.T) {
 }
 
 func TestHandler_ListCapacityPlans_DefaultLimitIs100AndCapIs500(t *testing.T) {
-	srv := newListServer(t)
-	seedPlanFixture(t, srv)
+	srv, paths := newListServer(t)
+	seedPlanFixture(t, srv, paths)
 	for i := 0; i < 105; i++ {
 		if status, _, body := postJSON(t, srv, "/capacity-plans", planBody(10)); status != http.StatusCreated {
 			t.Fatalf("create %d = %d: %s", i, status, body)
@@ -229,8 +229,8 @@ func TestHandler_ListCapacityPlans_DefaultLimitIs100AndCapIs500(t *testing.T) {
 // plans than the page size, including plans sharing created_at, and asserts
 // no duplicate and no skipped row.
 func TestHandler_ListCapacityPlans_WalksEveryPage(t *testing.T) {
-	srv := newListServer(t)
-	seedPlanFixture(t, srv)
+	srv, paths := newListServer(t)
+	seedPlanFixture(t, srv, paths)
 	const total = 11
 	want := map[string]bool{}
 	for i := 0; i < total; i++ {
@@ -273,7 +273,7 @@ func TestHandler_ListCapacityPlans_WalksEveryPage(t *testing.T) {
 }
 
 func TestHandler_ListCapacityPlans_BadPagingParametersAre400(t *testing.T) {
-	srv := newListServer(t)
+	srv, _ := newListServer(t)
 	cases := map[string]string{
 		"limit=abc": "invalid-limit", "limit=0": "invalid-limit", "limit=-5": "invalid-limit", "limit=501": "invalid-limit",
 		"limit=": "invalid-limit", "limit=1&limit=2": "invalid-limit",
@@ -305,8 +305,10 @@ func TestHandler_ListRoutesAbsentWhenUseCasesNotWired(t *testing.T) {
 			t.Errorf("GET %s answered 200 with the list use case unwired", path)
 		}
 	}
-	// ... and the existing POSTs on the same paths are untouched.
-	if status, _, body := postJSON(t, srv.Server, "/process-paths", map[string]any{"id": "x", "name": "x", "steps": []string{"PICK"}}); status != http.StatusCreated {
+	// POST /process-paths retired with ADR 0025 stage 2: it answers 410
+	// process-path-moved whether or not the (now unused) declaration use
+	// case is wired; POST /capacity-plans is untouched.
+	if status, _, body := postJSON(t, srv.Server, "/process-paths", map[string]any{"id": "x", "name": "x", "steps": []string{"PICK"}}); status != http.StatusGone {
 		t.Errorf("POST /process-paths = %d: %s", status, body)
 	}
 }

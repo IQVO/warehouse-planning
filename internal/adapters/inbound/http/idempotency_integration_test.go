@@ -12,7 +12,7 @@ import (
 
 func pgKeyedPost(t *testing.T, srv *httptest.Server, key, body string) (int, http.Header, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/process-paths", strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/process-capacities", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func pgKeyedPost(t *testing.T, srv *httptest.Server, key, body string) (int, htt
 // key, byte-identical replay, reuse -> 409, missing -> 400, a cached 4xx.
 func TestPostgresIdempotency(t *testing.T) {
 	srv := newPostgresRouter(t)
-	body := `{"id":"idem-1","name":"Idem","steps":["PICK","PACK"]}`
+	body := `{"process_type":"PICK","location":"SIM1","window_start":"2026-01-01T00:00:00Z","window_end":"2026-01-02T00:00:00Z","constraint_type":"LABOR","quantity":120,"unit":"UNIT/HOUR","period_seconds":3600}`
 
 	s1, h1, b1 := pgKeyedPost(t, srv, "pg-k-1", body)
 	if s1 != http.StatusCreated || h1.Get("Idempotency-Replayed") != "" {
@@ -42,7 +42,7 @@ func TestPostgresIdempotency(t *testing.T) {
 	if s2 != s1 || b2 != b1 || h2.Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("replay: %d %q %s", s2, h2.Get("Idempotency-Replayed"), b2)
 	}
-	s3, _, b3 := pgKeyedPost(t, srv, "pg-k-1", `{"id":"idem-2","name":"Other","steps":["PACK"]}`)
+	s3, _, b3 := pgKeyedPost(t, srv, "pg-k-1", `{"process_type":"PACK","location":"SIM1","window_start":"2026-01-01T00:00:00Z","window_end":"2026-01-02T00:00:00Z","constraint_type":"LABOR","quantity":90,"unit":"UNIT/HOUR","period_seconds":3600}`)
 	if s3 != http.StatusConflict || !strings.Contains(b3, "/idempotency-key-reused") {
 		t.Fatalf("reuse: %d %s", s3, b3)
 	}
@@ -50,7 +50,7 @@ func TestPostgresIdempotency(t *testing.T) {
 	if s4 != http.StatusBadRequest || !strings.Contains(b4, "/idempotency-key-required") {
 		t.Fatalf("missing: %d %s", s4, b4)
 	}
-	bad := `{"id":"idem-3","name":"Bad","steps":[]}`
+	bad := `{"process_type":"PICK","location":"SIM1","window_start":"2026-01-01T00:00:00Z","window_end":"2026-01-02T00:00:00Z","constraint_type":"LABOR","quantity":-5,"unit":"UNIT/HOUR","period_seconds":3600}`
 	c1, _, cb1 := pgKeyedPost(t, srv, "pg-k-bad", bad)
 	c2, ch2, cb2 := pgKeyedPost(t, srv, "pg-k-bad", bad)
 	if c1 != http.StatusUnprocessableEntity || c2 != c1 || cb1 != cb2 || ch2.Get("Idempotency-Replayed") != "true" {
@@ -63,7 +63,7 @@ func TestPostgresIdempotency(t *testing.T) {
 // same 201 (the loser replays the winner's committed answer).
 func TestPostgresIdempotency_ConcurrentSameKeyOneEffect(t *testing.T) {
 	srv := newPostgresRouter(t)
-	body := `{"id":"idem-c","name":"C","steps":["PICK"]}`
+	body := `{"process_type":"PICK","location":"SIM1","window_start":"2026-01-01T00:00:00Z","window_end":"2026-01-02T00:00:00Z","constraint_type":"LABOR","quantity":120,"unit":"UNIT/HOUR","period_seconds":3600}`
 	var wg sync.WaitGroup
 	results := make([]string, 8)
 	statuses := make([]int, 8)

@@ -230,7 +230,10 @@ deterministic failure (unknown `process_type`, no stages, bad status or version)
 `warehouse.process-path-management.events.dlq`, counts `warehouse_planning.process_flows.messages`
 (`applied|stale|duplicate|rejected`), and ignores every other type on the topic (`ProcessPath*`,
 `CPTScheduleChanged`). `cmd/mcp` and `cmd/a2a` read the copy and never start the consumer. A flow wins
-over a locally declared `ProcessPath` of the same id; reads carry `source: flow|local`.
+over a locally declared `ProcessPath` of the same id; reads carry `source: flow|local`. Since
+ADR 0025 stage 2, `POST /process-paths` answers `410 process-path-moved` (the declaration moved
+to process-path-management's `PUT /process-flows/{flowId}`) and the `register_process_path`
+MCP tool is gone; `GET /process-paths` stays.
 
 ### Keying decisions
 

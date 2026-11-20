@@ -33,14 +33,6 @@ type constraintResponse struct {
 	PeriodSeconds  float64 `json:"period_seconds"`
 }
 
-// registerProcessPathRequest is POST /process-paths' request body:
-// id/name/an ordered, non-empty list of step process types.
-type registerProcessPathRequest struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Steps []string `json:"steps"`
-}
-
 // processPathResponse is the body of POST /process-paths (echoing back the
 // registered path), of GET /process-paths/{id} and of every item of
 // GET /process-paths. source is read-only and says where the path came from:

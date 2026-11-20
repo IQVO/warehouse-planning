@@ -52,7 +52,7 @@ func newLabourPlanServer(t *testing.T) *planServer {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return &planServer{Server: srv, outbox: ob}
+	return &planServer{Server: srv, outbox: ob, paths: paths}
 }
 
 type labourItemJSON struct {
@@ -84,7 +84,7 @@ func strptr(s string) *string { return &s }
 
 func TestHandler_CapacityPlan_LabourRequirementPerStep(t *testing.T) {
 	srv := newLabourPlanServer(t)
-	seedPlanFixture(t, srv.Server)
+	seedPlanFixture(t, srv.Server, srv.paths)
 	req := planBody(12000)
 	req["tasks_per_order"] = map[string]any{"PICK": 3, "PACK": 1}
 	status, _, body := postJSON(t, srv.Server, "/capacity-plans", req)
@@ -113,7 +113,7 @@ func TestHandler_CapacityPlan_LabourRequirementPerStep(t *testing.T) {
 
 func TestHandler_CapacityPlan_WithoutFactorsEveryStepSaysWhyItIsUnknown(t *testing.T) {
 	srv := newLabourPlanServer(t)
-	seedPlanFixture(t, srv.Server)
+	seedPlanFixture(t, srv.Server, srv.paths)
 	status, _, body := postJSON(t, srv.Server, "/capacity-plans", planBody(12000))
 	if status != http.StatusCreated {
 		t.Fatalf("create = %d: %s", status, body)
@@ -130,7 +130,7 @@ func TestHandler_CapacityPlan_WithoutFactorsEveryStepSaysWhyItIsUnknown(t *testi
 
 func TestHandler_CapacityPlan_LegacyPlanWithoutStandardsIsUnchanged(t *testing.T) {
 	srv := newPlanServer(t)
-	seedPlanFixture(t, srv.Server)
+	seedPlanFixture(t, srv.Server, srv.paths)
 	status, _, body := postJSON(t, srv.Server, "/capacity-plans", planBody(12000))
 	if status != http.StatusCreated {
 		t.Fatalf("create = %d: %s", status, body)
@@ -146,7 +146,7 @@ func TestHandler_CapacityPlan_LegacyPlanWithoutStandardsIsUnchanged(t *testing.T
 
 func TestHandler_CapacityPlan_NonPositiveTaskFactorIs422(t *testing.T) {
 	srv := newLabourPlanServer(t)
-	seedPlanFixture(t, srv.Server)
+	seedPlanFixture(t, srv.Server, srv.paths)
 	for _, factor := range []any{0, -1.5} {
 		req := planBody(12000)
 		req["tasks_per_order"] = map[string]any{"PACK": factor}
