@@ -252,6 +252,7 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("DOCK_APPOINTMENT_CONSUMER_GROUP", "warehouse-planning-dock-appointments-e2e")
 	t.Setenv("OBSERVED_CAPACITY_CONSUMER_GROUP", "warehouse-planning-observed-capacity-e2e")
 	t.Setenv("LABOR_STANDARD_CONSUMER_GROUP", "warehouse-planning-labor-standards-e2e")
+	t.Setenv("PROCESS_FLOW_CONSUMER_GROUP", "warehouse-planning-process-flows-e2e")
 	t.Setenv("DEMAND_SITE_ID", siteID)
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")

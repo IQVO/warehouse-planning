@@ -140,6 +140,7 @@ func (s skillDTO) Summary() string { return s.summary }
 // cross the boundary.
 type pathCapacity struct {
 	PathID               string          `json:"pathId"`
+	Source               string          `json:"source"`
 	Location             string          `json:"location"`
 	WindowStart          string          `json:"windowStart"`
 	WindowEnd            string          `json:"windowEnd"`
@@ -169,6 +170,7 @@ func toPathCapacity(args pathCapacityArgs, start, end time.Time, result usecases
 	}
 	out := pathCapacity{
 		PathID:               args.PathID,
+		Source:               string(result.Source),
 		Location:             args.Location,
 		WindowStart:          start.UTC().Format(time.RFC3339),
 		WindowEnd:            end.UTC().Format(time.RFC3339),

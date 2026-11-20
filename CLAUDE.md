@@ -42,7 +42,8 @@ Study project: not production software.
    `order-management` (ADR 0004), arrive as Kafka events and live in local read
    models (ADR 0001). Labour standards from `labor-performance` (ADR 0022) and
    process flows from `process-path-management` (ADR 0025) arrive the same way;
-   until ADR 0025 is implemented this context owns its `ProcessPath`. Stock from
+   a flow wins over a locally declared `ProcessPath` of the same id (`source: flow`) until the
+   local declaration retires (ADR 0025 stages 2-3). Stock from
    `inventory-storage` is not capacity and is never read.
 6. **Station capacity is composed at READ time** (`stationCount x
    StationStandard`, ADR 0002; nothing derived is stored as a

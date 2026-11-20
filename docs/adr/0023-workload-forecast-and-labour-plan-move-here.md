@@ -12,6 +12,8 @@ its aggregates retire) and workforce-management ADR 0043 (it reads the published
 as the requirement). Adds two aggregates, three published types and new REST routes; nothing
 existing changes shape.
 
+Implemented (2026-11-19): PRs #142-#148 (see Implementation notes below) and #149.
+
 ## Context
 
 The planner's morning crosses three contexts today. The fleet's own warehouse-day simulation

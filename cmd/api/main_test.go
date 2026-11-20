@@ -28,6 +28,7 @@ func validEnv() map[string]string {
 		"DOCK_APPOINTMENT_CONSUMER_GROUP":  "g-dock",
 		"OBSERVED_CAPACITY_CONSUMER_GROUP": "g-observed",
 		"LABOR_STANDARD_CONSUMER_GROUP":    "g-labor-standards",
+		"PROCESS_FLOW_CONSUMER_GROUP":      "g-process-flows",
 		"DEMAND_SITE_ID":                   "SIM1",
 	}
 }
@@ -44,7 +45,7 @@ func TestLoadRuntime_AcceptsACompleteEnvironment(t *testing.T) {
 	if len(rt.brokers) != 2 || rt.brokers[1] != "kafka-2.invalid:9092" {
 		t.Errorf("brokers = %v, want two trimmed addresses", rt.brokers)
 	}
-	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" || rt.groups["DOCK_APPOINTMENT_CONSUMER_GROUP"] != "g-dock" || rt.groups["OBSERVED_CAPACITY_CONSUMER_GROUP"] != "g-observed" || rt.groups["LABOR_STANDARD_CONSUMER_GROUP"] != "g-labor-standards" {
+	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" || rt.groups["DOCK_APPOINTMENT_CONSUMER_GROUP"] != "g-dock" || rt.groups["OBSERVED_CAPACITY_CONSUMER_GROUP"] != "g-observed" || rt.groups["LABOR_STANDARD_CONSUMER_GROUP"] != "g-labor-standards" || rt.groups["PROCESS_FLOW_CONSUMER_GROUP"] != "g-process-flows" {
 		t.Errorf("groups = %v", rt.groups)
 	}
 	if rt.demandSiteID != "SIM1" {
@@ -78,6 +79,7 @@ func TestLoadRuntime_BootErrorsNameTheVariable(t *testing.T) {
 		{"no dock appointment group", func(e map[string]string) { delete(e, "DOCK_APPOINTMENT_CONSUMER_GROUP") }, "DOCK_APPOINTMENT_CONSUMER_GROUP"},
 		{"no observed capacity group", func(e map[string]string) { delete(e, "OBSERVED_CAPACITY_CONSUMER_GROUP") }, "OBSERVED_CAPACITY_CONSUMER_GROUP"},
 		{"no labor standard group", func(e map[string]string) { delete(e, "LABOR_STANDARD_CONSUMER_GROUP") }, "LABOR_STANDARD_CONSUMER_GROUP"},
+		{"no process flow group", func(e map[string]string) { delete(e, "PROCESS_FLOW_CONSUMER_GROUP") }, "PROCESS_FLOW_CONSUMER_GROUP"},
 		{"no demand site", func(e map[string]string) { delete(e, "DEMAND_SITE_ID") }, "DEMAND_SITE_ID"},
 	}
 	for _, tc := range cases {
@@ -155,6 +157,10 @@ func TestConsumerSpecs_OneConsumerPerRequiredGroup(t *testing.T) {
 	ls, ok := byEnv["LABOR_STANDARD_CONSUMER_GROUP"]
 	if !ok || ls.name != "labor-standards" || ls.topic != inboundkafka.LaborPerformanceTopic {
 		t.Fatalf("labor-standard consumer spec = %+v, want labor-standards on warehouse.labor-performance.events", ls)
+	}
+	pf, ok := byEnv["PROCESS_FLOW_CONSUMER_GROUP"]
+	if !ok || pf.name != "process-flows" || pf.topic != inboundkafka.ProcessPathManagementTopic {
+		t.Fatalf("process flow consumer spec = %+v, want process-flows on warehouse.process-path-management.events", pf)
 	}
 }
 

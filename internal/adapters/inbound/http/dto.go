@@ -41,12 +41,16 @@ type registerProcessPathRequest struct {
 	Steps []string `json:"steps"`
 }
 
-// processPathResponse is POST /process-paths' response body, echoing back
-// the registered path.
+// processPathResponse is the body of POST /process-paths (echoing back the
+// registered path), of GET /process-paths/{id} and of every item of
+// GET /process-paths. source is read-only and says where the path came from:
+// "flow" (a process flow consumed from process-path-management) or "local" (a
+// path declared with POST /process-paths); docs/adr/0025.
 type processPathResponse struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Steps []string `json:"steps"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Steps  []string `json:"steps"`
+	Source string   `json:"source"`
 }
 
 // processPathCapacityResponse is GET /process-paths/{id}/capacity's
@@ -56,7 +60,11 @@ type processPathResponse struct {
 // step_breakdown and warnings are additive (station capacity composition,
 // ADR 0002): each step's normalized rate (ORDER per HOUR) and the constraint
 // type binding it, and any composition warnings (never null).
+//
+// source (docs/adr/0025) is the read-only source of the path the capacity was
+// composed for: "flow" or "local".
 type processPathCapacityResponse struct {
+	Source         string              `json:"source"`
 	NormalizedRate float64             `json:"normalized_rate"`
 	NormalizedUnit string              `json:"normalized_unit"`
 	BottleneckStep string              `json:"bottleneck_step"`

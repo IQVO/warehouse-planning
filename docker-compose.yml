@@ -10,6 +10,7 @@
 #   export DOCK_APPOINTMENT_CONSUMER_GROUP=wp-local-$USER-dock-appointments
 #   export OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-$USER-observed-capacity
 #   export LABOR_STANDARD_CONSUMER_GROUP=wp-local-$USER-labor-standards
+#   export PROCESS_FLOW_CONSUMER_GROUP=wp-local-$USER-process-flows
 #   export DEMAND_SITE_ID=SIM1
 #   go run ./cmd/api
 #

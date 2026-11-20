@@ -102,6 +102,9 @@ type world struct {
 	// features_labour_test.go.
 	ls labourState
 
+	// pf holds the ADR 0025 state (the process flows copy); see
+	// features_flow_test.go.
+	pf flowState
 	// doc holds the documentation-derived steps' state; see
 	// steps_doc_rules_test.go.
 	doc docRulesState
@@ -116,7 +119,11 @@ func (w *world) start() {
 	standards, tallyRepo, processed := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo(), memory.NewProcessedEventRepo()
 	uow := memory.NewUnitOfWork(repo, planRepo, outboxRepo)
 	encoder := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
+	// ADR 0025: a process flow resolves a path id before the locally declared
+	// path, as cmd/api wires it.
+	w.pf = newFlowState()
+	pathFinder := &usecases.FlowFirstPathFinder{Flows: w.pf.flows, Local: pathRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathFinder, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
 	w.facility = &inboundkafka.StorageCapacityConsumer{
 		Tally: tallyRepo, ProcessedEvents: processed, UoW: memory.NewUnitOfWork(tallyRepo, processed),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -163,7 +170,8 @@ func (w *world) start() {
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:       planRepo,
-		ListProcessPaths:    &usecases.ListProcessPaths{Paths: pathRepo},
+		ListProcessPaths:    &usecases.ListProcessPaths{Paths: &usecases.FlowFirstPathLister{Flows: w.pf.flows, Local: pathRepo}},
+		GetProcessPath:      &usecases.GetProcessPath{Paths: pathFinder},
 		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: planRepo},
 		// ADR 0024 decision 4, as cmd/api wires it.
 		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: planRepo},
@@ -716,6 +724,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerWave2Steps(sc, w)
 	registerInboundObservedSteps(sc, w)
 	registerLabourSteps(sc, w)
+	registerFlowSteps(sc, w)
 	registerRequirementSteps(sc, w)
 	registerScenarioSteps(sc, w)
 	registerSupersedeSteps(sc, w)

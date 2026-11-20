@@ -36,7 +36,9 @@ are flagged in the last column.
 | **DemandSource** | Where the assigned demand came from: `request` or `orders`. | `capacityplan.DemandSource` (`DemandSourceRequest`, `DemandSourceOrders`) | no |
 | **Capacity over window** | Path capacity (ORDER per hour) times the window's hours. | `CapacityPlan.CapacityOverWindow()`; JSON `capacity_over_window` | no |
 | **Shortage** | `max(0, assigned demand - capacity over window)`, in orders. Equal is not a shortage. | `CapacityPlan.Shortage()` | no |
-| **Bottleneck** | The process-path step limiting end-to-end flow, and the constraint type binding it. | `PathCapacityResult.BottleneckStep`; `CapacityPlan.BottleneckStep()`; event `BottleneckDetected` | no |
+| **Bottleneck** | The process-path step limiting end-to-end flow, and the constraint type binding it. |
+| **Process flow** | An ordered sequence of `path_id` + `process_type` stages owned by `process-path-management` (its ADR 0042); this context keeps an event-fed copy (`process_flows`, ADR 0025) and a flow's steps are its stages' `process_type` values in order. | `processflow.Flow`; table `process_flows` |
+| **Path source** | Which of the two coexisting declarations a read resolved: `flow` (an ACTIVE flow won) or `local` (the local `POST /process-paths` declaration). Until ADR 0025 stage 2. | `ProcessPath.Source`; JSON `source` | `PathCapacityResult.BottleneckStep`; `CapacityPlan.BottleneckStep()`; event `BottleneckDetected` | no |
 | **Expected demand** | Orders order-management has promised at a site, counted by promise cutoff in `[start, end)`. Zero orders means *no data*. | `demand.Order`, `demand.Summary`, `GetExpectedDemand`; table `order_demand` | no |
 | **Promise cutoff** | The instant by which an order is promised; decides which window it counts in. | `demand.Order.PromiseAt()`; upstream `promise_date` | **yes**: `promise_date` upstream, `promise_at` here |
 | **Released lines** | Lines released by an order's latest allocation pass. NOT units. | `demand.Order.ReleasedLines()`; JSON `released_lines` | no |

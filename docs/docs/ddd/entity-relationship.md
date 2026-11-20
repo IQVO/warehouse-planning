@@ -193,7 +193,7 @@ erDiagram
 ```
 
 Source: `internal/adapters/outbound/postgres/migrations/0001_process_capacity.up.sql`
-through `0017_capacity_plan_superseded.up.sql`, `internal/adapters/outbound/postgres/migrate.go`.
+through `0017_capacity_plan_superseded.up.sql` and `0018_process_flows.up.sql` (the `process_flows` copy of ADR 0025), `internal/adapters/outbound/postgres/migrate.go`.
 Omits: the indexes (`idx_capacity_plans_warehouse_window`,
 `idx_outbox_events_unpublished` partial on `published_at IS NULL`,
 `idx_order_demand_location_promise`, `idx_inbound_appointments_location_window`

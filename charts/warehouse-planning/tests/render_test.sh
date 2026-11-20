@@ -13,7 +13,8 @@ base=(--set database.url=postgres://u@example.invalid:5432/db
   --set config.laborCapacityConsumerGroup=g-labor --set config.storageCapacityConsumerGroup=g-storage
   --set demand.consumerGroup=g-demand --set demand.siteId=SIM1
   --set dockAppointments.consumerGroup=g-dock --set observed.consumerGroup=g-observed
-  --set laborStandard.consumerGroup=g-labor-standards)
+  --set laborStandard.consumerGroup=g-labor-standards
+  --set processFlow.consumerGroup=g-process-flows)
 analytics=(--set analytics.enabled=true --set analytics.projector.consumerGroup=g-analytics
   --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a
   --set analytics.database.reportsUrl=postgres://reports@example.invalid:5432/a)
@@ -125,6 +126,9 @@ refuse_without observed.consumerGroup "OBSERVED_CAPACITY_CONSUMER_GROUP"
 # ADR 0022: laborStandard.consumerGroup has a chart default (warehouse-infra's
 # pin), so dropping the --set still renders; an EMPTY value is refused.
 refuses "laborStandard.consumerGroup is required (LABOR_STANDARD_CONSUMER_GROUP)" "${base[@]}" --set laborStandard.consumerGroup=
+# ADR 0025: processFlow.consumerGroup likewise has a chart default; an EMPTY value
+# (the chart rendered without it) is refused, naming the variable.
+refuses "processFlow.consumerGroup is required (PROCESS_FLOW_CONSUMER_GROUP)" "${base[@]}" --set processFlow.consumerGroup=
 # ADR 0020: the retired inbound-receiving source fails loudly, as a values key and
 # as an extraEnv entry, whether or not the new group is set.
 refuses "inbound.consumerGroup is set" "${base[@]}" --set inbound.consumerGroup=g-inbound
@@ -164,7 +168,7 @@ done
 if helm template "$release" "$chart_dir" "${base[@]}" --show-only templates/a2a-deployment.yaml 2>/dev/null | grep -q 'kind: Deployment'; then fail "the a2a Deployment rendered with default values"; fi
 
 # The api always gets the mandatory env, whatever the values (no conditional env).
-for env in KAFKA_BROKERS DEMAND_CONSUMER_GROUP DEMAND_SITE_ID LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP DOCK_APPOINTMENT_CONSUMER_GROUP OBSERVED_CAPACITY_CONSUMER_GROUP LABOR_STANDARD_CONSUMER_GROUP EVENT_PUBLISHER DATABASE_URL; do
+for env in KAFKA_BROKERS DEMAND_CONSUMER_GROUP DEMAND_SITE_ID LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP DOCK_APPOINTMENT_CONSUMER_GROUP OBSERVED_CAPACITY_CONSUMER_GROUP LABOR_STANDARD_CONSUMER_GROUP PROCESS_FLOW_CONSUMER_GROUP EVENT_PUBLISHER DATABASE_URL; do
   grep -q "name: $env\$" <<<"$api_deployment" || fail "the api Deployment does not set $env"
 done
 grep -A1 'name: EVENT_PUBLISHER' <<<"$api_deployment" | grep -q 'value: "kafka"' || fail "EVENT_PUBLISHER must default to kafka"
@@ -186,6 +190,15 @@ while IFS= read -r line; do labor_default_args+=("$line"); done < <(without labo
 labor_default="$(helm template "$release" "$chart_dir" "${labor_default_args[@]}" --show-only templates/deployment.yaml)"
 [[ "$(env_value "$labor_default" LABOR_STANDARD_CONSUMER_GROUP || true)" == "warehouse-planning-labor-standards" ]] \
   || fail "laborStandard.consumerGroup must default to warehouse-infra's pin warehouse-planning-labor-standards"
+# ADR 0025: the process flow consumer group comes from processFlow.consumerGroup, with
+# the same default rule.
+[[ "$(env_value "$api_deployment" PROCESS_FLOW_CONSUMER_GROUP || true)" == "g-process-flows" ]] \
+  || fail "PROCESS_FLOW_CONSUMER_GROUP does not come from processFlow.consumerGroup"
+flow_default_args=()
+while IFS= read -r line; do flow_default_args+=("$line"); done < <(without processFlow.consumerGroup)
+flow_default="$(helm template "$release" "$chart_dir" "${flow_default_args[@]}" --show-only templates/deployment.yaml)"
+[[ "$(env_value "$flow_default" PROCESS_FLOW_CONSUMER_GROUP || true)" == "warehouse-planning-process-flows" ]] \
+  || fail "processFlow.consumerGroup must default to warehouse-infra's pin warehouse-planning-process-flows"
 
 # warehouse-infra's CURRENT values (verbatim copies, refreshed from its
 # origin/develop) still render and provide every env the binaries require.
@@ -193,11 +206,13 @@ infra=(-f "$chart_dir/tests/warehouse-infra-platform-values.yaml" -f "$chart_dir
   -f "$chart_dir/tests/warehouse-infra-kind-resources-values.yaml" --set image.tag=local-test)
 infra_api="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/deployment.yaml)" \
   || fail "the chart does not render with warehouse-infra's current values"
-for env in DATABASE_URL KAFKA_BROKERS EVENT_PUBLISHER LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP DEMAND_CONSUMER_GROUP DEMAND_SITE_ID DOCK_APPOINTMENT_CONSUMER_GROUP OBSERVED_CAPACITY_CONSUMER_GROUP LABOR_STANDARD_CONSUMER_GROUP; do
+for env in DATABASE_URL KAFKA_BROKERS EVENT_PUBLISHER LABOR_CAPACITY_CONSUMER_GROUP STORAGE_CAPACITY_CONSUMER_GROUP DEMAND_CONSUMER_GROUP DEMAND_SITE_ID DOCK_APPOINTMENT_CONSUMER_GROUP OBSERVED_CAPACITY_CONSUMER_GROUP LABOR_STANDARD_CONSUMER_GROUP PROCESS_FLOW_CONSUMER_GROUP; do
   grep -q "name: $env\$" <<<"$infra_api" || fail "warehouse-infra's values do not provide $env to the api"
 done
 [[ "$(env_value "$infra_api" LABOR_STANDARD_CONSUMER_GROUP || true)" == "warehouse-planning-labor-standards" ]] \
   || fail "warehouse-infra's laborStandard.consumerGroup pin does not reach LABOR_STANDARD_CONSUMER_GROUP"
+[[ "$(env_value "$infra_api" PROCESS_FLOW_CONSUMER_GROUP || true)" == "warehouse-planning-process-flows" ]] \
+  || fail "warehouse-infra's processFlow.consumerGroup pin does not reach PROCESS_FLOW_CONSUMER_GROUP"
 grep -A1 'name: KAFKA_BROKERS' <<<"$infra_api" | grep -q 'value: "kafka.warehouse-systems.svc.cluster.local:9092"' \
   || fail "KAFKA_BROKERS does not come from the platform brokers"
 infra_projector="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/projector-deployment.yaml)" \

@@ -44,16 +44,17 @@ flowchart LR
   WP -- "U: OHS+PL / D: ACL<br/>Kafka LabourPlanCommitted (ADR 0023)" --> WFMD
   WP -- "U: OHS / D: Customer, ACL<br/>MCP get_process_path_capacity, 3 more read tools wired" --> OPS
   WP -- "U: OHS / D: hosts the remote<br/>REST via capacity_mfe" --> CON
-  PPM ~~~ WP
+  PPM -- "U: OHS+PL / D: ACL, always on<br/>Kafka ProcessFlowDefined, Revised, Retired (ADR 0025)" --> WP
   INV ~~~ WP
   PM ~~~ WP
   LATER ~~~ WP
 
   classDef absent fill:#eeeeee,stroke:#999999,color:#555555,stroke-dasharray: 4 4
-  class PPM,INV,PM,LATER absent
+  class INV,PM,LATER absent
 ```
 
-Source: `internal/adapters/inbound/kafka/labor_capacity_consumer.go`,
+Source: `internal/adapters/inbound/kafka/process_flow_consumer.go`,
+`labor_capacity_consumer.go`,
 `storage_capacity_consumer.go`, `order_demand_consumer.go`,
 `internal/adapters/outbound/kafka/encoder.go`, `cmd/api/main.go`,
 `cmd/api/runtime.go`, `internal/adapters/inbound/mcp/tools.go`, `web/src/api.ts`,
@@ -81,7 +82,7 @@ and path plan to this context (ADR 0023, its ADR 0049) and keeps execution.
 | 5b | `fulfillment-execution` | `warehouse-planning` | OHS + PL / ACL: a completion becomes a minute bucket of `observed_capacity` (location, upper-cased `task_type`); advisory only, never feeds a plan back | Kafka `warehouse.fulfillment.events`, `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | **Live, always on** (ADR 0017): `OBSERVED_CAPACITY_CONSUMER_GROUP` required at boot | `internal/adapters/inbound/kafka/observed_capacity_consumer.go`, `cmd/api/runtime.go` |
 | 5 | `warehouse-planning` | `warehouse-ops-agent` | OHS / Customer with an ACL (its MCP client adapter) | MCP Streamable HTTP, read tools only | **Live** for `get_process_path_capacity` (the agent's daily-brief capacity outlook); `get_capacity_plan`, `get_storage_capacity`, `list_station_standards` **wired but unused** (its ADR 0013) | `internal/adapters/inbound/mcp/tools.go`; ops-agent `internal/adapters/outbound/mcpclient/warehouse_planning.go` |
 | 6 | `warehouse-planning` | `warehouse-console` | OHS; the console only hosts this context's own Module Federation remote `capacity_mfe`, which calls this service's REST API through Kong | REST (`/api/warehouse-planning`) | **Live** | `web/src/api.ts`, `web/vite.config.ts`; console `src/App.tsx` |
-| 7 | `process-path-management` | none | **Separate Ways**: its `ProcessPath` has no physical step sequence; the two contexts share the `path_id` string only as a human cross-reference | none | **Deliberately absent** (ADR 0001 Addendum) | no consumer exists; `POST /process-paths` declares paths locally |
+| 7 | `process-path-management` | `warehouse.process-path-management.events`: `ProcessFlowDefined`, `ProcessFlowRevised`, `ProcessFlowRetired` (each the FULL flow state with a `version`) | **Customer/Supplier with an anti-corruption layer**: the consumer translates a flow's stages into this context's ordered steps; a message applies only when its `version` is greater than the stored one | Kafka consumer `ProcessFlowConsumer` (`PROCESS_FLOW_CONSUMER_GROUP`, required; the `process_flows` copy) | **Live, always on** (ADR 0025 stage 1; stages 2-3 decided, not built: the local `POST /process-paths` retires once every local path has a flow) | `internal/adapters/inbound/kafka/process_flow_consumer.go`, `cmd/api/runtime.go` |
 | 8 | `inventory-storage` | none | **Separate Ways**: stock is not capacity | none | **Deliberately absent** (ADR 0001) | no consumer, no client |
 | 9 | `fulfillment-execution`, `wes-work-planning` (observed capacity), `network-fulfillment` (demand) | `warehouse-planning` | Published Language intended | Kafka (intended) | **Planned, not implemented** (ADR 0001 context map) | none |
 | 10 | `product-master` | none | No relationship: SKU master data (handling classification, unit dimensions and weight) is not a capacity input; `product-master` publishes `warehouse.product-master.events` and calls no sibling | none | **Absent** | no consumer of `warehouse.product-master.events` and no client in this repo; `product-master` (its ADR 0001) has no outbound client and consumes nothing from this context |

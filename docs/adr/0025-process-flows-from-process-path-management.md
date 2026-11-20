@@ -12,6 +12,9 @@ Producer side: process-path-management ADR 0042 (the `ProcessFlow` aggregate). S
 [ADR 0001](0001-warehouse-planning-bounded-context.md) (2026-10-03) and amends hard rule 5 of
 `CLAUDE.md`. Implemented after ADR 0022 to ADR 0024.
 
+Stage 1 implemented (2026-11-20): PR #156 (migration `0018`). Stages 2 and 3 are decided,
+not built: the 410 waits on the live cluster check that every local path has a flow.
+
 ## Context
 
 This context's `ProcessPath` is an ordered list of process types (`PICK -> REBIN -> PACK`)

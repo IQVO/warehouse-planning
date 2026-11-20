@@ -237,6 +237,20 @@ laborStandard:
   # starts from the earliest retained message and rebuilds the copy.
   consumerGroup: "warehouse-planning-labor-standards"
 
+# Process flow consumer (docs/adr/0025): process-path-management's
+# ProcessFlowDefined / ProcessFlowRevised / ProcessFlowRetired events
+# (warehouse.process-path-management.events, its INTEGRATION topic) into the
+# local copy of the process flows the path capacity resolves a path id from
+# (flows first, the locally declared path as the fallback). ALWAYS on
+# (docs/adr/0016): the chart refuses to render while the value is empty. Like
+# laborStandard it has a DEFAULT, equal to the id warehouse-infra pins, so the
+# chart keeps rendering on an ArgoCD sync that lands before the infra values do.
+processFlow:
+  # PROCESS_FLOW_CONSUMER_GROUP: a STABLE Kafka consumer group id
+  # (warehouse-infra pins "warehouse-planning-process-flows"). A new group
+  # starts from the earliest retained message and rebuilds the copy.
+  consumerGroup: "warehouse-planning-process-flows"
+
 # The chart refuses to render unless database.url or database.existingSecret
 # is set (templates/_helpers.tpl: warehouse-planning.requireDatabase): the
 # service runs on real Postgres only (docs/adr/0016).

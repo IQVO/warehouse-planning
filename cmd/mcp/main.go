@@ -147,6 +147,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 		inboundStandards:    postgres.NewInboundStandardRepo(pool),
 		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
 		laborStandards:      postgres.NewLaborStandardRepo(pool),
+		processFlows:        postgres.NewProcessFlowRepo(pool),
 		workloadForecasts:   postgres.NewWorkloadForecastRepo(pool),
 	})
 	if err != nil {
@@ -178,6 +179,11 @@ type repositories struct {
 	// only here (cmd/mcp never starts a consumer).
 	laborStandards ports.LaborStandardRepository
 
+	// processFlows is the local copy of process-path-management's process flows
+	// (ADR 0025): read-only here, the consumer runs in cmd/api only. A flow
+	// resolves a path id before the locally declared path.
+	processFlows ports.ProcessFlowRepository
+
 	// ADR 0024: the workload forecasts a demand_source forecast reads (read
 	// only here; cmd/api's PUT /workload-forecasts writes them).
 	workloadForecasts ports.WorkloadForecastRepository
@@ -187,7 +193,8 @@ type repositories struct {
 // uses) over r.
 func newDeps(r repositories) (inboundmcp.Deps, error) {
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: r.processPaths, ProcessCapacities: r.processCapacities, StationStandards: r.standards, Tally: r.tally,
+		ProcessPaths:      &usecases.FlowFirstPathFinder{Flows: r.processFlows, Local: r.processPaths},
+		ProcessCapacities: r.processCapacities, StationStandards: r.standards, Tally: r.tally,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: r.demand}
 	inboundDemand := &usecases.GetInboundDemand{Appointments: r.inboundAppointments, Standards: r.inboundStandards}

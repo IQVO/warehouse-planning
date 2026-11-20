@@ -165,13 +165,14 @@ facts (one pinned consumer group each; DLQ at `<topic>.dlq`):
 | `warehouse.dock-scheduling.events` | `DockAppointmentBooked`, `DockAppointmentRescheduled`, `DockAppointmentCancelled`, `DockAppointmentNoShow` | `DOCK_APPOINTMENT_CONSUMER_GROUP` | inbound demand read model |
 | `warehouse.fulfillment.events` | `TaskCompleted` | `OBSERVED_CAPACITY_CONSUMER_GROUP` | observed-capacity buckets |
 | `warehouse.labor-performance.events` | `LaborStandardDefined`, `LaborStandardRevised` (ADR 0022) | `LABOR_STANDARD_CONSUMER_GROUP` (chart default `warehouse-planning-labor-standards`) | the `labor_standards` copy |
+| `warehouse.process-path-management.events` | `ProcessFlowDefined`, `ProcessFlowRevised`, `ProcessFlowRetired` (ADR 0025) | `PROCESS_FLOW_CONSUMER_GROUP` (chart default `warehouse-planning-process-flows`) | the `process_flows` copy; a message applies only when its `version` is greater than the stored one |
 
 The projector consumes `warehouse.warehouse-planning.analytics` under
 `ANALYTICS_CONSUMER_GROUP`.
 
 ### Requirement-side tables
 
-Added by the OLTP migrations of ADR 0022 and ADR 0023 (all additive):
+Added by the OLTP migrations of ADR 0022, ADR 0023 and ADR 0025 (all additive):
 
 | Migration | Table / column | One row per | Holds |
 |---|---|---|---|
@@ -190,8 +191,8 @@ there is no in-memory mode, and `cmd/api` exits at boot, naming every
 missing variable, unless `DATABASE_URL`, `KAFKA_BROKERS`,
 `LABOR_CAPACITY_CONSUMER_GROUP`, `STORAGE_CAPACITY_CONSUMER_GROUP`,
 `DEMAND_CONSUMER_GROUP`, `DOCK_APPOINTMENT_CONSUMER_GROUP`,
-`OBSERVED_CAPACITY_CONSUMER_GROUP`, `LABOR_STANDARD_CONSUMER_GROUP` and
-`DEMAND_SITE_ID` are set
+`OBSERVED_CAPACITY_CONSUMER_GROUP`, `LABOR_STANDARD_CONSUMER_GROUP`,
+`PROCESS_FLOW_CONSUMER_GROUP` and `DEMAND_SITE_ID` are set
 (`EVENT_PUBLISHER=log` is refused, and so is the retired
 `INBOUND_DEMAND_CONSUMER_GROUP` of the old inbound-receiving appointment source, ADR 0020).
 
@@ -200,7 +201,7 @@ docker compose up -d --wait   # Postgres :55432 (planning/planning/planning) + K
                               # (KAFKA_HOST_PORT=19092 picks a free broker port)
 export DATABASE_URL='postgres://planning:planning@localhost:55432/planning?sslmode=disable'
 export KAFKA_BROKERS=localhost:9092 DEMAND_SITE_ID=SIM1
-export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-storage DEMAND_CONSUMER_GROUP=wp-local-demand DOCK_APPOINTMENT_CONSUMER_GROUP=wp-local-dock-appointments OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-observed-capacity LABOR_STANDARD_CONSUMER_GROUP=wp-local-labor-standards
+export LABOR_CAPACITY_CONSUMER_GROUP=wp-local-labor STORAGE_CAPACITY_CONSUMER_GROUP=wp-local-storage DEMAND_CONSUMER_GROUP=wp-local-demand DOCK_APPOINTMENT_CONSUMER_GROUP=wp-local-dock-appointments OBSERVED_CAPACITY_CONSUMER_GROUP=wp-local-observed-capacity LABOR_STANDARD_CONSUMER_GROUP=wp-local-labor-standards PROCESS_FLOW_CONSUMER_GROUP=wp-local-process-flows
 go run ./cmd/api              # migrations run automatically at startup; listens on :8080
 ```
 
@@ -221,6 +222,7 @@ go run ./cmd/api              # migrations run automatically at startup; listens
 | `INBOUND_DEMAND_CONSUMER_GROUP` | **refused** | retired with inbound-receiving as the appointment source (ADR 0020): setting it is a boot error naming `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 | `OBSERVED_CAPACITY_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.fulfillment.events` (ADR 0017) |
 | `LABOR_STANDARD_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.labor-performance.events` (ADR 0022; chart default `warehouse-planning-labor-standards`) |
+| `PROCESS_FLOW_CONSUMER_GROUP` | **required** | pinned group id on `warehouse.process-path-management.events` (ADR 0025; chart default `warehouse-planning-process-flows`) |
 | `DEMAND_SITE_ID` | **required** | the fallback site for consumed orders whose event carries no `site_id` (ADR 0021), and the one site every task completion is attributed to (those events carry no site); dock appointments carry their own `site_id` |
 | `EVENT_PUBLISHER` | *(unset = `kafka`)* | only `kafka` is accepted; `log` is refused at boot (ADR 0016) |
 | `HTTP_ADDR` | `:8080` | REST listen address |
@@ -351,8 +353,9 @@ Read side (`cmd/api`, `:8080`):
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/process-capacities` | GetEffectiveProcessCapacity (the composed effective capacity) |
-| `GET` | `/process-paths` | ListProcessPaths (the read the console remote uses) |
-| `GET` | `/process-paths/{id}/capacity` | GetProcessPathCapacity |
+| `GET` | `/process-paths` | ListProcessPaths (the read the console remote uses; each item carries `source: flow\|local`, a flow shadowing its local twin, ADR 0025) |
+| `GET` | `/process-paths/{id}` | GetProcessPath (additive, ADR 0025: the resolved path and its `source`) |
+| `GET` | `/process-paths/{id}/capacity` | GetProcessPathCapacity (resolves an ACTIVE flow first, ADR 0025) |
 | `GET` | `/capacity-plans?location=&limit=` | ListCapacityPlans (newest first, keyset page `{items,nextCursor}`, `limit` default 100, max 500 — the read the console remote uses) |
 | `GET` | `/capacity-plans/{id}` | GetCapacityPlan |
 | `GET` | `/capacity-plans/{id}/variance` | GetCapacityPlanVariance |
