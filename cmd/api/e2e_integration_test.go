@@ -22,6 +22,10 @@ import (
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 // The end-to-end proof that the shipped binary is really wired: the test boots
@@ -471,6 +475,24 @@ type world struct {
 	planID  string
 }
 
+// seedLocalPath declares a local ProcessPath through the use case over the
+// real database: ADR 0025 stage 2 retired POST /process-paths (always 410).
+func (w *world) seedLocalPath(t *testing.T, id, name string, steps ...string) {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(), w.e.dbURL)
+	if err != nil {
+		t.Fatalf("seed pool: %v", err)
+	}
+	defer pool.Close()
+	typed := make([]processpath.ProcessType, 0, len(steps))
+	for _, s := range steps {
+		typed = append(typed, processpath.ProcessType(s))
+	}
+	if _, err := (&usecases.RegisterProcessPath{Repo: postgres.NewProcessPathRepo(pool)}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: name, Steps: typed}); err != nil {
+		t.Fatalf("seed path %s: %v", id, err)
+	}
+}
+
 // Phase 1: the output topics do not exist yet (a fresh cluster before
 // anything published). Readiness needs Postgres plus a broker answering
 // metadata, NOT topics, so the service is ready at once, and it creates no
@@ -664,7 +686,7 @@ func phaseVariance(t *testing.T, s *service, w *world) {
 // is tiny), publish it.
 func phaseWorkflow(t *testing.T, s *service, w *world) {
 	t.Helper()
-	s.call(http.MethodPost, "/process-paths", `{"id":"pick-only","name":"Pick","steps":["PICK"]}`, http.StatusCreated)
+	w.seedLocalPath(t, "pick-only", "Pick", "PICK")
 	var dem struct {
 		Orders        int `json:"orders"`
 		ReleasedLines int `json:"released_lines"`
@@ -713,7 +735,10 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 func phaseNUL(t *testing.T, s *service, w *world) {
 	t.Helper()
 	before := w.db.count(`SELECT count(*) FROM process_paths`)
-	assertProblem(t, s.call(http.MethodPost, "/process-paths", `{"id":"p-nul","name":"a\u0000b","steps":["PICK"]}`, http.StatusBadRequest), "malformed-request-body")
+	// The route answers 410 for any body since ADR 0025 stage 2 (nothing is
+	// decoded), so a NUL in the body never reaches the DB guard here; the
+	// query-path legs below still cover it.
+	assertProblem(t, s.call(http.MethodPost, "/process-paths", `{"id":"p-nul","name":"a\u0000b","steps":["PICK"]}`, http.StatusGone), "process-path-moved")
 	assertProblem(t, s.call(http.MethodGet, "/capacity-plans/pl%00an", "", http.StatusNotFound), "resource-not-found")
 	assertProblem(t, s.call(http.MethodGet, "/storage-capacity?location=WH%001", "", http.StatusBadRequest), "malformed-request-query")
 	if after := w.db.count(`SELECT count(*) FROM process_paths`); after != before {

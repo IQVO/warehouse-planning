@@ -27,6 +27,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 	"github.com/claudioed/warehouse-planning/internal/domain/demand"
 )
 
@@ -158,8 +159,12 @@ func TestOrderDemandConsumer_Integration_RealKafkaAndPostgres_PlanPicksUpTheDema
 			t.Fatalf("register capacity: %d %v", status, body)
 		}
 	}
-	if status, body := httpDo(t, http.MethodPost, server.URL+"/process-paths", map[string]any{"id": "pick-only", "name": "Pick", "steps": []string{"PICK"}}); status != http.StatusCreated {
-		t.Fatalf("register path: %d %v", status, body)
+	// ADR 0025 stage 2 retired POST /process-paths; seed the local path
+	// through the use case over the same pool.
+	if _, err := (&usecases.RegisterProcessPath{Repo: postgres.NewProcessPathRepo(fx.pool)}).Handle(context.Background(), usecases.RegisterProcessPathCommand{
+		ID: "pick-only", Name: "Pick", Steps: []processpath.ProcessType{"PICK"},
+	}); err != nil {
+		t.Fatalf("seed path: %v", err)
 	}
 
 	planBody := map[string]any{

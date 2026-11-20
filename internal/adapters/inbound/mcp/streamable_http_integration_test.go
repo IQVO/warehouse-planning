@@ -37,7 +37,9 @@ import (
 	mcpadapter "github.com/claudioed/warehouse-planning/internal/adapters/inbound/mcp"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 // itTemplateDB is the once-migrated template every test clones, so the
@@ -150,7 +152,7 @@ func (h *itHarness) seedITPath(t *testing.T, id string, steps []string) {
 	t.Helper()
 	typed := make([]processpath.ProcessType, 0, len(steps))
 	for _, s := range steps {
-		typed = append(t, processpath.ProcessType(s))
+		typed = append(typed, processpath.ProcessType(s))
 	}
 	if _, err := (&usecases.RegisterProcessPath{Repo: h.pathRepo}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: id, Steps: typed}); err != nil {
 		t.Fatal(err)

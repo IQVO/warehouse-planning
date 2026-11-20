@@ -38,7 +38,9 @@ import (
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 // httpTemplateDB is the once-migrated template every test clones.
@@ -138,6 +140,14 @@ func httpMigratedDB(t *testing.T) string {
 // exactly like cmd/api's buildServer, and serves it over httptest.
 func newPostgresRouter(t *testing.T) *httptest.Server {
 	t.Helper()
+	srv, _ := newPostgresRouterWithPaths(t)
+	return srv
+}
+
+// newPostgresRouterWithPaths also returns the path repo so tests can seed the
+// local declaration directly (ADR 0025 stage 2 retired POST /process-paths).
+func newPostgresRouterWithPaths(t *testing.T) (*httptest.Server, ports.ProcessPathRepository) {
+	t.Helper()
 	ctx := context.Background()
 	pool, err := postgres.NewPool(ctx, httpMigratedDB(t))
 	if err != nil {
@@ -179,7 +189,7 @@ func newPostgresRouter(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, paths
 }
 
 // itPost posts a JSON body and returns status + body.
@@ -243,7 +253,7 @@ func itProblemSlug(t *testing.T, body []byte) string {
 // back (GET -> 200 round trip), create a DRAFT plan, publish it, and read
 // the PUBLISHED state back — plus the outbox rows the writes queued.
 func TestHTTP_Postgres_ResourceLifecycleRoundTrip(t *testing.T) {
-	srv := newPostgresRouter(t)
+	srv, pathRepo := newPostgresRouterWithPaths(t)
 	const start, end = "2026-10-05T08:00:00Z", "2026-10-05T16:00:00Z"
 	const loc = "IT-HTTP-LOC"
 
@@ -289,12 +299,12 @@ func TestHTTP_Postgres_ResourceLifecycleRoundTrip(t *testing.T) {
 		t.Fatalf("effective capacity round trip = %+v", eff)
 	}
 
-	// POST the path, then read its capacity through the composed read.
-	status, body = itPost(t, srv, "/process-paths", map[string]any{
-		"id": "pick-rebin-pack", "name": "Pick-Rebin-Pack", "steps": []string{"PICK", "REBIN", "PACK"},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("register path: %d %s", status, body)
+	// Seed the local path (ADR 0025 stage 2 retired the POST), then read its
+	// capacity through the composed read.
+	if _, err := (&usecases.RegisterProcessPath{Repo: pathRepo}).Handle(context.Background(), usecases.RegisterProcessPathCommand{
+		ID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"},
+	}); err != nil {
+		t.Fatalf("seed path: %v", err)
 	}
 	status, body = itGet(t, srv, "/process-paths/pick-rebin-pack/capacity?location="+loc+
 		"&window_start="+start+"&window_end="+end+"&units_per_order=2.5&packages_per_order=1")
@@ -361,17 +371,9 @@ func TestHTTP_Postgres_ValidationRejectionsUseProblemSlugs(t *testing.T) {
 		status int
 		slug   string
 	}{
-		{"malformed json", func() (int, []byte) {
-			resp, err := keyedHTTPPost(srv.URL+"/process-paths", "{not json")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			return resp.StatusCode, readAll(t, resp)
-		}, http.StatusBadRequest, "malformed-json"},
-		{"empty steps", func() (int, []byte) {
+		{"retired declaration (any body)", func() (int, []byte) {
 			return itPost(t, srv, "/process-paths", map[string]any{"id": "x", "name": "X", "steps": []string{}})
-		}, http.StatusUnprocessableEntity, "empty-process-path-steps"},
+		}, http.StatusGone, "process-path-moved"},
 		{"invalid window", func() (int, []byte) {
 			return itPost(t, srv, "/process-capacities", map[string]any{
 				"process_type": "PICK", "location": "L", "window_start": "2026-10-05T16:00:00Z",
