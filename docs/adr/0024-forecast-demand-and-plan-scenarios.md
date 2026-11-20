@@ -12,10 +12,12 @@ plan lifecycle of [ADR 0001](0001-warehouse-planning-bounded-context.md). Builds
 `WorkloadForecast` of [ADR 0023](0023-workload-forecast-and-labour-plan-move-here.md). Adds one
 published type; existing types and fields are unchanged.
 
-Implementation: decisions 1, 2 and 4 in PR #151 (migration `0016`); decision 3 in PR #153
-(migration `0017`), after order-management consumes `CapacityPlanSuperseded` (its ADR 0052,
-merged). Decision 5's check found network-inventory-planning keeping the newest published plan
-per site, and order-management keeping every published plan, hence its ADR 0052.
+Implemented in full (2026-11-19): decisions 1, 2 and 4 in PR #151 (migration `0016`); decision 3 in
+PR #153 (migration `0017`), after order-management consumed `CapacityPlanSuperseded` (its ADR
+0052). Decision 5's check found network-inventory-planning keeping the newest published plan per
+site, and order-management keeping every published plan, hence its ADR 0052. The same check also
+found order-management matching plans by `location`; its ADR 0053 matches by the plan's `site_id`
+when it has one (`CapacityPlanPublished` carries it, ADR 0012), else by `location`.
 
 ## Context
 
