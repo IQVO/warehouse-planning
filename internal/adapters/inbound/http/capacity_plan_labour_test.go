@@ -20,7 +20,7 @@ import (
 // (docs/adr/0022): PACK 90 s for every site, PICK 12 s scoped to SIM1.
 func newLabourPlanServer(t *testing.T) *planServer {
 	t.Helper()
-	pcs, paths, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	pcs, flows, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
 	enc := outboundkafka.NewEncoder()
 	standards := memory.NewLaborStandardRepo()
@@ -37,11 +37,10 @@ func newLabourPlanServer(t *testing.T) *planServer {
 			t.Fatal(err)
 		}
 	}
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow,
@@ -52,7 +51,7 @@ func newLabourPlanServer(t *testing.T) *planServer {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return &planServer{Server: srv, outbox: ob, paths: paths}
+	return &planServer{Server: srv, outbox: ob, flows: flows}
 }
 
 type labourItemJSON struct {
@@ -84,7 +83,7 @@ func strptr(s string) *string { return &s }
 
 func TestHandler_CapacityPlan_LabourRequirementPerStep(t *testing.T) {
 	srv := newLabourPlanServer(t)
-	seedPlanFixture(t, srv.Server, srv.paths)
+	seedPlanFixture(t, srv.Server, srv.flows)
 	req := planBody(12000)
 	req["tasks_per_order"] = map[string]any{"PICK": 3, "PACK": 1}
 	status, _, body := postJSON(t, srv.Server, "/capacity-plans", req)
@@ -113,7 +112,7 @@ func TestHandler_CapacityPlan_LabourRequirementPerStep(t *testing.T) {
 
 func TestHandler_CapacityPlan_WithoutFactorsEveryStepSaysWhyItIsUnknown(t *testing.T) {
 	srv := newLabourPlanServer(t)
-	seedPlanFixture(t, srv.Server, srv.paths)
+	seedPlanFixture(t, srv.Server, srv.flows)
 	status, _, body := postJSON(t, srv.Server, "/capacity-plans", planBody(12000))
 	if status != http.StatusCreated {
 		t.Fatalf("create = %d: %s", status, body)
@@ -130,7 +129,7 @@ func TestHandler_CapacityPlan_WithoutFactorsEveryStepSaysWhyItIsUnknown(t *testi
 
 func TestHandler_CapacityPlan_LegacyPlanWithoutStandardsIsUnchanged(t *testing.T) {
 	srv := newPlanServer(t)
-	seedPlanFixture(t, srv.Server, srv.paths)
+	seedPlanFixture(t, srv.Server, srv.flows)
 	status, _, body := postJSON(t, srv.Server, "/capacity-plans", planBody(12000))
 	if status != http.StatusCreated {
 		t.Fatalf("create = %d: %s", status, body)
@@ -146,7 +145,7 @@ func TestHandler_CapacityPlan_LegacyPlanWithoutStandardsIsUnchanged(t *testing.T
 
 func TestHandler_CapacityPlan_NonPositiveTaskFactorIs422(t *testing.T) {
 	srv := newLabourPlanServer(t)
-	seedPlanFixture(t, srv.Server, srv.paths)
+	seedPlanFixture(t, srv.Server, srv.flows)
 	for _, factor := range []any{0, -1.5} {
 		req := planBody(12000)
 		req["tasks_per_order"] = map[string]any{"PACK": factor}

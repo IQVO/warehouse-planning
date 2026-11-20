@@ -37,7 +37,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // The whole analytics read side against real infrastructure, all started with
@@ -157,7 +157,7 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 		Analytics:   &outboundkafka.AnalyticsEncoder{Topic: analyticsTopic},
 		NewID:       uuid.NewString,
 	}
-	pcs, paths := postgres.NewProcessCapacityRepo(oltp), memory.NewProcessPathRepo()
+	pcs, flows := postgres.NewProcessCapacityRepo(oltp), memory.NewProcessFlowRepo()
 	plans, ob, uow := postgres.NewCapacityPlanRepo(oltp), postgres.NewOutboxRepo(oltp), postgres.NewUnitOfWork(oltp)
 	register := &usecases.RegisterProcessCapacityConstraint{Repo: pcs}
 	windowStart, windowEnd := at(8, 8, 0), at(8, 16, 0)
@@ -175,14 +175,17 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 			}
 		}
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(ctx, usecases.RegisterProcessPathCommand{
-		ID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"}}); err != nil {
+	seedFlow, err := processflow.New(processflow.Params{FlowID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Stages: []processflow.Stage{{PathID: "pick-rebin-pack", ProcessType: processflow.Pick}, {PathID: "pick-rebin-pack", ProcessType: processflow.Rebin}, {PathID: "pick-rebin-pack", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: windowStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flows.Record(ctx, seedFlow); err != nil {
 		t.Fatal(err)
 	}
 	var clock time.Time
 	now := func() time.Time { return clock }
 	create := &usecases.CreateCapacityPlan{
-		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(oltp), Tally: postgres.NewStorageTallyRepo(oltp)},
+		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(oltp), Tally: postgres.NewStorageTallyRepo(oltp)},
 		Plans:        plans, Outbox: ob, Encoder: enc, UnitOfWork: uow, Now: now,
 	}
 	publish := &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow, Now: now}

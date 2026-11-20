@@ -18,8 +18,7 @@ import (
 
 	inboundmcp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/mcp"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -98,10 +97,12 @@ func TestMCPAgainstPostgres_Section43PersistsPlanAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed pool: %v", err)
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: postgres.NewProcessPathRepo(seedPool)}).Handle(ctx, usecases.RegisterProcessPathCommand{
-		ID: "tote-path", Name: "Tote", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"},
-	}); err != nil {
-		t.Fatalf("seed path: %v", err)
+	seedFlow, ferr := processflow.New(processflow.Params{FlowID: "tote-path", Name: "Tote", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := postgres.NewProcessFlowRepo(seedPool).Record(ctx, seedFlow); err != nil {
+		t.Fatalf("seed flow: %v", err)
 	}
 	seedPool.Close()
 	plan := call("create_capacity_plan", map[string]any{

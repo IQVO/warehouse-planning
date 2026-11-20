@@ -13,10 +13,9 @@ transactional outbox -- see "Publishing: the transactional outbox" below).
 Consumes
 labor and storage/station events from `workforce-management` and
 `facility-layout` (Phase 3) to keep local read models current without ever
-making a live cross-context call. Does NOT consume from
-`process-path-management` — see `docs/adr/0001-...` Addendum (2026-10-03):
-its `ProcessPath` carries no physical step sequence, so this context's own
-`ProcessPath` is locally declared instead of Conformist-copied.
+making a live cross-context call. `process-path-management` is consumed
+(ADR 0025): the process flows keep the floor's topology here as a local copy,
+and an ACTIVE flow is the only source a path id resolves to.
 
 ## Events: CloudEvents 1.0 is MANDATORY
 
@@ -230,10 +229,10 @@ deterministic failure (unknown `process_type`, no stages, bad status or version)
 `warehouse.process-path-management.events.dlq`, counts `warehouse_planning.process_flows.messages`
 (`applied|stale|duplicate|rejected`), and ignores every other type on the topic (`ProcessPath*`,
 `CPTScheduleChanged`). `cmd/mcp` and `cmd/a2a` read the copy and never start the consumer. A flow wins
-over a locally declared `ProcessPath` of the same id; reads carry `source: flow|local`. Since
-ADR 0025 stage 2, `POST /process-paths` answers `410 process-path-moved` (the declaration moved
-to process-path-management's `PUT /process-flows/{flowId}`) and the `register_process_path`
-MCP tool is gone; `GET /process-paths` stays.
+and the ONLY source (stage 3 dropped the local table and declaration code); every read carries
+`source: flow` (a RETIRED or unknown flow is a 404). Since ADR 0025 stage 2, `POST /process-paths`
+answers `410 process-path-moved` (the declaration moved to process-path-management's
+`PUT /process-flows/{flowId}`) and the `register_process_path` MCP tool is gone.
 
 ### Keying decisions
 

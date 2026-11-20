@@ -32,9 +32,9 @@ func TestBuildDeps_RefusesAnEmptyDatabaseURL(t *testing.T) {
 // sees the same capacities.
 func TestNewDeps_WiresBothSkillsOverTheSameStores(t *testing.T) {
 	pc, plans, outboxRepo := memory.NewProcessCapacityRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
-	paths := memory.NewProcessPathRepo()
+
 	deps, err := newDeps(repositories{
-		processCapacities: pc, processPaths: paths, standards: memory.NewStationStandardRepo(),
+		processCapacities: pc, processFlows: memory.NewProcessFlowRepo(), standards: memory.NewStationStandardRepo(),
 		tally: memory.NewStorageTallyRepo(), plans: plans, outbox: outboxRepo, demand: memory.NewOrderDemandRepo(),
 		uow:                 memory.NewUnitOfWork(pc, plans, outboxRepo),
 		inboundAppointments: memory.NewInboundAppointmentRepo(), inboundStandards: memory.NewInboundStandardRepo(),

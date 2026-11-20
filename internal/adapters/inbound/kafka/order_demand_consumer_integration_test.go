@@ -28,7 +28,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/demand"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 func realOrderEvent(t *testing.T, id, typ, orderID string, at time.Time, promise string, lines int) []byte {
@@ -131,14 +131,13 @@ func TestOrderDemandConsumer_Integration_RealKafkaAndPostgres_PlanPicksUpTheDema
 	}
 
 	// Real HTTP surface over the same Postgres model.
-	pcs, paths, plans, ob := fx.pcs, postgres.NewProcessPathRepo(fx.pool), postgres.NewCapacityPlanRepo(fx.pool), postgres.NewOutboxRepo(fx.pool)
+	pcs, flows, plans, ob := fx.pcs, postgres.NewProcessFlowRepo(fx.pool), postgres.NewCapacityPlanRepo(fx.pool), postgres.NewOutboxRepo(fx.pool)
 	expected := &usecases.GetExpectedDemand{Demand: demandRepo}
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(fx.pool), Tally: fx.tally}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(fx.pool), Tally: fx.tally}
 	enc := outboundkafka.NewEncoder()
 	server := httptest.NewServer(inboundhttp.NewRouter(&inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan:                &usecases.CreateCapacityPlan{PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: fx.uow, Demand: expected},
 		PublishCapacityPlan:               &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: fx.uow},
@@ -159,12 +158,13 @@ func TestOrderDemandConsumer_Integration_RealKafkaAndPostgres_PlanPicksUpTheDema
 			t.Fatalf("register capacity: %d %v", status, body)
 		}
 	}
-	// ADR 0025 stage 2 retired POST /process-paths; seed the local path
-	// through the use case over the same pool.
-	if _, err := (&usecases.RegisterProcessPath{Repo: postgres.NewProcessPathRepo(fx.pool)}).Handle(context.Background(), usecases.RegisterProcessPathCommand{
-		ID: "pick-only", Name: "Pick", Steps: []processpath.ProcessType{"PICK"},
-	}); err != nil {
-		t.Fatalf("seed path: %v", err)
+	// ADR 0025 stage 3: seed the flow a plan's path resolves to.
+	sf, ferr := processflow.New(processflow.Params{FlowID: "pick-only", Name: "Pick", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := flows.Record(context.Background(), sf); err != nil {
+		t.Fatalf("seed flow: %v", err)
 	}
 
 	planBody := map[string]any{

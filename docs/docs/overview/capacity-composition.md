@@ -13,11 +13,11 @@ authority.
 
 ## Which path is resolved (ADR 0025)
 
-A `path_id` resolves to an ACTIVE process flow first (its steps are the flow's
+A `path_id` resolves to its ACTIVE process flow (its steps are the flow's
 stages' `process_type` values in order, kept in the event-fed `process_flows`
-copy), else to the locally declared `ProcessPath` (`POST /process-paths`).
-A RETIRED flow does not resolve. Every path read says which one it used:
-`source: flow` or `source: local`.
+copy); since ADR 0025 stage 3 the local declaration is gone, so flows are the
+only source and every path read says `source: flow`. A RETIRED flow, or an id
+no ACTIVE flow has, does not resolve (404).
 
 ## Window coverage
 

@@ -20,7 +20,7 @@ var errBoom = errors.New("boom")
 // roots wire the real ones.
 type compositionFixture struct {
 	pcs       *memory.ProcessCapacityRepo
-	paths     *memory.ProcessPathRepo
+	flows     *memory.ProcessFlowRepo
 	standards *memory.StationStandardRepo
 	tally     *memory.StorageTallyRepo
 	uc        *GetProcessPathCapacity
@@ -33,10 +33,10 @@ func newCompositionFixture(t *testing.T) *compositionFixture {
 	start, end := pickZoneAWindowTimes()
 	f := &compositionFixture{
 		start: start, end: end,
-		pcs: memory.NewProcessCapacityRepo(), paths: memory.NewProcessPathRepo(),
+		pcs: memory.NewProcessCapacityRepo(), flows: memory.NewProcessFlowRepo(),
 		standards: memory.NewStationStandardRepo(), tally: memory.NewStorageTallyRepo(),
 	}
-	f.uc = &GetProcessPathCapacity{ProcessPaths: f.paths, ProcessCapacities: f.pcs, StationStandards: f.standards, Tally: f.tally}
+	f.uc = &GetProcessPathCapacity{ProcessPaths: &FlowPathFinder{Flows: f.flows}, ProcessCapacities: f.pcs, StationStandards: f.standards, Tally: f.tally}
 	return f
 }
 
@@ -53,9 +53,7 @@ func (f *compositionFixture) labor(t *testing.T, process processcapacity.Process
 
 func (f *compositionFixture) path(t *testing.T, id string, steps ...processpath.ProcessType) {
 	t.Helper()
-	if _, err := (&RegisterProcessPath{Repo: f.paths}).Handle(context.Background(), RegisterProcessPathCommand{ID: id, Name: id, Steps: steps}); err != nil {
-		t.Fatal(err)
-	}
+	seedFlow(t, context.Background(), f.flows, id, f.start, steps...)
 }
 
 func (f *compositionFixture) stations(t *testing.T, zone, activity string, n int) {
@@ -218,13 +216,13 @@ func TestGetProcessPathCapacity_DerivedOnlyAndMissingStep(t *testing.T) {
 		t.Fatalf("derived-only: %v %s/%s, want 720 PACK/STATION", res.NormalizedRate.Quantity(), res.BottleneckStep, res.BottleneckConstraint)
 	}
 
-	f.path(t, "sort", "SORT") // stations tallied but neither standard nor labor
-	f.stations(t, "SIM1-OPS-WC", "SORT", 2)
-	if _, err := f.get("sort"); !errors.Is(err, processcapacity.ErrMissingStepCapacity) {
+	f.path(t, "relocate", "RELOCATE") // stations tallied but neither standard nor labor
+	f.stations(t, "SIM1-OPS-WC", "RELOCATE", 2)
+	if _, err := f.get("relocate"); !errors.Is(err, processcapacity.ErrMissingStepCapacity) {
 		t.Fatalf("got %v, want ErrMissingStepCapacity", err)
 	}
-	f.path(t, "qc", "QC") // nothing at all
-	if _, err := f.get("qc"); !errors.Is(err, processcapacity.ErrMissingStepCapacity) {
+	f.path(t, "replenish", "REPLENISH") // nothing at all
+	if _, err := f.get("replenish"); !errors.Is(err, processcapacity.ErrMissingStepCapacity) {
 		t.Fatalf("got %v, want ErrMissingStepCapacity", err)
 	}
 }
@@ -233,9 +231,9 @@ func TestGetProcessPathCapacity_DerivedOnlyAndMissingStep(t *testing.T) {
 // its stations (and the standard declared under that same step name).
 func TestGetProcessPathCapacity_ActivityLookupIsUpperCased(t *testing.T) {
 	f := newCompositionFixture(t)
-	f.path(t, "pack", "pack")
+	f.path(t, "pack", "PACK")
 	f.stations(t, "SIM1-OPS-WC", "PACK", 2)
-	f.declare(t, "SIM1", "pack", 180, processcapacity.UnitPackage)
+	f.declare(t, "SIM1", "PACK", 180, processcapacity.UnitPackage)
 	res, err := f.get("pack")
 	if err != nil || res.NormalizedRate.Quantity() != 360 {
 		t.Fatalf("got %v %v, want 360", res.NormalizedRate.Quantity(), err)
@@ -444,7 +442,7 @@ func TestGetStorageCapacity_SplitsPositionsAndStationsForTheSite(t *testing.T) {
 	f := newCompositionFixture(t)
 	ctx := context.Background()
 	f.stations(t, "SIM1-OPS-WC", "PACK", 11)
-	f.stations(t, "SIM1-OPS-WC", "SORT", 2)
+	f.stations(t, "SIM1-OPS-WC", "RELOCATE", 2)
 	f.stations(t, "SIM2-OPS-WC", "PACK", 5) // another site
 	for i := 0; i < 24; i++ {
 		if _, err := f.tally.RegisterSlot(ctx, "SIM1-STOR-AMB-"+strconv.Itoa(i), "SIM1-STOR-AMB", tally.TypeLocation, []string{"SimShelf"}); err != nil {
@@ -457,7 +455,7 @@ func TestGetStorageCapacity_SplitsPositionsAndStationsForTheSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantPositions := []StoragePositions{{ZoneID: "SIM1-STOR-AMB", LocationType: "SimShelf", Positions: 24}}
-	wantStations := []ZoneStations{{ZoneID: "SIM1-OPS-WC", Activity: "PACK", Stations: 11}, {ZoneID: "SIM1-OPS-WC", Activity: "SORT", Stations: 2}}
+	wantStations := []ZoneStations{{ZoneID: "SIM1-OPS-WC", Activity: "PACK", Stations: 11}, {ZoneID: "SIM1-OPS-WC", Activity: "RELOCATE", Stations: 2}}
 	if got.Location != "SIM1" || len(got.StoragePositions) != 1 || got.StoragePositions[0] != wantPositions[0] ||
 		len(got.Stations) != 2 || got.Stations[0] != wantStations[0] || got.Stations[1] != wantStations[1] {
 		t.Fatalf("storage capacity = %+v, want positions %v stations %v", got, wantPositions, wantStations)

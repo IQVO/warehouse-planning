@@ -37,9 +37,8 @@ import (
 	mcpadapter "github.com/claudioed/warehouse-planning/internal/adapters/inbound/mcp"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // itTemplateDB is the once-migrated template every test clones, so the
@@ -141,20 +140,23 @@ func itMigratedDB(t *testing.T) string {
 // mcp.Handler — served over Streamable HTTP, plus the private database URL
 // so tests can assert on what actually persisted.
 type itHarness struct {
-	session  *sdkmcp.ClientSession
-	dbURL    string
-	pathRepo ports.ProcessPathRepository
+	session *sdkmcp.ClientSession
+	dbURL   string
+	flows   *postgres.ProcessFlowRepo
 }
 
-// seedITPath declares a local path directly: the register_process_path tool
-// retired with ADR 0025 stage 2.
+// seedITPath records the ACTIVE flow a path id resolves to (ADR 0025 stage 3).
 func (h *itHarness) seedITPath(t *testing.T, id string, steps []string) {
 	t.Helper()
-	typed := make([]processpath.ProcessType, 0, len(steps))
+	stages := make([]processflow.Stage, 0, len(steps))
 	for _, s := range steps {
-		typed = append(typed, processpath.ProcessType(s))
+		stages = append(stages, processflow.Stage{PathID: s, ProcessType: processflow.ProcessType(s)})
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: h.pathRepo}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: id, Steps: typed}); err != nil {
+	f, err := processflow.New(processflow.Params{FlowID: id, Name: id, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.flows.Record(context.Background(), f); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -171,7 +173,7 @@ func newITHarness(t *testing.T) *itHarness {
 	}
 	t.Cleanup(pool.Close)
 
-	pcRepo, pathRepo := postgres.NewProcessCapacityRepo(pool), postgres.NewProcessPathRepo(pool)
+	pcRepo, flows := postgres.NewProcessCapacityRepo(pool), postgres.NewProcessFlowRepo(pool)
 	standards, tally := postgres.NewStationStandardRepo(pool), postgres.NewStorageTallyRepo(pool)
 	planRepo, ob := postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool)
 	demandRepo := postgres.NewOrderDemandRepo(pool)
@@ -179,7 +181,7 @@ func newITHarness(t *testing.T) *itHarness {
 	encoder := outboundkafka.NewFanoutEncoder() // ADR 0005: events + analytics
 
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: pathRepo, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tally,
+		ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tally,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
 	deps := mcpadapter.Deps{
@@ -211,7 +213,7 @@ func newITHarness(t *testing.T) *itHarness {
 		t.Fatalf("mcp connect: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return &itHarness{session: session, dbURL: dbURL, pathRepo: pathRepo}
+	return &itHarness{session: session, dbURL: dbURL, flows: flows}
 }
 
 // itCall invokes a tool and fails the test on a TRANSPORT/protocol error;

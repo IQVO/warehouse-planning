@@ -39,7 +39,7 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api-reference/rest/list-process-paths",
-          label: "List the ProcessPaths (process flows and locally declared paths)",
+          label: "List the ProcessPaths (the ACTIVE process flows)",
           className: "api-method get",
         },
         {

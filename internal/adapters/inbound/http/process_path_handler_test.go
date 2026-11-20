@@ -9,22 +9,26 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
-	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
-// seedLocalPath declares a local ProcessPath directly through the use case.
-// POST /process-paths retired with ADR 0025 stage 2 (always 410), so tests
-// seed the local declaration without HTTP; stage 3 removes it entirely.
-func seedLocalPath(t *testing.T, paths *memory.ProcessPathRepo, id, name string, steps []string) {
+// seedFlowFor records the ACTIVE process flow a path id resolves to (ADR 0025
+// stage 3: flows are the only source); each stage's path is its own process
+// type, the shape the producer's examples use.
+func seedFlowFor(t *testing.T, flows *memory.ProcessFlowRepo, id, name string, steps []string) {
 	t.Helper()
-	typed := make([]processpath.ProcessType, 0, len(steps))
+	stages := make([]processflow.Stage, 0, len(steps))
 	for _, s := range steps {
-		typed = append(typed, processpath.ProcessType(s))
+		stages = append(stages, processflow.Stage{PathID: s, ProcessType: processflow.ProcessType(s)})
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: name, Steps: typed}); err != nil {
+	f, err := processflow.New(processflow.Params{FlowID: id, Name: name, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flows.Record(context.Background(), f); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -75,12 +79,12 @@ func registerPickRebinPackCapacities(t *testing.T, srv *httptest.Server, locatio
 // the ProcessPath, then assert the path-capacity endpoint reports 1000
 // ORDER/HOUR with REBIN as the bottleneck.
 func TestHandler_ProcessPathCapacity_WorkedExample(t *testing.T) {
-	srv, _, paths := newTestServer()
+	srv, _, flows := newTestServer()
 	defer srv.Close()
 
 	registerPickRebinPackCapacities(t, srv, "PATH-ZONE-A")
 
-	seedLocalPath(t, paths, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
+	seedFlowFor(t, flows, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
 
 	unitsPerOrder, packagesPerOrder := 2.5, 1.0
 	status, _, body := getProcessPathCapacity(t, srv, "pick-rebin-pack", "PATH-ZONE-A", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z", &unitsPerOrder, &packagesPerOrder)
@@ -116,7 +120,7 @@ func TestHandler_ProcessPathCapacity_NotFoundWhenPathNeverRegistered(t *testing.
 }
 
 func TestHandler_ProcessPathCapacity_UnprocessableWhenAStepHasNoCapacity(t *testing.T) {
-	srv, _, paths := newTestServer()
+	srv, _, flows := newTestServer()
 	defer srv.Close()
 
 	status, _, body := postJSON(t, srv, "/process-capacities", map[string]any{
@@ -133,7 +137,7 @@ func TestHandler_ProcessPathCapacity_UnprocessableWhenAStepHasNoCapacity(t *test
 		t.Fatalf("expected 201 registering PICK, got %d: %s", status, string(body))
 	}
 
-	seedLocalPath(t, paths, "pick-only", "Pick-Only", []string{"PICK", "REBIN"})
+	seedFlowFor(t, flows, "pick-only", "Pick-Only", []string{"PICK", "REBIN"})
 
 	unitsPerOrder, packagesPerOrder := 2.5, 1.0
 	status, _, body = getProcessPathCapacity(t, srv, "pick-only", "PATH-ZONE-B", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z", &unitsPerOrder, &packagesPerOrder)

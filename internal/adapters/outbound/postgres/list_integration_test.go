@@ -13,43 +13,9 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
-var (
-	_ ports.ProcessPathLister  = (*postgres.ProcessPathRepo)(nil)
-	_ ports.CapacityPlanLister = (*postgres.CapacityPlanRepo)(nil)
-)
-
-func TestProcessPathRepo_ListOrderedByIDKeepsStepOrder(t *testing.T) {
-	pool := newMigratedPool(t)
-	ctx := context.Background()
-	repo := postgres.NewProcessPathRepo(pool)
-
-	got, err := repo.ListPage(ctx, nil, 100)
-	if err != nil || got == nil || len(got) != 0 {
-		t.Fatalf("ListPage on empty = %#v, %v; want empty non-nil slice", got, err)
-	}
-
-	for _, p := range []processpath.ProcessPath{
-		mustPath(t, "pick-rebin-pack", "Pick-Rebin-Pack", "PICK", "REBIN", "PACK", "PICK"),
-		mustPath(t, "a-first", "First", "PACK"),
-	} {
-		if err := repo.Save(ctx, p); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err = repo.ListPage(ctx, nil, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 || got[0].ID() != "a-first" || got[1].ID() != "pick-rebin-pack" {
-		t.Fatalf("List = %v, want ordered by id", got)
-	}
-	if fmt.Sprint(got[1].Steps()) != "[PICK REBIN PACK PICK]" || got[1].Name() != "Pick-Rebin-Pack" {
-		t.Errorf("path = %v %v, want declared step order and name", got[1].Name(), got[1].Steps())
-	}
-}
+var _ ports.CapacityPlanLister = (*postgres.CapacityPlanRepo)(nil)
 
 func savePlan(t *testing.T, repo *postgres.CapacityPlanRepo, id, location string, createdAt time.Time) {
 	t.Helper()

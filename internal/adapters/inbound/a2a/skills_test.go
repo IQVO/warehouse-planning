@@ -18,6 +18,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/demand"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
@@ -41,15 +42,30 @@ type harness struct {
 	plans  *memory.CapacityPlanRepo
 	demand *memory.OrderDemandRepo
 	reg    *usecases.RegisterProcessCapacityConstraint
-	paths  *usecases.RegisterProcessPath
+	flows  *memory.ProcessFlowRepo
+}
+
+// seedFlow records a process flow (ADR 0025 stage 3: flows are the only path
+// source; each stage's path is its own process type).
+func seedFlow(flows *memory.ProcessFlowRepo, id string, steps []processpath.ProcessType) error {
+	stages := make([]processflow.Stage, 0, len(steps))
+	for _, s := range steps {
+		stages = append(stages, processflow.Stage{PathID: string(s), ProcessType: processflow.ProcessType(s)})
+	}
+	f, err := processflow.New(processflow.Params{FlowID: id, Name: "Flow " + id, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Now()})
+	if err != nil {
+		return err
+	}
+	_, err = flows.Record(context.Background(), f)
+	return err
 }
 
 func newHarness() *harness {
-	pc, paths := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo()
+	pc, flows := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo()
 	plans, outboxRepo, orders := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo(), memory.NewOrderDemandRepo()
 	uow := memory.NewUnitOfWork(pc, plans, outboxRepo)
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: paths, ProcessCapacities: pc,
+		ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pc,
 		StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo(),
 	}
 	return &harness{
@@ -62,7 +78,7 @@ func newHarness() *harness {
 		},
 		outbox: outboxRepo, plans: plans, demand: orders,
 		reg:   &usecases.RegisterProcessCapacityConstraint{Repo: pc},
-		paths: &usecases.RegisterProcessPath{Repo: paths},
+		flows: flows,
 	}
 }
 
@@ -87,7 +103,7 @@ func (h *harness) seedSection43(t *testing.T, location, pathID string) {
 		}
 	}
 	steps := []processpath.ProcessType{"PICK", "REBIN", "PACK"}
-	if _, err := h.paths.Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: pathID, Name: "Tote path", Steps: steps}); err != nil {
+	if err := seedFlow(h.flows, pathID, steps); err != nil {
 		t.Fatalf("seed path: %v", err)
 	}
 }
@@ -218,11 +234,12 @@ func wantProblem(t *testing.T, env wireEnvelope, status int, slug string) {
 	}
 }
 
-// requireLocalSource: the path the harness declares is a local one (docs/adr/0025).
+// requireLocalSource: since ADR 0025 stage 3 the harness-declared flow is the
+// only source, so every read says flow.
 func requireLocalSource(t *testing.T, source string) {
 	t.Helper()
-	if source != "local" {
-		t.Fatalf("source = %q, want local (a path declared here)", source)
+	if source != "flow" {
+		t.Fatalf("source = %q, want flow (the flow the harness declared)", source)
 	}
 }
 

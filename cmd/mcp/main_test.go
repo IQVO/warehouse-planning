@@ -26,7 +26,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	pc, plans, outboxRepo := memory.NewProcessCapacityRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	tally := memory.NewStorageTallyRepo()
 	deps, err := newDeps(repositories{
-		processCapacities: pc, processPaths: memory.NewProcessPathRepo(), standards: memory.NewStationStandardRepo(),
+		processCapacities: pc, processFlows: memory.NewProcessFlowRepo(), standards: memory.NewStationStandardRepo(),
 		tally: tally, plans: plans, outbox: outboxRepo, demand: memory.NewOrderDemandRepo(),
 		uow: memory.NewUnitOfWork(pc, plans, outboxRepo),
 

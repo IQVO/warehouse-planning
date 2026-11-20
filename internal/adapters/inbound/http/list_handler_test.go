@@ -22,17 +22,16 @@ import (
 
 // newListServer is newPlanServer plus the two list use cases, with a clock
 // that advances one minute per created plan so "newest first" is observable.
-func newListServer(t *testing.T) (*httptest.Server, *memory.ProcessPathRepo) {
+func newListServer(t *testing.T) (*httptest.Server, *memory.ProcessFlowRepo) {
 	t.Helper()
-	pcs, paths, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	pcs, flows, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
 	enc := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	clock := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow,
@@ -40,13 +39,13 @@ func newListServer(t *testing.T) (*httptest.Server, *memory.ProcessPathRepo) {
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow},
 		CapacityPlans:       plans,
-		ListProcessPaths:    &usecases.ListProcessPaths{Paths: paths},
+		ListProcessPaths:    &usecases.ListProcessPaths{Paths: &usecases.FlowPathLister{Flows: flows}},
 		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: plans},
 		StationStandards:    memory.NewStationStandardRepo(),
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return srv, paths
+	return srv, flows
 }
 
 type plansListJSON struct {
@@ -76,7 +75,7 @@ func planIDs(plans []map[string]any) []string {
 }
 
 func TestHandler_ListProcessPaths(t *testing.T) {
-	srv, paths := newListServer(t)
+	srv, flows := newListServer(t)
 
 	status, headers, body := getPath(t, srv, "/process-paths")
 	if status != http.StatusOK {
@@ -89,8 +88,8 @@ func TestHandler_ListProcessPaths(t *testing.T) {
 		t.Errorf("empty body = %q, want an empty array (never null)", body)
 	}
 
-	seedLocalPath(t, paths, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
-	seedLocalPath(t, paths, "a-simple", "Simple", []string{"PACK"})
+	seedFlowFor(t, flows, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
+	seedFlowFor(t, flows, "a-simple", "Simple", []string{"PACK"})
 
 	status, _, body = getPath(t, srv, "/process-paths")
 	if status != http.StatusOK {
@@ -131,9 +130,9 @@ func assertListItemsMatchSingleGets(t *testing.T, srv *httptest.Server, items []
 
 // seedThreePlans creates three plans at PATH-ZONE-A (demands 1000, 2000, 3000,
 // oldest first) and publishes the oldest; it returns their ids oldest first.
-func seedThreePlans(t *testing.T, srv *httptest.Server, paths *memory.ProcessPathRepo) []string {
+func seedThreePlans(t *testing.T, srv *httptest.Server, flows *memory.ProcessFlowRepo) []string {
 	t.Helper()
-	seedPlanFixture(t, srv, paths)
+	seedPlanFixture(t, srv, flows)
 	var ids []string
 	for i := 0; i < 3; i++ {
 		status, _, body := postJSON(t, srv, "/capacity-plans", planBody(float64(1000*(i+1))))
@@ -149,8 +148,8 @@ func seedThreePlans(t *testing.T, srv *httptest.Server, paths *memory.ProcessPat
 }
 
 func TestHandler_ListCapacityPlans_NewestFirstInTheSingleGetShape(t *testing.T) {
-	srv, paths := newListServer(t)
-	ids := seedThreePlans(t, srv, paths)
+	srv, flows := newListServer(t)
+	ids := seedThreePlans(t, srv, flows)
 
 	status, headers, body := getPath(t, srv, "/capacity-plans?location=PATH-ZONE-A")
 	if status != http.StatusOK {
@@ -176,8 +175,8 @@ func TestHandler_ListCapacityPlans_NewestFirstInTheSingleGetShape(t *testing.T) 
 }
 
 func TestHandler_ListCapacityPlans_LimitAndLocationFilters(t *testing.T) {
-	srv, paths := newListServer(t)
-	ids := seedThreePlans(t, srv, paths)
+	srv, flows := newListServer(t)
+	ids := seedThreePlans(t, srv, flows)
 
 	_, _, body := getPath(t, srv, "/capacity-plans?location=PATH-ZONE-A&limit=2")
 	if got := planIDs(decodePlansList(t, body).Items); fmt.Sprint(got) != fmt.Sprint([]string{ids[2], ids[1]}) {
@@ -199,8 +198,8 @@ func TestHandler_ListCapacityPlans_LimitAndLocationFilters(t *testing.T) {
 }
 
 func TestHandler_ListCapacityPlans_DefaultLimitIs100AndCapIs500(t *testing.T) {
-	srv, paths := newListServer(t)
-	seedPlanFixture(t, srv, paths)
+	srv, flows := newListServer(t)
+	seedPlanFixture(t, srv, flows)
 	for i := 0; i < 105; i++ {
 		if status, _, body := postJSON(t, srv, "/capacity-plans", planBody(10)); status != http.StatusCreated {
 			t.Fatalf("create %d = %d: %s", i, status, body)
@@ -229,8 +228,8 @@ func TestHandler_ListCapacityPlans_DefaultLimitIs100AndCapIs500(t *testing.T) {
 // plans than the page size, including plans sharing created_at, and asserts
 // no duplicate and no skipped row.
 func TestHandler_ListCapacityPlans_WalksEveryPage(t *testing.T) {
-	srv, paths := newListServer(t)
-	seedPlanFixture(t, srv, paths)
+	srv, flows := newListServer(t)
+	seedPlanFixture(t, srv, flows)
 	const total = 11
 	want := map[string]bool{}
 	for i := 0; i < total; i++ {

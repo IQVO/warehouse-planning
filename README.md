@@ -173,7 +173,8 @@ The projector consumes `warehouse.warehouse-planning.analytics` under
 
 ### Requirement-side tables
 
-Added by the OLTP migrations of ADR 0022, ADR 0023 and ADR 0025 (all additive):
+Added by the OLTP migrations of ADR 0022, ADR 0023 and ADR 0025 (additive, except 0019 which
+DROPS the retired `process_paths` table):
 
 | Migration | Table / column | One row per | Holds |
 |---|---|---|---|
