@@ -39,14 +39,14 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api-reference/rest/list-process-paths",
-          label: "List the ProcessPaths (process flows and locally declared paths)",
+          label: "List the ProcessPaths (the ACTIVE process flows)",
           className: "api-method get",
         },
         {
           type: "doc",
           id: "api-reference/rest/register-process-path",
-          label: "Register (seed) a ProcessPath read model",
-          className: "api-method post",
+          label: "Retired (ADR-0025 stage 2): the local process-path declaration moved to process-path-management",
+          className: "menu__list-item--deprecated api-method post",
         },
         {
           type: "doc",

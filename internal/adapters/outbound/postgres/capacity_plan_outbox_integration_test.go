@@ -19,7 +19,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 var (
@@ -46,7 +46,7 @@ type planStack struct {
 func newPlanStack(t *testing.T) *planStack {
 	t.Helper()
 	pool := newMigratedPool(t)
-	pcs, paths := postgres.NewProcessCapacityRepo(pool), memory.NewProcessPathRepo()
+	pcs, flows := postgres.NewProcessCapacityRepo(pool), memory.NewProcessFlowRepo()
 	plans, ob := postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool)
 	uow := postgres.NewUnitOfWork(pool)
 	enc := outboundkafka.NewEncoder()
@@ -64,15 +64,17 @@ func newPlanStack(t *testing.T) *planStack {
 			t.Fatalf("register %s: %v", reg.process, err)
 		}
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(context.Background(), usecases.RegisterProcessPathCommand{
-		ID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"},
-	}); err != nil {
-		t.Fatalf("register path: %v", err)
+	sf, ferr := processflow.New(processflow.Params{FlowID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := flows.Record(context.Background(), sf); err != nil {
+		t.Fatalf("seed flow: %v", err)
 	}
 
 	s := &planStack{pool: pool, plans: plans, outbox: ob}
 	s.create = &usecases.CreateCapacityPlan{
-		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(pool), Tally: postgres.NewStorageTallyRepo(pool)},
+		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: postgres.NewStationStandardRepo(pool), Tally: postgres.NewStorageTallyRepo(pool)},
 		Plans:        plans, Outbox: ob, Encoder: enc, UnitOfWork: uow,
 	}
 	s.publish = &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow}

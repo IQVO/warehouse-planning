@@ -22,7 +22,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 func startPostgres(t *testing.T) string {
@@ -74,8 +74,11 @@ func seedSection43(t *testing.T, url string) {
 			t.Fatalf("seed %s: %v", c.process, err)
 		}
 	}
-	paths := &usecases.RegisterProcessPath{Repo: postgres.NewProcessPathRepo(pool)}
-	if _, err := paths.Handle(ctx, usecases.RegisterProcessPathCommand{ID: "tote-path", Name: "Tote", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"}}); err != nil {
+	seedFlow, ferr := processflow.New(processflow.Params{FlowID: "tote-path", Name: "Tote", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	if _, err := postgres.NewProcessFlowRepo(pool).Record(ctx, seedFlow); err != nil {
 		t.Fatal(err)
 	}
 }

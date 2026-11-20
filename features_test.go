@@ -27,6 +27,7 @@ import (
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // TestFeatures runs every Gherkin feature under features/ against a
@@ -114,7 +115,7 @@ type world struct {
 // in-memory repo.
 func (w *world) start() {
 	repo := memory.NewProcessCapacityRepo()
-	pathRepo := memory.NewProcessPathRepo()
+
 	planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	standards, tallyRepo, processed := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo(), memory.NewProcessedEventRepo()
 	uow := memory.NewUnitOfWork(repo, planRepo, outboxRepo)
@@ -122,7 +123,7 @@ func (w *world) start() {
 	// ADR 0025: a process flow resolves a path id before the locally declared
 	// path, as cmd/api wires it.
 	w.pf = newFlowState()
-	pathFinder := &usecases.FlowFirstPathFinder{Flows: w.pf.flows, Local: pathRepo}
+	pathFinder := &usecases.FlowPathFinder{Flows: w.pf.flows}
 	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathFinder, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
 	w.facility = &inboundkafka.StorageCapacityConsumer{
 		Tally: tallyRepo, ProcessedEvents: processed, UoW: memory.NewUnitOfWork(tallyRepo, processed),
@@ -153,7 +154,6 @@ func (w *world) start() {
 			Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
 		},
 		ProcessCapacities:      repo,
-		RegisterProcessPath:    &usecases.RegisterProcessPath{Repo: pathRepo},
 		GetProcessPathCapacity: pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow,
@@ -170,7 +170,7 @@ func (w *world) start() {
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:       planRepo,
-		ListProcessPaths:    &usecases.ListProcessPaths{Paths: &usecases.FlowFirstPathLister{Flows: w.pf.flows, Local: pathRepo}},
+		ListProcessPaths:    &usecases.ListProcessPaths{Paths: &usecases.FlowPathLister{Flows: w.pf.flows}},
 		GetProcessPath:      &usecases.GetProcessPath{Paths: pathFinder},
 		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: planRepo},
 		// ADR 0024 decision 4, as cmd/api wires it.
@@ -283,16 +283,20 @@ func (w *world) iLookUpTheEffectiveCapacity(ctx context.Context, processType, lo
 // "<name>" with steps PICK, REBIN, PACK" -- stepsRaw is the raw
 // comma-separated step list as it appears in the Gherkin step text.
 func (w *world) iRegisterAProcessPath(ctx context.Context, id, name, stepsRaw string) error {
-	rawSteps := strings.Split(stepsRaw, ",")
-	steps := make([]string, 0, len(rawSteps))
-	for _, s := range rawSteps {
-		steps = append(steps, strings.TrimSpace(s))
+	// ADR 0025 stage 3: no local declaration exists; the step declares a
+	// process FLOW (each stage's path is its own process type) exactly as
+	// the producer's examples do.
+	stages := make([]processflow.Stage, 0)
+	for _, s := range strings.Split(stepsRaw, ",") {
+		pt := processflow.ProcessType(strings.TrimSpace(s))
+		stages = append(stages, processflow.Stage{PathID: string(pt), ProcessType: pt})
 	}
-	return w.record(ctx, http.MethodPost, "/process-paths", map[string]any{
-		"id":    id,
-		"name":  name,
-		"steps": steps,
-	})
+	flow, err := processflow.New(processflow.Params{FlowID: id, Name: name, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: w.planClock})
+	if err != nil {
+		return err
+	}
+	_, err = w.pf.flows.Record(ctx, flow)
+	return err
 }
 
 func (w *world) iLookUpTheProcessPathCapacity(ctx context.Context, pathID, location, windowStart, windowEnd string, unitsPerOrder, packagesPerOrder float64) error {

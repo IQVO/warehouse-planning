@@ -20,15 +20,14 @@ import (
 // fixture's capacities (8000 orders over the 8h window).
 func newForecastPlanServer(t *testing.T) (*httptest.Server, *memory.WorkloadForecastRepo) {
 	t.Helper()
-	pcs, paths, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	pcs, flows, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	forecasts := memory.NewWorkloadForecastRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	clock := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: outboundkafka.NewEncoder(), UnitOfWork: uow,
@@ -42,7 +41,7 @@ func newForecastPlanServer(t *testing.T) (*httptest.Server, *memory.WorkloadFore
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	seedPlanFixture(t, srv)
+	seedPlanFixture(t, srv, flows)
 	return srv, forecasts
 }
 

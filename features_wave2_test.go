@@ -158,10 +158,6 @@ func (w *world) iListTheStationStandardsOf(ctx context.Context, location string)
 	return w.record(ctx, http.MethodGet, "/station-standards?location="+location, nil)
 }
 
-func (w *world) iRegisterAProcessPathWithoutSteps(ctx context.Context, id, name string) error {
-	return w.record(ctx, http.MethodPost, "/process-paths", map[string]any{"id": id, "name": name, "steps": []string{}})
-}
-
 // iCreateManyPlans creates n plans on the list scenarios' fixed path, each
 // created one minute after the previous one (the world's plan clock).
 func (w *world) iCreateManyPlans(ctx context.Context, n int, demand float64, location string) error {
@@ -415,7 +411,6 @@ func registerWave2Steps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^I declare a station standard of `+num+` `+units+` per (-?\d+) seconds for ([A-Z-]+) at ([A-Z0-9-]+)$`, w.iDeclareAStationStandardOverPeriod)
 	sc.Step(`^I list the station standards$`, w.iListTheStationStandards)
 	sc.Step(`^I list the station standards of `+ts+`$`, w.iListTheStationStandardsOf)
-	sc.Step(`^I register a process path `+ts+` named `+ts+` with no steps$`, w.iRegisterAProcessPathWithoutSteps)
 	sc.Step(`^I create (\d+) capacity plans with assigned demand (\d+) at `+ts+` on path "pick-rebin-pack"$`, w.iCreateManyPlans)
 
 	sc.Step(`^workforce-management committed shift plan `+ts+` for building `+ts+` on path `+ts+` with (\d+) heads at `+num+` per head per hour for `+num+` hours starting `+ts+`$`, w.workforceCommittedShiftPlan)

@@ -31,7 +31,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // installW3CTracing installs a real SDK tracer provider and the W3C
@@ -135,20 +135,22 @@ func createPlanInSpan(t *testing.T, ctx context.Context, pool *pgxpool.Pool, top
 	t.Helper()
 	start := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
 	end := start.Add(8 * time.Hour)
-	pcs, paths := postgres.NewProcessCapacityRepo(pool), memory.NewProcessPathRepo()
+	pcs, flows := postgres.NewProcessCapacityRepo(pool), memory.NewProcessFlowRepo()
 	if _, err := (&usecases.RegisterProcessCapacityConstraint{Repo: pcs}).Handle(ctx, usecases.RegisterProcessCapacityConstraintCommand{
 		ProcessType: "PACK", Location: "TRACE-ZONE", WindowStart: start, WindowEnd: end,
 		ConstraintType: processcapacity.ConstraintLabor, Quantity: 1000, Unit: processcapacity.UnitOrder, Period: time.Hour,
 	}); err != nil {
 		t.Fatalf("register capacity: %v", err)
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(ctx, usecases.RegisterProcessPathCommand{
-		ID: "pack-only", Name: "Pack only", Steps: []processpath.ProcessType{"PACK"},
-	}); err != nil {
-		t.Fatalf("register path: %v", err)
+	sf, ferr := processflow.New(processflow.Params{FlowID: "pack-only", Name: "Pack only", Stages: []processflow.Stage{{PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := flows.Record(ctx, sf); err != nil {
+		t.Fatalf("seed flow: %v", err)
 	}
 	create := &usecases.CreateCapacityPlan{
-		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs,
+		PathCapacity: &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs,
 			StationStandards: postgres.NewStationStandardRepo(pool), Tally: postgres.NewStorageTallyRepo(pool)},
 		Plans: postgres.NewCapacityPlanRepo(pool), Outbox: postgres.NewOutboxRepo(pool),
 		Encoder: &outboundkafka.Encoder{NewID: uuid.NewString, Topic: topic}, UnitOfWork: postgres.NewUnitOfWork(pool),

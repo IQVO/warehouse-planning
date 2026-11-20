@@ -12,7 +12,7 @@ same use cases.
 | Use case | Kind | What it does |
 | --- | --- | --- |
 | `RegisterProcessCapacityConstraint` | command | Upserts one constraint on a ProcessCapacity aggregate, recomputes and persists the effective rate. |
-| `RegisterProcessPath` | command | Declares (or wholesale replaces) a ProcessPath: id, name and an ordered, non-empty step list. |
+| *(removed, ADR 0025 stage 3)* `RegisterProcessPath` | — | The local declaration and its table are gone; a path is an ACTIVE process flow consumed from process-path-management. |
 | `GetProcessPathCapacity` | query | Resolves each step's covering ProcessCapacity aggregates, the site's tallied station counts and declared StationStandards, plus the WorkloadProfile; returns the normalized path capacity, bottleneck step and binding constraint, per-step breakdown and warnings. |
 | `DeclareStationStandard` | command | Validates and upserts a StationStandard; reports created versus replaced. |
 | `GetStorageCapacity` | query | The facility tally of a site as a read model (storage positions per zone and location type, stations per zone and activity). |

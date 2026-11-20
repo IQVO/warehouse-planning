@@ -13,16 +13,18 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
 
-func newTestServer() (*httptest.Server, *memory.ProcessCapacityRepo) {
+func newTestServer() (*httptest.Server, *memory.ProcessCapacityRepo, *memory.ProcessFlowRepo) {
 	repo := memory.NewProcessCapacityRepo()
-	pathRepo := memory.NewProcessPathRepo()
+	flows := memory.NewProcessFlowRepo()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
-		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
+		GetProcessPathCapacity: &usecases.GetProcessPathCapacity{
+			ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: repo,
+			StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo(),
+		},
 	}
-	return httptest.NewServer(inboundhttp.NewRouter(s)), repo
+	return httptest.NewServer(inboundhttp.NewRouter(s)), repo, flows
 }
 
 // doRequest issues req and returns the status code, headers and fully
@@ -83,7 +85,7 @@ func registerConstraint(t *testing.T, srv *httptest.Server, constraintType strin
 // end to end through the real HTTP surface: register four constraints,
 // then assert GET reports 3500 UNIT/HOUR with LOCATION binding.
 func TestHandler_WorkedExample(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
 	registrations := []struct {
@@ -140,7 +142,7 @@ func TestHandler_WorkedExample(t *testing.T) {
 }
 
 func TestHandler_Get_NotFoundWhenNothingRegistered(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
 	status, headers, _ := getPath(t, srv, "/process-capacities?process_type=PACK&location=NOWHERE&window_start=2026-01-01T00:00:00Z&window_end=2026-01-01T01:00:00Z")
@@ -153,7 +155,7 @@ func TestHandler_Get_NotFoundWhenNothingRegistered(t *testing.T) {
 }
 
 func TestHandler_Post_RejectsMismatchedUnit(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
 	status, _, body := registerConstraint(t, srv, "LABOR", 4000)
@@ -177,7 +179,7 @@ func TestHandler_Post_RejectsMismatchedUnit(t *testing.T) {
 }
 
 func TestHandler_Post_RejectsMalformedJSON(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/process-capacities", bytes.NewReader([]byte("{not json")))
@@ -192,7 +194,7 @@ func TestHandler_Post_RejectsMalformedJSON(t *testing.T) {
 }
 
 func TestHandler_Post_RejectsInvalidWindow(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
 	status, _, body := postJSON(t, srv, "/process-capacities", map[string]any{
@@ -211,7 +213,7 @@ func TestHandler_Post_RejectsInvalidWindow(t *testing.T) {
 }
 
 func TestHandler_Healthz(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
 	status, _, _ := getPath(t, srv, "/healthz")

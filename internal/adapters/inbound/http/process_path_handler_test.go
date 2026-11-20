@@ -1,20 +1,36 @@
 package http_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
-func registerProcessPath(t *testing.T, srv *httptest.Server, id, name string, steps []string) (int, http.Header, []byte) {
+// seedFlowFor records the ACTIVE process flow a path id resolves to (ADR 0025
+// stage 3: flows are the only source); each stage's path is its own process
+// type, the shape the producer's examples use.
+func seedFlowFor(t *testing.T, flows *memory.ProcessFlowRepo, id, name string, steps []string) {
 	t.Helper()
-	return postJSON(t, srv, "/process-paths", map[string]any{
-		"id":    id,
-		"name":  name,
-		"steps": steps,
-	})
+	stages := make([]processflow.Stage, 0, len(steps))
+	for _, s := range steps {
+		stages = append(stages, processflow.Stage{PathID: s, ProcessType: processflow.ProcessType(s)})
+	}
+	f, err := processflow.New(processflow.Params{FlowID: id, Name: name, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flows.Record(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func getProcessPathCapacity(t *testing.T, srv *httptest.Server, id, location, windowStart, windowEnd string, unitsPerOrder, packagesPerOrder *float64) (int, http.Header, []byte) {
@@ -63,18 +79,15 @@ func registerPickRebinPackCapacities(t *testing.T, srv *httptest.Server, locatio
 // the ProcessPath, then assert the path-capacity endpoint reports 1000
 // ORDER/HOUR with REBIN as the bottleneck.
 func TestHandler_ProcessPathCapacity_WorkedExample(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, flows := newTestServer()
 	defer srv.Close()
 
 	registerPickRebinPackCapacities(t, srv, "PATH-ZONE-A")
 
-	status, _, body := registerProcessPath(t, srv, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
-	if status != http.StatusCreated {
-		t.Fatalf("expected 201 registering the process path, got %d: %s", status, string(body))
-	}
+	seedFlowFor(t, flows, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
 
 	unitsPerOrder, packagesPerOrder := 2.5, 1.0
-	status, _, body = getProcessPathCapacity(t, srv, "pick-rebin-pack", "PATH-ZONE-A", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z", &unitsPerOrder, &packagesPerOrder)
+	status, _, body := getProcessPathCapacity(t, srv, "pick-rebin-pack", "PATH-ZONE-A", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z", &unitsPerOrder, &packagesPerOrder)
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", status, string(body))
 	}
@@ -93,7 +106,7 @@ func TestHandler_ProcessPathCapacity_WorkedExample(t *testing.T) {
 }
 
 func TestHandler_ProcessPathCapacity_NotFoundWhenPathNeverRegistered(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
 	unitsPerOrder, packagesPerOrder := 2.5, 1.0
@@ -107,7 +120,7 @@ func TestHandler_ProcessPathCapacity_NotFoundWhenPathNeverRegistered(t *testing.
 }
 
 func TestHandler_ProcessPathCapacity_UnprocessableWhenAStepHasNoCapacity(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, flows := newTestServer()
 	defer srv.Close()
 
 	status, _, body := postJSON(t, srv, "/process-capacities", map[string]any{
@@ -124,10 +137,7 @@ func TestHandler_ProcessPathCapacity_UnprocessableWhenAStepHasNoCapacity(t *test
 		t.Fatalf("expected 201 registering PICK, got %d: %s", status, string(body))
 	}
 
-	status, _, body = registerProcessPath(t, srv, "pick-only", "Pick-Only", []string{"PICK", "REBIN"})
-	if status != http.StatusCreated {
-		t.Fatalf("expected 201 registering the process path, got %d: %s", status, string(body))
-	}
+	seedFlowFor(t, flows, "pick-only", "Pick-Only", []string{"PICK", "REBIN"})
 
 	unitsPerOrder, packagesPerOrder := 2.5, 1.0
 	status, _, body = getProcessPathCapacity(t, srv, "pick-only", "PATH-ZONE-B", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z", &unitsPerOrder, &packagesPerOrder)
@@ -136,12 +146,41 @@ func TestHandler_ProcessPathCapacity_UnprocessableWhenAStepHasNoCapacity(t *test
 	}
 }
 
-func TestHandler_ProcessPath_RejectsEmptySteps(t *testing.T) {
-	srv, _ := newTestServer()
+// TestHandler_ProcessPath_RegisterIs410 pins ADR 0025 stage 2: the local
+// declaration retired, so POST /process-paths answers 410 process-path-moved
+// for ANY body (nothing decoded, recorded or published), naming
+// process-path-management's PUT /process-flows/{flowId}.
+func TestHandler_ProcessPath_RegisterIs410(t *testing.T) {
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 
-	status, _, body := registerProcessPath(t, srv, "empty-path", "Empty", nil)
-	if status != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422 for an empty step list, got %d: %s", status, string(body))
+	for _, body := range []string{`{"id":"x","name":"X","steps":["PICK"]}`, `not json`, ``} {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+"/process-paths", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "retire-"+body)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusGone {
+			t.Fatalf("body %q: expected 410, got %d: %s", body, resp.StatusCode, string(b))
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+			t.Fatalf("expected application/problem+json, got %q", ct)
+		}
+		var problem struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(b, &problem); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(problem.Type, "/process-path-moved") {
+			t.Fatalf("expected process-path-moved, got %s", problem.Type)
+		}
 	}
 }

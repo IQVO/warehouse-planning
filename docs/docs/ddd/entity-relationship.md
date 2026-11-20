@@ -70,10 +70,13 @@ erDiagram
     boolean inbound_standard_missing "0009"
     jsonb labour_requirement "0013, per step: standard_seconds, tasks, required_labour_hours, known, reason; default empty array"
   }
-  process_paths {
-    text id PK
+  process_flows {
+    text flow_id PK
     text name
-    text_array steps "ordered, cardinality above 0"
+    jsonb stages "ordered: [{path_id, process_type}]"
+    text status "ACTIVE | RETIRED"
+    bigint version
+    timestamptz updated_at
   }
   station_standards {
     text location PK
@@ -193,7 +196,7 @@ erDiagram
 ```
 
 Source: `internal/adapters/outbound/postgres/migrations/0001_process_capacity.up.sql`
-through `0017_capacity_plan_superseded.up.sql` and `0018_process_flows.up.sql` (the `process_flows` copy of ADR 0025), `internal/adapters/outbound/postgres/migrate.go`.
+through `0017_capacity_plan_superseded.up.sql`, `0018_process_flows.up.sql` (the `process_flows` copy of ADR 0025) and `0019_drop_process_paths.up.sql` (the local table gone, stage 3), `internal/adapters/outbound/postgres/migrate.go`.
 Omits: the indexes (`idx_capacity_plans_warehouse_window`,
 `idx_outbox_events_unpublished` partial on `published_at IS NULL`,
 `idx_order_demand_location_promise`, `idx_inbound_appointments_location_window`
@@ -207,9 +210,9 @@ The **only** foreign key in the schema is
 referencing `process_capacity`, with `ON DELETE CASCADE`. Every other link is
 logical and deliberately has no foreign key:
 
-- `capacity_plans.process_path_id` names a `process_paths.id`, but a plan
-  stores its computed result and must survive a path being re-declared
-  (`ProcessPath` is replaced wholesale); the two are different aggregates.
+- `capacity_plans.process_path_id` names an ACTIVE `process_flows.flow_id`, but
+  a plan stores its computed result and must survive the flow being revised or
+  retired; the two are different aggregates.
 - `capacity_plans.location` and the step `process_type`s line up with
   `process_capacity` rows only through window coverage at creation time; the
   plan never reads them again.
@@ -289,7 +292,7 @@ transaction as the `plan_facts` upsert.
 | --- | --- | --- |
 | `process_capacity` + `process_capacity_constraint` | Aggregate state (parent + child rows) | `ProcessCapacity` aggregate |
 | `capacity_plans` | Aggregate state | `CapacityPlan` aggregate |
-| `process_paths` | Operator-declared read model | `processpath.ProcessPath` |
+| `process_flows` | Event-fed copy of process-path-management's flows (ADR 0025; the `process_paths` table dropped with 0019) | `processflow.Flow` |
 | `station_standards` | Stored value objects | `processcapacity.StationStandard` |
 | `location_slot_tally`, `location_slot_registration` | Read model of facility-layout events | facility tally (`internal/application/tally`) |
 | `order_demand` | Read model of order-management events | `demand.Order` |

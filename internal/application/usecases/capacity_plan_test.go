@@ -112,7 +112,7 @@ func (f failingPlans) Save(ctx context.Context, p *capacityplan.CapacityPlan) er
 
 type planFixture struct {
 	pcs     *memory.ProcessCapacityRepo
-	paths   *memory.ProcessPathRepo
+	flows   *memory.ProcessFlowRepo
 	plans   *memory.CapacityPlanRepo
 	outbox  *memory.OutboxRepo
 	uow     *memory.UnitOfWork
@@ -122,12 +122,12 @@ type planFixture struct {
 
 func newPlanFixture(t *testing.T) *planFixture {
 	t.Helper()
-	pcs, paths, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	pcs, flows, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
-	seedPickRebinPackPathCapacity(t, context.Background(), pcs, paths, planWindowStart, planWindowEnd)
-	f := &planFixture{pcs: pcs, paths: paths, plans: plans, outbox: ob, uow: uow}
+	seedPickRebinPackPathCapacity(t, context.Background(), pcs, flows, planWindowStart, planWindowEnd)
+	f := &planFixture{pcs: pcs, flows: flows, plans: plans, outbox: ob, uow: uow}
 	f.create = &CreateCapacityPlan{
-		PathCapacity: &GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
+		PathCapacity: &GetProcessPathCapacity{ProcessPaths: &FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
 		Plans:        plans, Outbox: ob, Encoder: fakeEncoder{}, UnitOfWork: uow,
 		NewID: func() string { return "plan-1" },
 		Now:   func() time.Time { return planCreatedAt },

@@ -38,6 +38,7 @@ import (
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // itTemplateDB is the once-migrated template every test clones, so the
@@ -141,6 +142,23 @@ func itMigratedDB(t *testing.T) string {
 type itHarness struct {
 	session *sdkmcp.ClientSession
 	dbURL   string
+	flows   *postgres.ProcessFlowRepo
+}
+
+// seedITPath records the ACTIVE flow a path id resolves to (ADR 0025 stage 3).
+func (h *itHarness) seedITPath(t *testing.T, id string, steps []string) {
+	t.Helper()
+	stages := make([]processflow.Stage, 0, len(steps))
+	for _, s := range steps {
+		stages = append(stages, processflow.Stage{PathID: s, ProcessType: processflow.ProcessType(s)})
+	}
+	f, err := processflow.New(processflow.Params{FlowID: id, Name: id, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.flows.Record(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // newITHarness wires the real stack exactly like cmd/mcp's buildDeps does
@@ -155,7 +173,7 @@ func newITHarness(t *testing.T) *itHarness {
 	}
 	t.Cleanup(pool.Close)
 
-	pcRepo, pathRepo := postgres.NewProcessCapacityRepo(pool), postgres.NewProcessPathRepo(pool)
+	pcRepo, flows := postgres.NewProcessCapacityRepo(pool), postgres.NewProcessFlowRepo(pool)
 	standards, tally := postgres.NewStationStandardRepo(pool), postgres.NewStorageTallyRepo(pool)
 	planRepo, ob := postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool)
 	demandRepo := postgres.NewOrderDemandRepo(pool)
@@ -163,13 +181,12 @@ func newITHarness(t *testing.T) *itHarness {
 	encoder := outboundkafka.NewFanoutEncoder() // ADR 0005: events + analytics
 
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: pathRepo, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tally,
+		ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcRepo, StationStandards: standards, Tally: tally,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: demandRepo}
 	deps := mcpadapter.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
 		ProcessCapacities:                 pcRepo,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: ob,
@@ -196,7 +213,7 @@ func newITHarness(t *testing.T) *itHarness {
 		t.Fatalf("mcp connect: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return &itHarness{session: session, dbURL: dbURL}
+	return &itHarness{session: session, dbURL: dbURL, flows: flows}
 }
 
 // itCall invokes a tool and fails the test on a TRANSPORT/protocol error;
@@ -246,7 +263,6 @@ func TestMCPStreamableHTTP_ListToolsExposesTheContract(t *testing.T) {
 	want := map[string]bool{ // name -> read-only
 		"register_process_capacity_constraint": false,
 		"get_effective_process_capacity":       true,
-		"register_process_path":                false,
 		"get_process_path_capacity":            true,
 		"create_capacity_plan":                 false,
 		"publish_capacity_plan":                false,
@@ -300,9 +316,7 @@ func TestMCPStreamableHTTP_CallToolRoundTripThroughPostgres(t *testing.T) {
 	}
 
 	// The path and the shortage plan.
-	h.itOK(t, "register_process_path", map[string]any{
-		"id": "it-mcp-path", "name": "It MCP path", "steps": []string{"PICK"},
-	})
+	h.seedITPath(t, "it-mcp-path", []string{"PICK"})
 	plan := h.itOK(t, "create_capacity_plan", map[string]any{
 		"warehouse_id": "WH-1", "site_id": "SIM1", "location": "IT-MCP-LOC",
 		"window_start": start, "window_end": end, "path_id": "it-mcp-path",
@@ -377,11 +391,6 @@ func TestMCPStreamableHTTP_RejectionsAreToolErrors(t *testing.T) {
 	})
 	if !res.IsError || !strings.Contains(itToolText(res), "process-capacity-not-found") {
 		t.Fatalf("unknown identity = isError %v, text %q", res.IsError, itToolText(res))
-	}
-
-	res = h.itCall(t, "register_process_path", map[string]any{"id": "empty", "name": "Empty", "steps": []string{}})
-	if !res.IsError || !strings.Contains(itToolText(res), "empty-process-path-steps") {
-		t.Fatalf("empty steps = isError %v, text %q", res.IsError, itToolText(res))
 	}
 
 	res = h.itCall(t, "get_capacity_plan", map[string]any{"id": "no-such-plan"})

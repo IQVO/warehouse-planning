@@ -24,9 +24,6 @@ type Server struct {
 	// inventory-storage's GetUsable/Classifications convention).
 	ProcessCapacities ports.ProcessCapacityRepository
 
-	// RegisterProcessPath seeds a ProcessPath read model (Phase 2: no
-	// event-driven sync from process-path-management yet).
-	RegisterProcessPath *usecases.RegisterProcessPath
 	// GetProcessPathCapacity computes a ProcessPath's normalized,
 	// end-to-end capacity and bottleneck step.
 	GetProcessPathCapacity *usecases.GetProcessPathCapacity

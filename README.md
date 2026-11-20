@@ -22,7 +22,8 @@ It does **not** own execution (`fulfillment-execution`, `wes-work-planning`),
 not the warehouse map (`facility-layout` — consumed), not labour supply
 (`workforce-management` — it commits the heads; consumed), not the engineered
 labour standards (`labor-performance` — a local copy is consumed), not the
-process-flow topology (`process-path-management`), not inventory. It never
+process-flow topology (`process-path-management` — a local copy of its flows
+is consumed, ADR 0025), not inventory. It never
 reads stock and has no solver.
 It is an **Open Host Service** with a **Published Language**: its REST API,
 its 14 MCP tools and its events on `warehouse.warehouse-planning.events`;
@@ -172,7 +173,8 @@ The projector consumes `warehouse.warehouse-planning.analytics` under
 
 ### Requirement-side tables
 
-Added by the OLTP migrations of ADR 0022, ADR 0023 and ADR 0025 (all additive):
+Added by the OLTP migrations of ADR 0022, ADR 0023 and ADR 0025 (additive, except 0019 which
+DROPS the retired `process_paths` table):
 
 | Migration | Table / column | One row per | Holds |
 |---|---|---|---|
@@ -340,7 +342,7 @@ Write side:
 | Method | Path | Purpose | Success |
 |---|---|---|---|
 | `POST` | `/process-capacities` | RegisterProcessCapacityConstraint | `201` + `Location` |
-| `POST` | `/process-paths` | RegisterProcessPath | `201` + `Location` |
+| `POST` | `/process-paths` | retired (ADR 0025 stage 2): `410 process-path-moved`, naming process-path-management's `PUT /process-flows/{flowId}` | `410` |
 | `POST` | `/capacity-plans` | CreateCapacityPlan (DRAFT; shortage + bottleneck) | `201` + `Location` |
 | `POST` | `/capacity-plans/{id}/publications` | PublishCapacityPlan | `200` |
 | `PUT` | `/station-standards/{location}/{process_type}` | DeclareStationStandard | `200` |
@@ -438,8 +440,8 @@ migrations on start). Reads: `get_capacity_plan`,
 `get_storage_capacity`, `list_station_standards`. Writes (this surface is
 NOT read-only, unlike most siblings): `create_capacity_plan`,
 `publish_capacity_plan`, `declare_inbound_labour_standard`,
-`declare_station_standard`, `register_process_capacity_constraint`,
-`register_process_path`. See `.claude/rules/mcp.md` and
+`declare_station_standard`, `register_process_capacity_constraint`.
+(`register_process_path` retired with ADR 0025 stage 2.) See `.claude/rules/mcp.md` and
 [the MCP tools page](docs/docs/mcp/tools.md).
 
 ### Running the A2A agent in Kubernetes

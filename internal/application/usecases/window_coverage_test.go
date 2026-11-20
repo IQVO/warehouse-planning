@@ -30,18 +30,18 @@ func atH(h float64) time.Time { return liveStart.Add(time.Duration(h * float64(t
 
 type coverageFixture struct {
 	pcs    *memory.ProcessCapacityRepo
-	paths  *memory.ProcessPathRepo
+	flows  *memory.ProcessFlowRepo
 	reg    *RegisterProcessCapacityConstraint
 	getCap *GetProcessPathCapacity
 }
 
 func newCoverageFixture(t *testing.T) *coverageFixture {
 	t.Helper()
-	pcs, paths := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo()
+	pcs, flows := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo()
 	return &coverageFixture{
-		pcs: pcs, paths: paths,
+		pcs: pcs, flows: flows,
 		reg:    &RegisterProcessCapacityConstraint{Repo: pcs},
-		getCap: &GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
+		getCap: &GetProcessPathCapacity{ProcessPaths: &FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
 	}
 }
 
@@ -57,9 +57,8 @@ func (f *coverageFixture) register(t *testing.T, step processcapacity.ProcessTyp
 
 func (f *coverageFixture) path(t *testing.T, id string, steps ...processpath.ProcessType) {
 	t.Helper()
-	if _, err := (&RegisterProcessPath{Repo: f.paths}).Handle(context.Background(), RegisterProcessPathCommand{ID: id, Name: id, Steps: steps}); err != nil {
-		t.Fatal(err)
-	}
+	at := time.Unix(0, 0).UTC()
+	seedFlow(t, context.Background(), f.flows, id, at, steps...)
 }
 
 // seedLive registers the live shape: PICK +32h, REBIN +8h, PACK +24h from the

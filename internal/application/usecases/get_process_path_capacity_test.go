@@ -8,7 +8,6 @@ import (
 
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 // f64ptr is a small helper so fixtures can express "this optional
@@ -21,7 +20,7 @@ func f64ptr(v float64) *float64 { return &v }
 // PACK=1800 PACKAGE/HOUR, all at PATH-ZONE-A) plus the matching
 // ProcessPath, through the SAME use cases + in-memory repos the HTTP
 // handler wires -- proving the two layers agree.
-func seedPickRebinPackPathCapacity(t *testing.T, ctx context.Context, pcRepo *memory.ProcessCapacityRepo, ppRepo *memory.ProcessPathRepo, start, end time.Time) {
+func seedPickRebinPackPathCapacity(t *testing.T, ctx context.Context, pcRepo *memory.ProcessCapacityRepo, flows *memory.ProcessFlowRepo, start, end time.Time) {
 	t.Helper()
 	pcUC := &RegisterProcessCapacityConstraint{Repo: pcRepo}
 
@@ -49,14 +48,7 @@ func seedPickRebinPackPathCapacity(t *testing.T, ctx context.Context, pcRepo *me
 		}
 	}
 
-	ppUC := &RegisterProcessPath{Repo: ppRepo}
-	if _, err := ppUC.Handle(ctx, RegisterProcessPathCommand{
-		ID:    "pick-rebin-pack",
-		Name:  "Pick-Rebin-Pack",
-		Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"},
-	}); err != nil {
-		t.Fatalf("unexpected error registering the ProcessPath: %v", err)
-	}
+	seedFlow(t, ctx, flows, "pick-rebin-pack", start, "PICK", "REBIN", "PACK")
 }
 
 // TestGetProcessPathCapacity_WorkedExample reproduces, byte-for-byte, the
@@ -65,13 +57,13 @@ func seedPickRebinPackPathCapacity(t *testing.T, ctx context.Context, pcRepo *me
 // with REBIN as the bottleneck.
 func TestGetProcessPathCapacity_WorkedExample(t *testing.T) {
 	pcRepo := memory.NewProcessCapacityRepo()
-	ppRepo := memory.NewProcessPathRepo()
+	flows := memory.NewProcessFlowRepo()
 	ctx := context.Background()
 	start, end := pickZoneAWindowTimes()
 
-	seedPickRebinPackPathCapacity(t, ctx, pcRepo, ppRepo, start, end)
+	seedPickRebinPackPathCapacity(t, ctx, pcRepo, flows, start, end)
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	uc := &GetProcessPathCapacity{ProcessPaths: &FlowPathFinder{Flows: flows}, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	result, err := uc.Handle(ctx, GetProcessPathCapacityCommand{
 		ProcessPathID:    "pick-rebin-pack",
 		Location:         "PATH-ZONE-A",
@@ -93,10 +85,10 @@ func TestGetProcessPathCapacity_WorkedExample(t *testing.T) {
 
 func TestGetProcessPathCapacity_ProcessPathNotFound(t *testing.T) {
 	pcRepo := memory.NewProcessCapacityRepo()
-	ppRepo := memory.NewProcessPathRepo()
+	flows := memory.NewProcessFlowRepo()
 	start, end := pickZoneAWindowTimes()
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	uc := &GetProcessPathCapacity{ProcessPaths: &FlowPathFinder{Flows: flows}, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	_, err := uc.Handle(context.Background(), GetProcessPathCapacityCommand{
 		ProcessPathID: "nowhere",
 		Location:      "PATH-ZONE-A",
@@ -114,7 +106,7 @@ func TestGetProcessPathCapacity_ProcessPathNotFound(t *testing.T) {
 // never a false zero bottleneck.
 func TestGetProcessPathCapacity_MissingStepCapacity(t *testing.T) {
 	pcRepo := memory.NewProcessCapacityRepo()
-	ppRepo := memory.NewProcessPathRepo()
+	flows := memory.NewProcessFlowRepo()
 	ctx := context.Background()
 	start, end := pickZoneAWindowTimes()
 
@@ -132,16 +124,9 @@ func TestGetProcessPathCapacity_MissingStepCapacity(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	ppUC := &RegisterProcessPath{Repo: ppRepo}
-	if _, err := ppUC.Handle(ctx, RegisterProcessPathCommand{
-		ID:    "pick-only",
-		Name:  "Pick-Only",
-		Steps: []processpath.ProcessType{"PICK", "REBIN"},
-	}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	seedFlow(t, ctx, flows, "pick-only", start, "PICK", "REBIN")
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	uc := &GetProcessPathCapacity{ProcessPaths: &FlowPathFinder{Flows: flows}, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	_, err := uc.Handle(ctx, GetProcessPathCapacityCommand{
 		ProcessPathID:    "pick-only",
 		Location:         "PATH-ZONE-B",
@@ -157,13 +142,13 @@ func TestGetProcessPathCapacity_MissingStepCapacity(t *testing.T) {
 
 func TestGetProcessPathCapacity_RejectsInvalidWorkloadProfile(t *testing.T) {
 	pcRepo := memory.NewProcessCapacityRepo()
-	ppRepo := memory.NewProcessPathRepo()
+	flows := memory.NewProcessFlowRepo()
 	ctx := context.Background()
 	start, end := pickZoneAWindowTimes()
 
-	seedPickRebinPackPathCapacity(t, ctx, pcRepo, ppRepo, start, end)
+	seedPickRebinPackPathCapacity(t, ctx, pcRepo, flows, start, end)
 
-	uc := &GetProcessPathCapacity{ProcessPaths: ppRepo, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	uc := &GetProcessPathCapacity{ProcessPaths: &FlowPathFinder{Flows: flows}, ProcessCapacities: pcRepo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	_, err := uc.Handle(ctx, GetProcessPathCapacityCommand{
 		ProcessPathID:    "pick-rebin-pack",
 		Location:         "PATH-ZONE-A",

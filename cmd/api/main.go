@@ -101,7 +101,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer closeAdapters()
-	pcRepo, pathRepo := ad.processCapacities, ad.processPaths
+	pcRepo := ad.processCapacities
 
 	// ADR 0005: every domain event is enqueued twice in the same unit of
 	// work, on the integration topic and on the analytics topic
@@ -117,7 +117,7 @@ func run(ctx context.Context) error {
 		Outbox: ad.outbox, Encoder: encoder, UnitOfWork: ad.uow,
 	}
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths:      &usecases.FlowFirstPathFinder{Flows: ad.processFlows, Local: pathRepo},
+		ProcessPaths:      &usecases.FlowPathFinder{Flows: ad.processFlows},
 		ProcessCapacities: pcRepo,
 		StationStandards:  ad.stationStandards, Tally: ad.tallyReader,
 	}
@@ -165,7 +165,6 @@ func buildServer(
 	server := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
 		ProcessCapacities:                 ad.processCapacities,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: ad.processPaths},
 		GetProcessPathCapacity:            pathCapacity,
 		// Phase 4: every CapacityPlan write saves the aggregate and
 		// inserts its CloudEvents into the outbox in ONE UnitOfWork.
@@ -207,7 +206,7 @@ func buildServer(
 		GetInboundDemand:             inboundDemand,
 		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: ad.capacityPlans, Observed: ad.observedCapacity},
 		// Console remote list reads (REST only; no MCP tool).
-		ListProcessPaths:  &usecases.ListProcessPaths{Paths: &usecases.FlowFirstPathLister{Flows: ad.processFlows, Local: ad.pathLister}},
+		ListProcessPaths:  &usecases.ListProcessPaths{Paths: &usecases.FlowPathLister{Flows: ad.processFlows}},
 		GetProcessPath:    &usecases.GetProcessPath{Paths: pathCapacity.ProcessPaths},
 		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: ad.planLister},
 		// ADR 0024 decision 4: scenarios side by side (REST only).
@@ -228,7 +227,6 @@ func buildServer(
 // adapters is the set of outbound adapters the composition root wires.
 type adapters struct {
 	processCapacities ports.ProcessCapacityRepository
-	processPaths      ports.ProcessPathRepository
 	processedEvents   ports.ProcessedEventRepository
 	storageTally      ports.StorageTallyRepository
 	// tallyReader and stationStandards back the read-time station-capacity
@@ -270,7 +268,6 @@ type adapters struct {
 	// pathLister and planLister are the list-read sides of processPaths and
 	// capacityPlans (the same repositories), behind GET /process-paths and
 	// GET /capacity-plans.
-	pathLister ports.ProcessPathLister
 	planLister ports.CapacityPlanLister
 
 	// ADR 0023: the workload forecasts and the shift labour plans, and the
@@ -316,11 +313,10 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 	logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
 	outboxRepo := postgres.NewOutboxRepo(pool)
 	tallyRepo := postgres.NewStorageTallyRepo(pool)
-	pathRepo, planRepo := postgres.NewProcessPathRepo(pool), postgres.NewCapacityPlanRepo(pool)
+	planRepo := postgres.NewCapacityPlanRepo(pool)
 
 	return adapters{
 		processCapacities: postgres.NewProcessCapacityRepo(pool),
-		processPaths:      pathRepo,
 		processedEvents:   postgres.NewProcessedEventRepo(pool),
 		storageTally:      tallyRepo,
 		tallyReader:       tallyRepo,
@@ -337,7 +333,6 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
 		laborStandards:      postgres.NewLaborStandardRepo(pool),
 		processFlows:        postgres.NewProcessFlowRepo(pool),
-		pathLister:          pathRepo,
 		planLister:          planRepo,
 		workloadForecasts:   postgres.NewWorkloadForecastRepo(pool),
 		labourPlans:         postgres.NewLabourPlanRepo(pool),

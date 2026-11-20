@@ -42,8 +42,8 @@ Study project: not production software.
    `order-management` (ADR 0004), arrive as Kafka events and live in local read
    models (ADR 0001). Labour standards from `labor-performance` (ADR 0022) and
    process flows from `process-path-management` (ADR 0025) arrive the same way;
-   a flow wins over a locally declared `ProcessPath` of the same id (`source: flow`) until the
-   local declaration retires (ADR 0025 stages 2-3). Stock from
+   the ACTIVE flow of that id is the path (`source: flow`; ADR 0025 stage 3 dropped the local table
+   and declaration code), and `POST /process-paths` answers 410 process-path-moved. Stock from
    `inventory-storage` is not capacity and is never read.
 6. **Station capacity is composed at READ time** (`stationCount x
    StationStandard`, ADR 0002; nothing derived is stored as a

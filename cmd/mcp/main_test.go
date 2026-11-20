@@ -26,7 +26,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	pc, plans, outboxRepo := memory.NewProcessCapacityRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	tally := memory.NewStorageTallyRepo()
 	deps, err := newDeps(repositories{
-		processCapacities: pc, processPaths: memory.NewProcessPathRepo(), standards: memory.NewStationStandardRepo(),
+		processCapacities: pc, processFlows: memory.NewProcessFlowRepo(), standards: memory.NewStationStandardRepo(),
 		tally: tally, plans: plans, outbox: outboxRepo, demand: memory.NewOrderDemandRepo(),
 		uow: memory.NewUnitOfWork(pc, plans, outboxRepo),
 
@@ -83,15 +83,15 @@ func TestStreamableHTTP_RootAndMCPPathsServeTools(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list tools: %v", err)
 			}
-			if len(tools.Tools) != 14 {
-				t.Fatalf("tools = %d, want 14", len(tools.Tools))
+			if len(tools.Tools) != 13 {
+				t.Fatalf("tools = %d, want 13", len(tools.Tools))
 			}
 
 			res, err := session.CallTool(context.Background(), &sdk.CallToolParams{
-				Name: "register_process_path", Arguments: map[string]any{"id": "p" + strings.ReplaceAll(path, "/", ""), "name": "n", "steps": []string{"PICK"}},
+				Name: "get_inbound_demand", Arguments: map[string]any{"location": "FC01", "path_id": "PICK", "window_start": "2026-10-05T08:00:00Z", "window_end": "2026-10-05T16:00:00Z"},
 			})
 			if err != nil || res.IsError {
-				t.Fatalf("register_process_path: err=%v res=%+v", err, res)
+				t.Fatalf("get_inbound_demand: err=%v res=%+v", err, res)
 			}
 		})
 	}

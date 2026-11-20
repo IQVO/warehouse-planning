@@ -9,13 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	inboundmcp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/mcp"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func startPostgres(t *testing.T) string {
@@ -87,7 +91,20 @@ func TestMCPAgainstPostgres_Section43PersistsPlanAndOutbox(t *testing.T) {
 			"constraint_type": "LABOR", "quantity": c.qty, "unit": c.unit, "period_seconds": 3600,
 		})
 	}
-	call("register_process_path", map[string]any{"id": "tote-path", "name": "Tote", "steps": []string{"PICK", "REBIN", "PACK"}})
+	// ADR 0025 stage 2: register_process_path retired; seed the local path
+	// through the use case over the same Postgres.
+	seedPool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("seed pool: %v", err)
+	}
+	seedFlow, ferr := processflow.New(processflow.Params{FlowID: "tote-path", Name: "Tote", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := postgres.NewProcessFlowRepo(seedPool).Record(ctx, seedFlow); err != nil {
+		t.Fatalf("seed flow: %v", err)
+	}
+	seedPool.Close()
 	plan := call("create_capacity_plan", map[string]any{
 		"warehouse_id": "WH-1", "site_id": "FC01", "location": "FC01", "window_start": start, "window_end": end,
 		"path_id": "tote-path", "assigned_demand": 12000, "units_per_order": 2.5, "packages_per_order": 1,

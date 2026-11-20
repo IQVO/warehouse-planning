@@ -38,7 +38,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // wireTemplateDB is the once-migrated template every test clones.
@@ -140,7 +140,7 @@ func wireMigratedDB(t *testing.T) string {
 // topic). No in-memory repo fakes.
 type wiredStack struct {
 	register *usecases.RegisterProcessCapacityConstraint
-	paths    *usecases.RegisterProcessPath
+	flows    *postgres.ProcessFlowRepo
 	create   *usecases.CreateCapacityPlan
 	publish  *usecases.PublishCapacityPlan
 	read     *usecases.GetProcessPathCapacity
@@ -158,7 +158,7 @@ func newWiredStack(t *testing.T) *wiredStack {
 	t.Cleanup(pool.Close)
 
 	pcs := postgres.NewProcessCapacityRepo(pool)
-	pathRepo := postgres.NewProcessPathRepo(pool)
+	flows := postgres.NewProcessFlowRepo(pool)
 	plans := postgres.NewCapacityPlanRepo(pool)
 	ob := postgres.NewOutboxRepo(pool)
 	standards := postgres.NewStationStandardRepo(pool)
@@ -167,11 +167,11 @@ func newWiredStack(t *testing.T) *wiredStack {
 	encoder := outboundkafka.NewFanoutEncoder()
 
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: pathRepo, ProcessCapacities: pcs, StationStandards: standards, Tally: tally,
+		ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: standards, Tally: tally,
 	}
 	return &wiredStack{
 		register: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
-		paths:    &usecases.RegisterProcessPath{Repo: pathRepo},
+		flows:    flows,
 		create: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: plans, Outbox: ob,
 			Encoder: encoder, UnitOfWork: uow,
@@ -205,10 +205,12 @@ func (s *wiredStack) wireSeed(t *testing.T) {
 			t.Fatalf("register %s: %v", reg.process, err)
 		}
 	}
-	if _, err := s.paths.Handle(ctx, usecases.RegisterProcessPathCommand{
-		ID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"},
-	}); err != nil {
-		t.Fatalf("register path: %v", err)
+	sf, ferr := processflow.New(processflow.Params{FlowID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := s.flows.Record(ctx, sf); err != nil {
+		t.Fatalf("seed flow: %v", err)
 	}
 }
 

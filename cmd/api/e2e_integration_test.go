@@ -22,6 +22,9 @@ import (
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // The end-to-end proof that the shipped binary is really wired: the test boots
@@ -471,6 +474,28 @@ type world struct {
 	planID  string
 }
 
+// seedLocalPath declares a local ProcessPath through the use case over the
+// real database: ADR 0025 stage 2 retired POST /process-paths (always 410).
+func (w *world) seedLocalPath(t *testing.T, id, name string, steps ...string) {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(), w.e.dbURL)
+	if err != nil {
+		t.Fatalf("seed pool: %v", err)
+	}
+	defer pool.Close()
+	stages := make([]processflow.Stage, 0, len(steps))
+	for _, s := range steps {
+		stages = append(stages, processflow.Stage{PathID: s, ProcessType: processflow.ProcessType(s)})
+	}
+	flow, ferr := processflow.New(processflow.Params{FlowID: id, Name: name, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow %s: %v", id, ferr)
+	}
+	if _, err := postgres.NewProcessFlowRepo(pool).Record(context.Background(), flow); err != nil {
+		t.Fatalf("seed flow %s: %v", id, err)
+	}
+}
+
 // Phase 1: the output topics do not exist yet (a fresh cluster before
 // anything published). Readiness needs Postgres plus a broker answering
 // metadata, NOT topics, so the service is ready at once, and it creates no
@@ -664,7 +689,7 @@ func phaseVariance(t *testing.T, s *service, w *world) {
 // is tiny), publish it.
 func phaseWorkflow(t *testing.T, s *service, w *world) {
 	t.Helper()
-	s.call(http.MethodPost, "/process-paths", `{"id":"pick-only","name":"Pick","steps":["PICK"]}`, http.StatusCreated)
+	w.seedLocalPath(t, "pick-only", "Pick", "PICK")
 	var dem struct {
 		Orders        int `json:"orders"`
 		ReleasedLines int `json:"released_lines"`
@@ -712,12 +737,14 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 // never a Postgres 22021 -> 500, and nothing is written.
 func phaseNUL(t *testing.T, s *service, w *world) {
 	t.Helper()
-	before := w.db.count(`SELECT count(*) FROM process_paths`)
+	before := w.db.count(`SELECT count(*) FROM process_flows`)
+	// The fleet request guard rejects a NUL body before any route (and before
+	// the retired 410 handler) runs; nothing is written either way.
 	assertProblem(t, s.call(http.MethodPost, "/process-paths", `{"id":"p-nul","name":"a\u0000b","steps":["PICK"]}`, http.StatusBadRequest), "malformed-request-body")
 	assertProblem(t, s.call(http.MethodGet, "/capacity-plans/pl%00an", "", http.StatusNotFound), "resource-not-found")
 	assertProblem(t, s.call(http.MethodGet, "/storage-capacity?location=WH%001", "", http.StatusBadRequest), "malformed-request-query")
-	if after := w.db.count(`SELECT count(*) FROM process_paths`); after != before {
-		t.Fatalf("process_paths %d -> %d: a NUL request wrote a row", before, after)
+	if after := w.db.count(`SELECT count(*) FROM process_flows`); after != before {
+		t.Fatalf("process_flows %d -> %d: a NUL request wrote a row", before, after)
 	}
 }
 

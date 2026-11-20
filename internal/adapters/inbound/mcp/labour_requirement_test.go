@@ -15,7 +15,7 @@ import (
 // site, PICK 12 s scoped to SIM1.
 func newLabourHarness(t *testing.T) *harness {
 	t.Helper()
-	deps, outboxRepo, tallyRepo := newStack()
+	deps, outboxRepo, tallyRepo, flows := newStack()
 	standards := memory.NewLaborStandardRepo()
 	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	for _, p := range []laborstandard.Params{
@@ -31,7 +31,7 @@ func newLabourHarness(t *testing.T) *harness {
 		}
 	}
 	deps.CreateCapacityPlan.LaborStandards = standards
-	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo}
+	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo, flows: flows}
 }
 
 func labourItems(t *testing.T, plan map[string]any) []map[string]any {

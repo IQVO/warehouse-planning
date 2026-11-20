@@ -17,7 +17,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/tally"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 func scalar[T any](t *testing.T, pool *pgxpool.Pool, query string, args ...any) T {
@@ -320,7 +320,7 @@ func TestStorageTallyReader_Postgres_SiteScopedReads(t *testing.T) {
 func TestComposedPathCapacity_RealPostgres_FixturesBandC(t *testing.T) {
 	pool := newMigratedPool(t)
 	ctx := context.Background()
-	pcs, paths := postgres.NewProcessCapacityRepo(pool), postgres.NewProcessPathRepo(pool)
+	pcs, flows := postgres.NewProcessCapacityRepo(pool), postgres.NewProcessFlowRepo(pool)
 	standards, tallyRepo := postgres.NewStationStandardRepo(pool), postgres.NewStorageTallyRepo(pool)
 	plans, ob, uow := postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool), postgres.NewUnitOfWork(pool)
 
@@ -337,9 +337,11 @@ func TestComposedPathCapacity_RealPostgres_FixturesBandC(t *testing.T) {
 	labor("PICK", 8000, processcapacity.UnitUnit)
 	labor("REBIN", 2500, processcapacity.UnitUnit)
 	labor("PACK", 2500, processcapacity.UnitPackage)
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(ctx, usecases.RegisterProcessPathCommand{
-		ID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"},
-	}); err != nil {
+	sf, ferr := processflow.New(processflow.Params{FlowID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: planStart})
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	if _, err := flows.Record(ctx, sf); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
@@ -352,7 +354,7 @@ func TestComposedPathCapacity_RealPostgres_FixturesBandC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: standards, Tally: tallyRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: standards, Tally: tallyRepo}
 	upo, ppo := 2.5, 1.0
 	get := func() usecases.GetProcessPathCapacityResult {
 		t.Helper()

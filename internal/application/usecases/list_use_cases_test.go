@@ -99,12 +99,9 @@ func TestListProcessPaths(t *testing.T) {
 		t.Errorf("err = %v, want boom", err)
 	}
 
-	repo := memory.NewProcessPathRepo()
-	path, _ := processpath.NewProcessPath("pick-rebin-pack", "Pick-Rebin-Pack", []processpath.ProcessType{"PICK", "REBIN", "PACK"})
-	if err := repo.Save(context.Background(), path); err != nil {
-		t.Fatal(err)
-	}
-	got, err = (&ListProcessPaths{Paths: repo}).Handle(context.Background(), nil, 10)
+	flows := memory.NewProcessFlowRepo()
+	seedFlow(t, context.Background(), flows, "pick-rebin-pack", time.Unix(0, 0).UTC(), "PICK", "REBIN", "PACK")
+	got, err = (&ListProcessPaths{Paths: &FlowPathLister{Flows: flows}}).Handle(context.Background(), nil, 10)
 	if err != nil || len(got) != 1 || got[0].ID() != "pick-rebin-pack" {
 		t.Errorf("got %v, %v; want the registered path", got, err)
 	}

@@ -176,7 +176,7 @@ Consequences; ADR 0023).
 | `order-management` | `OrderPartiallyAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | Upstream OHS + PL; ACL (always on) |
 | Operator / `warehouse-console` remote | Register process capacity constraint | Command | REST `POST /process-capacities`; MCP `register_process_capacity_constraint` | This context is the OHS |
 | Operator / remote | Get effective process capacity | Query | REST `GET /process-capacities`; MCP `get_effective_process_capacity` | OHS |
-| Operator / remote | Register process path | Command | REST `POST /process-paths`; MCP `register_process_path` (until ADR 0025 stage 2 retires it) | OHS |
+| Operator | Declare a process flow | Command | process-path-management `PUT /process-flows/{flowId}`; consumed here as the `process_flows` copy (ADR 0025; the local `POST /process-paths` answers `410 process-path-moved` since stage 2) | ACL |
 | `process-path-management` | Record process flow | Command (event-fed) | Kafka `ProcessFlowDefined/Revised/Retired` on `warehouse.process-path-management.events` -> the `process_flows` copy, applied only when its `version` is greater (ADR 0025) | ACL |
 | `warehouse-console` remote | List process paths | Query | REST `GET /process-paths` (each item `source: flow\|local`) and `GET /process-paths/{id}` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get process path capacity | Query | REST `GET /process-paths/{id}/capacity`; MCP `get_process_path_capacity` | OHS (the agent is a Customer of the MCP tool) |

@@ -37,8 +37,10 @@ import (
 
 	inboundhttp "github.com/claudioed/warehouse-planning/internal/adapters/inbound/http"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // httpTemplateDB is the once-migrated template every test clones.
@@ -138,6 +140,14 @@ func httpMigratedDB(t *testing.T) string {
 // exactly like cmd/api's buildServer, and serves it over httptest.
 func newPostgresRouter(t *testing.T) *httptest.Server {
 	t.Helper()
+	srv, _ := newPostgresRouterWithPaths(t)
+	return srv
+}
+
+// newPostgresRouterWithPaths also returns the path repo so tests can seed the
+// local declaration directly (ADR 0025 stage 2 retired POST /process-paths).
+func newPostgresRouterWithPaths(t *testing.T) (*httptest.Server, *memory.ProcessFlowRepo) {
+	t.Helper()
 	ctx := context.Background()
 	pool, err := postgres.NewPool(ctx, httpMigratedDB(t))
 	if err != nil {
@@ -145,19 +155,18 @@ func newPostgresRouter(t *testing.T) *httptest.Server {
 	}
 	t.Cleanup(pool.Close)
 
-	pcs, paths := postgres.NewProcessCapacityRepo(pool), postgres.NewProcessPathRepo(pool)
+	pcs, flows := postgres.NewProcessCapacityRepo(pool), memory.NewProcessFlowRepo()
 	standards, tally := postgres.NewStationStandardRepo(pool), postgres.NewStorageTallyRepo(pool)
 	plans, ob := postgres.NewCapacityPlanRepo(pool), postgres.NewOutboxRepo(pool)
 	uow := postgres.NewUnitOfWork(pool)
 	encoder := outboundkafka.NewFanoutEncoder()
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: standards, Tally: tally,
+		ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: standards, Tally: tally,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: postgres.NewOrderDemandRepo(pool)}
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: plans, Outbox: ob,
@@ -171,7 +180,7 @@ func newPostgresRouter(t *testing.T) *httptest.Server {
 		StationStandards:       standards,
 		GetStorageCapacity:     &usecases.GetStorageCapacity{Tally: tally},
 		GetExpectedDemand:      expectedDemand,
-		ListProcessPaths:       &usecases.ListProcessPaths{Paths: paths},
+		ListProcessPaths:       &usecases.ListProcessPaths{Paths: &usecases.FlowPathLister{Flows: flows}},
 		ListCapacityPlans:      &usecases.ListCapacityPlans{Plans: plans},
 
 		UnitOfWork:  uow,
@@ -179,7 +188,7 @@ func newPostgresRouter(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, flows
 }
 
 // itPost posts a JSON body and returns status + body.
@@ -243,7 +252,7 @@ func itProblemSlug(t *testing.T, body []byte) string {
 // back (GET -> 200 round trip), create a DRAFT plan, publish it, and read
 // the PUBLISHED state back — plus the outbox rows the writes queued.
 func TestHTTP_Postgres_ResourceLifecycleRoundTrip(t *testing.T) {
-	srv := newPostgresRouter(t)
+	srv, flows := newPostgresRouterWithPaths(t)
 	const start, end = "2026-10-05T08:00:00Z", "2026-10-05T16:00:00Z"
 	const loc = "IT-HTTP-LOC"
 
@@ -289,12 +298,13 @@ func TestHTTP_Postgres_ResourceLifecycleRoundTrip(t *testing.T) {
 		t.Fatalf("effective capacity round trip = %+v", eff)
 	}
 
-	// POST the path, then read its capacity through the composed read.
-	status, body = itPost(t, srv, "/process-paths", map[string]any{
-		"id": "pick-rebin-pack", "name": "Pick-Rebin-Pack", "steps": []string{"PICK", "REBIN", "PACK"},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("register path: %d %s", status, body)
+	// Seed the flow, then read its capacity through the composed read.
+	sf, ferr := processflow.New(processflow.Params{FlowID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := flows.Record(context.Background(), sf); err != nil {
+		t.Fatalf("seed flow: %v", err)
 	}
 	status, body = itGet(t, srv, "/process-paths/pick-rebin-pack/capacity?location="+loc+
 		"&window_start="+start+"&window_end="+end+"&units_per_order=2.5&packages_per_order=1")
@@ -361,17 +371,9 @@ func TestHTTP_Postgres_ValidationRejectionsUseProblemSlugs(t *testing.T) {
 		status int
 		slug   string
 	}{
-		{"malformed json", func() (int, []byte) {
-			resp, err := keyedHTTPPost(srv.URL+"/process-paths", "{not json")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			return resp.StatusCode, readAll(t, resp)
-		}, http.StatusBadRequest, "malformed-json"},
-		{"empty steps", func() (int, []byte) {
+		{"retired declaration (any body)", func() (int, []byte) {
 			return itPost(t, srv, "/process-paths", map[string]any{"id": "x", "name": "X", "steps": []string{}})
-		}, http.StatusUnprocessableEntity, "empty-process-path-steps"},
+		}, http.StatusGone, "process-path-moved"},
 		{"invalid window", func() (int, []byte) {
 			return itPost(t, srv, "/process-capacities", map[string]any{
 				"process_type": "PICK", "location": "L", "window_start": "2026-10-05T16:00:00Z",

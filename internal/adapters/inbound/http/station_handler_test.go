@@ -20,6 +20,7 @@ import (
 type stationServer struct {
 	*httptest.Server
 	tally *memory.StorageTallyRepo
+	flows *memory.ProcessFlowRepo
 }
 
 // newStationServer wires the whole REST surface, station capacity included,
@@ -27,15 +28,14 @@ type stationServer struct {
 // facility consumer would.
 func newStationServer(t *testing.T) *stationServer {
 	t.Helper()
-	pcs, paths, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	pcs, flows, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	standards, tallyRepo := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
 	enc := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: standards, Tally: tallyRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: standards, Tally: tallyRepo}
 	srv := httptest.NewServer(inboundhttp.NewRouter(&inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan:                &usecases.CreateCapacityPlan{PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow},
 		PublishCapacityPlan:               &usecases.PublishCapacityPlan{Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow},
@@ -45,7 +45,7 @@ func newStationServer(t *testing.T) *stationServer {
 		GetStorageCapacity:                &usecases.GetStorageCapacity{Tally: tallyRepo},
 	}))
 	t.Cleanup(srv.Close)
-	return &stationServer{Server: srv, tally: tallyRepo}
+	return &stationServer{Server: srv, tally: tallyRepo, flows: flows}
 }
 
 func (s *stationServer) seed(t *testing.T, zone, tallyType, key string, n int) {
@@ -216,7 +216,7 @@ func (s *stationServer) seedFixtureB(t *testing.T) {
 	}{{"PICK", 8000, "UNIT"}, {"REBIN", 2500, "UNIT"}, {"PACK", 2500, "PACKAGE"}} {
 		s.setLabor(t, reg.process, reg.qty, reg.unit)
 	}
-	registerProcessPath(t, s.Server, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
+	seedFlowFor(t, s.flows, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
 	s.seed(t, "SIM1-OPS-WC", tally.TypeStation, "PACK", 10)
 }
 

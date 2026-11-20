@@ -55,7 +55,6 @@ infrastructure errors are logged and reported as a generic `internal-error`.
 |---|---|---|---|---|
 | `register_process_capacity_constraint` | write | `RegisterProcessCapacityConstraint` | `process_type`, `location`, `window_start`, `window_end`, `constraint_type` (LABOR, LOCATION, EQUIPMENT, STATION, CONVEYOR, BUFFER, REPLENISHMENT), `quantity`, `unit` (UNIT, LINE, ORDER, PACKAGE), `period_seconds` (> 0) | `effective_rate`, `effective_unit`, `binding_constraint` |
 | `get_effective_process_capacity` | read | `ProcessCapacityRepository` port (no use case, as REST) | `process_type`, `location`, `window_start`, `window_end` | `effective_rate`, `effective_unit`, `binding_constraint`, `constraints[]` (`constraint_type`, `quantity`, `unit`, `period_seconds`); `process-capacity-not-found` if none |
-| `register_process_path` | write | `RegisterProcessPath` | `id`, `name`, `steps` (ordered, non-empty) | `id`, `name`, `steps` |
 | `get_process_path_capacity` | read | `GetProcessPathCapacity` | `id`, `location`, `window_start`, `window_end`, optional `units_per_order`, `packages_per_order` | `normalized_rate` (ORDER/hour), `normalized_unit` (`ORDER`), `bottleneck_step`, `step_breakdown[]` (`step`, `normalized_rate` ORDER/hour, `binding_constraint`), `warnings[]` (never null) |
 | `create_capacity_plan` | write | `CreateCapacityPlan` | `warehouse_id`, `location`, `window_start`, `window_end`, `path_id`, optional `assigned_demand` (orders; when given it always wins, `0` included; when omitted it defaults to the orders `get_expected_demand` reports for the location and window, else `missing-assigned-demand` -- never silently 0; docs/adr/0004), optional `units_per_order`, `packages_per_order` | the plan (below), `status: DRAFT`, `demand_source` (`request` \| `orders`) |
 | `publish_capacity_plan` | write | `PublishCapacityPlan` | `id` | the plan, `status: PUBLISHED`, `published_at`; supersedes the PUBLISHED plan of the same site/location/path/window; second call -> `capacity-plan-already-published`; a SUPERSEDED plan -> `capacity-plan-superseded`; a twice-lost race -> `version-conflict` |
@@ -82,8 +81,9 @@ composition (`step_breakdown`, `bottleneck_constraint`, `warnings`);
 `missing-station-standard-field`, `missing-location`).
 
 Annotations (charter §4): read tools `ReadOnlyHint`; write tools destructive
-and, where a repeat call creates or adds state, non-idempotent
-(`register_process_path` is idempotent: same id replaces wholesale).
+and, where a repeat call creates or adds state, non-idempotent.
+`register_process_path` retired with ADR 0025 stage 2 (the local declaration
+moved to process-path-management; POST /process-paths answers 410). 
 `TestToolSurface` pins the tool set, naming, annotations, descriptions and
 snake_case documented arguments.
 

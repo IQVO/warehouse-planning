@@ -135,7 +135,6 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 	logger.Info("postgres adapters configured", "migrations_path", migrationsPath)
 	deps, err := newDeps(repositories{
 		processCapacities: postgres.NewProcessCapacityRepo(pool),
-		processPaths:      postgres.NewProcessPathRepo(pool),
 		standards:         postgres.NewStationStandardRepo(pool),
 		tally:             postgres.NewStorageTallyRepo(pool),
 		plans:             postgres.NewCapacityPlanRepo(pool),
@@ -162,7 +161,6 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 // doubles.
 type repositories struct {
 	processCapacities ports.ProcessCapacityRepository
-	processPaths      ports.ProcessPathRepository
 	standards         ports.StationStandardRepository
 	tally             ports.StorageTallyReader
 	plans             ports.CapacityPlanRepository
@@ -193,7 +191,7 @@ type repositories struct {
 // uses) over r.
 func newDeps(r repositories) (inboundmcp.Deps, error) {
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths:      &usecases.FlowFirstPathFinder{Flows: r.processFlows, Local: r.processPaths},
+		ProcessPaths:      &usecases.FlowPathFinder{Flows: r.processFlows},
 		ProcessCapacities: r.processCapacities, StationStandards: r.standards, Tally: r.tally,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: r.demand}
@@ -212,7 +210,6 @@ func newDeps(r repositories) (inboundmcp.Deps, error) {
 			Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 		},
 		ProcessCapacities:      r.processCapacities,
-		RegisterProcessPath:    &usecases.RegisterProcessPath{Repo: r.processPaths},
 		GetProcessPathCapacity: pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
