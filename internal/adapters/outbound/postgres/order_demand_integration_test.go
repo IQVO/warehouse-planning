@@ -183,11 +183,12 @@ func TestMigration0006_DownIsCleanAndUpIsRepeatable(t *testing.T) {
 	defer func() { _, _ = m.Close() }()
 
 	version, dirty, err := m.Version()
-	if err != nil || dirty || version != 11 {
-		t.Fatalf("version = %d dirty=%v err=%v, want 11 (the latest migration is 0011_idempotency_keys)", version, dirty, err)
+	latest := latestMigrationVersion(t, migrationsDir(t))
+	if err != nil || dirty || version != latest {
+		t.Fatalf("version = %d dirty=%v err=%v, want %d (the latest migration file)", version, dirty, err, latest)
 	}
-	// 0011 (idempotency keys), 0010 (observed capacity) and 0009 (inbound labour demand) sit on top of 0008: undo them first.
-	for _, want := range []uint{10, 9, 8} {
+	// Every migration above 0008 (0009 inbound labour demand onwards) sits on top of it: undo them first.
+	for want := latest - 1; want >= 8; want-- {
 		if err := m.Steps(-1); err != nil {
 			t.Fatalf("down to %d: %v", want, err)
 		}

@@ -41,12 +41,16 @@ type registerProcessPathRequest struct {
 	Steps []string `json:"steps"`
 }
 
-// processPathResponse is POST /process-paths' response body, echoing back
-// the registered path.
+// processPathResponse is the body of POST /process-paths (echoing back the
+// registered path), of GET /process-paths/{id} and of every item of
+// GET /process-paths. source is read-only and says where the path came from:
+// "flow" (a process flow consumed from process-path-management) or "local" (a
+// path declared with POST /process-paths); docs/adr/0025.
 type processPathResponse struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Steps []string `json:"steps"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Steps  []string `json:"steps"`
+	Source string   `json:"source"`
 }
 
 // processPathCapacityResponse is GET /process-paths/{id}/capacity's
@@ -56,7 +60,11 @@ type processPathResponse struct {
 // step_breakdown and warnings are additive (station capacity composition,
 // ADR 0002): each step's normalized rate (ORDER per HOUR) and the constraint
 // type binding it, and any composition warnings (never null).
+//
+// source (docs/adr/0025) is the read-only source of the path the capacity was
+// composed for: "flow" or "local".
 type processPathCapacityResponse struct {
+	Source         string              `json:"source"`
 	NormalizedRate float64             `json:"normalized_rate"`
 	NormalizedUnit string              `json:"normalized_unit"`
 	BottleneckStep string              `json:"bottleneck_step"`
@@ -92,6 +100,18 @@ type createCapacityPlanRequest struct {
 	AssignedDemand   *float64 `json:"assigned_demand"`
 	UnitsPerOrder    *float64 `json:"units_per_order"`
 	PackagesPerOrder *float64 `json:"packages_per_order"`
+	// TasksPerOrder is the OPTIONAL tasks-per-order factor per process type
+	// (docs/adr/0022): the step's tasks are assigned_demand x the factor.
+	// Every value must be positive (422 non-positive-tasks-per-order).
+	TasksPerOrder map[string]float64 `json:"tasks_per_order"`
+	// DemandSource (request, orders or forecast) and ForecastPathID are
+	// OPTIONAL (docs/adr/0024 decision 1); see
+	// usecases.CreateCapacityPlanCommand.
+	DemandSource   string `json:"demand_source"`
+	ForecastPathID string `json:"forecast_path_id"`
+	// Scenario is the OPTIONAL what-if label (docs/adr/0024 decision 2), 1 to
+	// 64 characters; a pointer so an explicit "" is refused, not dropped.
+	Scenario *string `json:"scenario"`
 }
 
 // capacityPlanResponse is the CapacityPlan representation returned by all
@@ -115,12 +135,21 @@ type capacityPlanResponse struct {
 	Shortage           float64 `json:"shortage"`
 	CreatedAt          string  `json:"created_at"`
 	PublishedAt        *string `json:"published_at,omitempty"`
+	// SupersededBy is the id of the plan whose publication superseded this
+	// one; present only when status is SUPERSEDED (docs/adr/0024). Additive.
+	SupersededBy string `json:"superseded_by,omitempty"`
 
 	// DemandSource says where assigned_demand came from: "request" (stated
-	// by the caller; also every plan created before demand ingestion) or
-	// "orders" (defaulted from the order-management read model). Additive,
+	// by the caller; also every plan created before demand ingestion),
+	// "orders" (defaulted from the order-management read model) or
+	// "forecast" (derived from the workload forecast of ForecastPathID,
+	// docs/adr/0024; the path is present only then). Additive,
 	// docs/adr/0004.
-	DemandSource string `json:"demand_source"`
+	DemandSource   string `json:"demand_source"`
+	ForecastPathID string `json:"forecast_path_id,omitempty"`
+	// Scenario is the plan's what-if label (docs/adr/0024); absent when it
+	// carries none. Additive.
+	Scenario string `json:"scenario,omitempty"`
 	// BottleneckConstraint (the constraint type binding the bottleneck
 	// step, e.g. LABOR or STATION; empty for plans created before it was
 	// recorded) and Warnings (never null) are additive, see ADR 0002.
@@ -137,6 +166,27 @@ type capacityPlanResponse struct {
 	InboundLabourMinutes   float64 `json:"inbound_labour_minutes"`
 	InboundAverageHeads    float64 `json:"inbound_average_heads"`
 	InboundStandardMissing bool    `json:"inbound_standard_missing"`
+
+	// LabourRequirement is the labour each step of the path requires
+	// (docs/adr/0022), in path order, computed when the plan was created;
+	// never null ([] for plans stored before it). Additive and informational:
+	// the shortage and the bottleneck do not depend on it.
+	LabourRequirement []labourRequirementItem `json:"labour_requirement"`
+}
+
+// labourRequirementItem is one step's labour requirement: tasks x the
+// labor-performance standard seconds of the step's task type. known is false
+// (with a reason, and zero figures) when no standard is in force or the
+// step's tasks cannot be counted -- never a guessed number.
+type labourRequirementItem struct {
+	ProcessType          string  `json:"process_type"`
+	StandardSeconds      float64 `json:"standard_seconds"`
+	StandardSiteScoped   bool    `json:"standard_site_scoped"`
+	Tasks                float64 `json:"tasks"`
+	RequiredLabourHours  float64 `json:"required_labour_hours"`
+	RequiredAverageHeads float64 `json:"required_average_heads"`
+	Known                bool    `json:"known"`
+	Reason               string  `json:"reason,omitempty"`
 }
 
 // declareStationStandardRequest is PUT /station-standards/{location}/

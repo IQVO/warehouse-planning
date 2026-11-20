@@ -53,14 +53,14 @@ paths:
   10 stations x 180 packages/hour/station = 1,800 packages/hour). Counts live
   in the facility tally (`location_slot_tally`), never as a ProcessCapacity.
 - **Site / location** — a planning `location` is a site (building) code, e.g.
-  `SIM1`: the labor consumer's `building_id`, and the first dash-separated
+  `SIM1`: the labor consumer's `site_code` (or deprecated `building_id`), and the first dash-separated
   segment of the facility zone ids of that site (`SIM1-OPS-WC`,
   `SIM1-STOR-AMB`). The zones of a site are the tally zones whose id starts
   with `<location>-`; a zone with no matching site contributes nothing.
 - **Expected demand (order)** — the local read model of orders
   order-management has promised (`internal/domain/demand`, docs/adr/0004): one
-  `demand.Order` per order id (`location` = the ONE configured site
-  `DEMAND_SITE_ID`, `promise_at` = the order's `promise_date`, `released_lines`,
+  `demand.Order` per order id (`location` = the event's optional `site_id`,
+  else the fallback site `DEMAND_SITE_ID`, ADR 0021; `promise_at` = the order's `promise_date`, `released_lines`,
   `as_of` = the CloudEvents `time`), fed only by Kafka. An order is demand in
   `[start, end)` when `promise_at >= start AND promise_at < end`
   (`Order.CountsIn`: start counts, end does not); last writer wins per order id
@@ -105,6 +105,18 @@ paths:
   serve it, and the resulting shortage (if any). Implemented in Phase 4.
 - **Bottleneck** — the constraint or process-path step currently limiting
   end-to-end flow.
+- **Labour standard** — an immutable fact per `standard_id`, copied from
+  labor-performance (`internal/domain/laborstandard`, ADR 0022). The standard
+  in force for (site, task type, window start) is resolved at READ time by
+  `laborstandard.Resolve`: site-scoped over site-less, then latest
+  `effective_from`, then latest `as_of`; handling-unit standards are stored
+  but not used. A step's ProcessType names its task type when they are equal.
+- **LabourRequirement** — per plan step: tasks x standard seconds
+  (`capacityplan.RequireLabour`). PICK tasks are released lines when the
+  demand came from orders, otherwise `assigned_demand x tasks_per_order[step]`;
+  unknown with `no-labor-standard` or `no-task-factor`, never guessed.
+  Computed at creation and stored with the plan; it never affects the
+  shortage, the bottleneck or any published event.
 
 ## Aggregates
 
@@ -125,14 +137,18 @@ paths:
   (ORDER/HOUR, from `ComputeProcessPathCapacity`), `BottleneckStep`,
   `CapacityOverWindow` (= `PathCapacity` x window hours) and `Shortage`
   (= `max(0, demand - capacityOverWindow)`, never negative; demand exactly
-  equal to the capacity is NOT a shortage), `Status` DRAFT | PUBLISHED, plus
+  equal to the capacity is NOT a shortage), `Status` DRAFT | PUBLISHED | SUPERSEDED (terminal, docs/adr/0024 decision 3), plus
   the informational composition outcome `BottleneckConstraint` (the
   constraint type binding the bottleneck step, e.g. STATION) and `Warnings`
   (no published event carries them).
   The aggregate does no I/O: `Create` takes the already-computed path rate and
   bottleneck plus an explicit id and time. `Publish` moves DRAFT -> PUBLISHED
   and returns `ErrAlreadyPublished` on a second call (never a silent double
-  publish). Events are plain structs it accumulates; `PullEvents()` hands each
+  publish). `Supersede(by, at)` moves a PUBLISHED plan to SUPERSEDED (`superseded_by` = by) and
+  records `CapacityPlanSuperseded`; it returns `ErrSuperseded` on a SUPERSEDED plan and
+  `ErrNotSupersedable` on a DRAFT, a blank `by` or the plan's own id. `Publish` returns
+  `ErrSuperseded` on a SUPERSEDED plan. The `SupersedeKey` is `(site_id, location, path_id,
+  window)`; at most one PUBLISHED plan per key (partial unique index, migration 0017). Events are plain structs it accumulates; `PullEvents()` hands each
   over exactly once. `Rehydrate` rebuilds a stored plan for repositories
   without events.
 
@@ -157,14 +173,19 @@ recorded). The INTEGRATION payload does not serialize it: only the analytics
 stream does (ADR 0005, `integration-events.md`). Since ADR 0012 it also
 carries `SiteID`, serialized ADDITIVELY as `site_id` on the v1 integration
 payload (`omitempty`: a pre-migration-0008 plan publishes without it, and a
-legacy payload without it still decodes). The same four events are written
+legacy payload without it still decodes). The same five events are written
 to both the integration and the analytics topic by the outbox; the analytical
 side (`internal/analytics/report`, `analyticsstore`) is a projection built from
 them and the domain never imports it.
 
-Vocabulary only, NOT implemented or published yet (nothing raises them):
-`ProcessCapacityRegistered` (a native constraint was registered) and
-`ProcessCapacityChanged` (the effective rate changed).
+`ProcessCapacity` raises two events (`internal/domain/processcapacity/events.go`,
+raised in `ProcessCapacity.AddConstraint`): `ProcessCapacityRegistered` (the
+FIRST native constraint registered, so the aggregate came into being) and
+`ProcessCapacityChanged` (a registration moved the effective rate, or the
+binding constraint). The `RegisterProcessCapacityConstraint` use case writes
+them to the outbox in the same unit of work; they are encoded in
+`internal/adapters/outbound/kafka/encoder.go` and published on the integration
+topic only (no analytics copy).
 
 ## Key use cases (`internal/application/usecases`)
 
@@ -211,3 +232,32 @@ Full phased delivery plan, worked examples (reproduced here as test
 fixtures) and acceptance criteria: the maintainer's out-of-repo
 `warehouse-planning-bc-plan.md` design doc (cited in ADR 0001; it is not
 checked in here).
+
+## Requirement side (ADR 0022, ADR 0023)
+
+- **WorkloadForecast** (`internal/domain/workloadforecast`): CPT buckets `{cpt, quantity}` per
+  `(site_id, path_id)`, at least one bucket, replaced whole; equal buckets change nothing (no
+  version bump, no event); event `WorkloadForecastReceived`.
+- **LabourPlan** (`internal/domain/labourplan`): heads per `(site_id, shift_id, path_id)`;
+  `planned_heads <= installed_stations`, `hours > 0`, rate > 0, `rate x heads x hours` finite.
+  Omitted heads = `ceil(units with cpt in [shift_start, shift_start + hours) / (rate x hours))`
+  (`heads_source` forecast); zero buckets in the shift is `422 missing-planned-heads`, never zero
+  heads. Event `LabourPlanCommitted`. The station warning is computed on every read, never stored,
+  and only when the tally knows at least one but fewer stations.
+- **Labour plan drift** = `committed_heads - planned_heads`, raised as `LabourPlanDriftDetected`
+  only when non-zero and different from `last_drift_heads`. Both triggers
+  (`RecordShiftCommitment` from the labor consumer, `CommitLabourPlan` on a CHANGED plan) go
+  through the shared `driftRecorder` inside the caller's unit of work, and record every computed
+  drift, zero included, so a drift that clears and returns is raised again. Never change the plan
+  or the committed heads because of a drift. Committed heads are a read model
+  (`labourplan.Commitment`, table `labour_plan_commitments`), not an aggregate.
+- **Labour standard**: a local copy of labor-performance's facts (`labor_standards`), resolved at
+  read time by `laborstandard.Resolve` (site-specific beats site-wide, then the latest
+  `effective_from`); a missing standard makes the requirement "unknown", never guessed. The code
+  spells it `labor`, the prose `labour`.
+- **Process-path code**: `path_id` is canonical (trimmed, upper case) in every requirement-side
+  key, row and published event (`workloadforecast.CanonicalPathID`; `labourplan.CanonicalPathID`
+  delegates to it). Apply it in the domain constructors and key functions, never in a handler.
+  `site_id` and `shift_id` are matched as sent.
+- Value types used by a port live in the domain (e.g. `labourplan.Commitment`):
+  `TestHexagonalArchitecture` rejects structs in `internal/application/ports`.

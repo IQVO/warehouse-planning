@@ -2,6 +2,8 @@
 
 ## Status
 
+> Part A's SOURCE is superseded by [ADR 0020](./0020-inbound-demand-from-dock-scheduling.md): the dock-appointment events now come from `dock-scheduling` (`warehouse.dock-scheduling.events`, group `DOCK_APPOINTMENT_CONSUMER_GROUP`), are attributed by their own `site_id` (decision 3 no longer applies to appointments) and are ordered by the aggregate `version` (decision 5); `INBOUND_DEMAND_CONSUMER_GROUP` (decision 12) is refused at boot. Decisions 2, 4, 6 and 7 and all of Part B stand.
+
 Accepted (2026-10-20). Additive: nothing that worked before changes, no
 published CloudEvents type, payload, topic or existing REST field changes.
 Closes the two "planned, not implemented" edges of the context map: the inbound

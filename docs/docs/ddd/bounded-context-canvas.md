@@ -49,21 +49,25 @@ flowchart LR
         in2["workforce-management"]:::ctx
         in3["facility-layout"]:::ctx
         in4["order-management"]:::ctx
+        in5["labor-performance"]:::ctx
     end
     subgraph BC["warehouse-planning - Core subdomain - WES tier"]
         direction TB
-        purpose["<b>Purpose</b><br/>Answer whether this warehouse can process the demand<br/>assigned to it given its labor, location, equipment,<br/>station, conveyor and buffer constraints: hold<br/>ProcessCapacity per process, site and window, compose path<br/>capacity at read time, compare with demand in a<br/>CapacityPlan, announce shortages and bottlenecks."]:::card
+        purpose["<b>Purpose</b><br/>Answer whether this warehouse can process the demand<br/>assigned to it given its labor, location, equipment,<br/>station, conveyor and buffer constraints: hold<br/>ProcessCapacity per process, site and window, compose path<br/>capacity at read time, compare with demand in a<br/>CapacityPlan, announce shortages and bottlenecks.<br/>Own the labour requirement: the workload forecast and<br/>the shift labour plan, published for workforce-management."]:::card
         roles["<b>Domain roles</b><br/>- Analysis context (primary)<br/>- Specification context (declared constraints and standards)<br/>- Gateway / Open Host Service<br/>- Own analytics read side"]:::card
-        rules["<b>Business decisions it enforces</b><br/>- A capacity number always carries a window; newest covering<br/>window wins per type<br/>- Station capacity is count x StationStandard, composed at<br/>read time, never stored<br/>- Every rate is normalized to ORDER per hour; LINE is<br/>rejected<br/>- shortage = max(0, demand - capacity over window)<br/>- A plan is published at most once; shortage and bottleneck<br/>events only at publish<br/>- No live cross-context lookup, ever"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- A capacity number always carries a window; newest covering<br/>window wins per type<br/>- Station capacity is count x StationStandard, composed at<br/>read time, never stored<br/>- Every rate is normalized to ORDER per hour; LINE is<br/>rejected<br/>- shortage = max(0, demand - capacity over window)<br/>- A plan is published at most once; shortage and bottleneck<br/>events only at publish<br/>- planned heads never exceed installed stations; omitted<br/>heads are derived from the forecast, zero buckets is no data<br/>- a labour plan drift is surfaced, never corrected<br/>- No live cross-context lookup, ever"]:::card
         purpose ~~~ roles ~~~ rules
     end
     in0 -->|"cmd - REST or MCP<br/>Register process capacity<br/>constraint, Register process<br/>path, Create capacity plan,<br/>Publish capacity plan, Declare<br/>station standard"| BC
     in0 -.->|"qry - REST or MCP<br/>Get effective process<br/>capacity, List process paths,<br/>Get process path capacity, Get<br/>/ list capacity plans, List<br/>station standards, Get storage<br/>capacity, Get expected demand"| BC
     in0 -.->|"qry - REST (reports)<br/>Bottleneck frequency, shortage<br/>trend, plan throughput,<br/>freshness"| BC
     in1 -.->|"qry - MCP<br/>get_process_path_capacity,<br/>get_capacity_plan,<br/>list_station_standards,<br/>get_storage_capacity"| BC
-    in2 ==>|"evt - Kafka<br/>warehouse.workforce.events<br/>ShiftPlanCommitted"| BC
+    in2 ==>|"evt - Kafka<br/>warehouse.workforce.events<br/>ShiftPlanCommitted<br/>(LABOR and committed heads)"| BC
     in3 ==>|"evt - Kafka<br/>warehouse.facility.events<br/>LocationSlotRegistered,<br/>LocationSlotDecommissioned"| BC
     in4 ==>|"evt - Kafka<br/>warehouse.order-management.events<br/>OrderAllocated,<br/>OrderPartiallyAllocated"| BC
+    in0 -->|"cmd - REST only (ADR 0023)<br/>Receive workload forecast,<br/>Commit labour plan"| BC
+    in0 -.->|"qry - REST only<br/>Get workload forecast,<br/>Get / list labour plans"| BC
+    in5 ==>|"evt - Kafka<br/>warehouse.labor-performance.events<br/>LaborStandardDefined,<br/>LaborStandardRevised"| BC
     linkStyle 0 stroke:#1971c2,stroke-width:1.5px
     linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
     linkStyle 2 stroke:#2f9e44,stroke-width:1.5px
@@ -71,6 +75,9 @@ flowchart LR
     linkStyle 4 stroke:#e8590c,stroke-width:2.5px
     linkStyle 5 stroke:#e8590c,stroke-width:2.5px
     linkStyle 6 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 7 stroke:#1971c2,stroke-width:1.5px
+    linkStyle 8 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 9 stroke:#e8590c,stroke-width:2.5px
     class BC bc
 ```
 
@@ -94,17 +101,20 @@ flowchart LR
         out2["none today"]:::none
         out3["own cmd/planning-projector"]:::self
         out4["operators (dead-letter<br/>triage)"]:::self
+        out5["workforce-management<br/>(labour requirement copy)"]:::ctx
     end
     BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>CapacityPlanCreated,<br/>CapacityPlanPublished,<br/>CapacityShortageDetected"| out0
     BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>CapacityPlanPublished"| out1
-    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>BottleneckDetected"| out2
-    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.analytics<br/>the same four types"| out3
-    BC ==>|"evt - Kafka workforce,<br/>facility, order-management<br/>.dlq<br/>a message that failed 5 times"| out4
+    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>BottleneckDetected,<br/>WorkloadForecastReceived,<br/>LabourPlanDriftDetected"| out2
+    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.analytics<br/>the four plan types (projected),<br/>the three requirement types<br/>(acknowledged)"| out3
+    BC ==>|"evt - Kafka workforce,<br/>facility, order-management,<br/>labor-performance .dlq<br/>a message that failed 5 times"| out4
+    BC ==>|"evt - Kafka<br/>warehouse.warehouse-planning.events<br/>LabourPlanCommitted"| out5
     linkStyle 0 stroke:#e8590c,stroke-width:2.5px
     linkStyle 1 stroke:#e8590c,stroke-width:2.5px
     linkStyle 2 stroke:#e8590c,stroke-width:2.5px
     linkStyle 3 stroke:#e8590c,stroke-width:2.5px
     linkStyle 4 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 5 stroke:#e8590c,stroke-width:2.5px
 ```
 
 Source: the Inbound Communication and Outbound Communication tables of this
@@ -126,9 +136,15 @@ labor, location, equipment, station, conveyor and buffer constraints?* It
 holds the usable throughput of each process at each site and window
 (`ProcessCapacity`), composes it at read time into a normalized end-to-end
 path capacity, compares it with the demand assigned to a window in a
-`CapacityPlan`, and announces shortages and bottlenecks as events. It does not
-own labor scheduling, storage slotting, stock, or path capability and
-eligibility authoring (ADR 0001, Consequences).
+`CapacityPlan`, and announces shortages and bottlenecks as events. Since ADR
+0022 and ADR 0023 it also owns the labour **requirement**: a copy of
+labor-performance's engineered standards prices the labour each plan step
+needs, and the `WorkloadForecast` and the shift `LabourPlan` (moved here from
+wes-work-planning) state the heads a path needs per shift, published as
+`LabourPlanCommitted` for workforce-management, which owns the supply. It does not
+own labor scheduling or supply, the engineered standards, storage slotting,
+stock, execution, or path capability and eligibility authoring (ADR 0001,
+Consequences; ADR 0023).
 
 ## Strategic Classification
 
@@ -152,24 +168,31 @@ eligibility authoring (ADR 0001, Consequences).
 
 | Collaborator | Message | Type | Channel | Relationship |
 | --- | --- | --- | --- | --- |
-| `workforce-management` | `ShiftPlanCommitted` (one message per PathPlan line) | Event | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | Upstream OHS + PL; this side is an ACL (`labor_capacity_consumer.go`) |
+| `workforce-management` | `ShiftPlanCommitted` (one message per PathPlan line) | Event | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | Upstream OHS + PL; this side is an ACL (`labor_capacity_consumer.go`): a LABOR constraint, and for a line with a `shift_id` the committed heads of the labour plan drift (ADR 0023) |
+| `labor-performance` | `LaborStandardDefined`, `LaborStandardRevised` | Event | Kafka `warehouse.labor-performance.events`, `com.warehouse.wes.labor-performance.standard.*` | Upstream OHS + PL; ACL (`labor_standard_consumer.go`, always on, ADR 0022) |
 | `facility-layout` | `LocationSlotRegistered` | Event | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | Upstream OHS + PL; ACL (`storage_capacity_consumer.go`) |
 | `facility-layout` | `LocationSlotDecommissioned` | Event | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | Upstream OHS + PL; ACL |
 | `order-management` | `OrderAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` | Upstream OHS + PL; ACL (`order_demand_consumer.go`, always on) |
 | `order-management` | `OrderPartiallyAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | Upstream OHS + PL; ACL (always on) |
 | Operator / `warehouse-console` remote | Register process capacity constraint | Command | REST `POST /process-capacities`; MCP `register_process_capacity_constraint` | This context is the OHS |
 | Operator / remote | Get effective process capacity | Query | REST `GET /process-capacities`; MCP `get_effective_process_capacity` | OHS |
-| Operator / remote | Register process path | Command | REST `POST /process-paths`; MCP `register_process_path` | OHS |
-| `warehouse-console` remote | List process paths | Query | REST `GET /process-paths` | OHS |
+| Operator / remote | Register process path | Command | REST `POST /process-paths`; MCP `register_process_path` (until ADR 0025 stage 2 retires it) | OHS |
+| `process-path-management` | Record process flow | Command (event-fed) | Kafka `ProcessFlowDefined/Revised/Retired` on `warehouse.process-path-management.events` -> the `process_flows` copy, applied only when its `version` is greater (ADR 0025) | ACL |
+| `warehouse-console` remote | List process paths | Query | REST `GET /process-paths` (each item `source: flow\|local`) and `GET /process-paths/{id}` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get process path capacity | Query | REST `GET /process-paths/{id}/capacity`; MCP `get_process_path_capacity` | OHS (the agent is a Customer of the MCP tool) |
 | Operator / remote | Create capacity plan | Command | REST `POST /capacity-plans`; MCP `create_capacity_plan` | OHS |
 | Operator / remote | Publish capacity plan | Command | REST `POST /capacity-plans/{id}/publications`; MCP `publish_capacity_plan` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get capacity plan | Query | REST `GET /capacity-plans/{id}`; MCP `get_capacity_plan` | OHS |
 | `warehouse-console` remote | List capacity plans | Query | REST `GET /capacity-plans` | OHS |
+| Operator / remote | Compare plan scenarios | Query | REST `GET /capacity-plans/comparisons?ids=` (ADR 0024) | OHS |
 | Operator / remote | Declare station standard | Command | REST `PUT /station-standards/{location}/{process_type}`; MCP `declare_station_standard` | OHS |
 | Operator / remote / `warehouse-ops-agent` | List station standards | Query | REST `GET /station-standards`; MCP `list_station_standards` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get storage capacity | Query | REST `GET /storage-capacity`; MCP `get_storage_capacity` | OHS |
 | Operator / remote | Get expected demand | Query | REST `GET /demand`; MCP `get_expected_demand` | OHS |
+| Planner / `e2e-tests` warehouse-day simulation | Receive workload forecast | Command | REST `PUT /workload-forecasts/{site_id}/{path_id}` (no MCP tool, ADR 0023 decision 7) | OHS |
+| Planner / simulation | Get workload forecast | Query | REST `GET /workload-forecasts/{site_id}/{path_id}` | OHS |
+| Planner / simulation | Commit labour plan | Command | REST `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` | OHS |
+| Planner / simulation | Get / list labour plans | Query | REST `GET /labour-plans/{site_id}/{shift_id}/{path_id}`, `GET /labour-plans?site_id=&shift_id=` | OHS |
 | Analyst / dashboard | Bottleneck frequency, shortage trend, plan throughput, freshness | Query | REST `GET /reports/bottleneck-frequency`, `/reports/shortage-trend`, `/reports/plan-throughput`, `/reports/freshness` on `cmd/planning-reports` | OHS (read-only) |
 
 No REST or MCP endpoint is authenticated (fleet-wide revert of 2026-09-11).
@@ -185,8 +208,11 @@ outbound leaves through the transactional outbox and the relay in `cmd/api`.
 | `order-management`, `network-inventory-planning` (its `published_capacity_plan` read model) | `CapacityPlanPublished` | Event | same topic, `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | OHS + PL |
 | `order-management` | `CapacityShortageDetected` | Event | same topic, `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | OHS + PL |
 | none today (`order-management` ignores it) | `BottleneckDetected` | Event | same topic, `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | OHS + PL |
-| own `cmd/planning-projector` | the same four types | Event | Kafka `warehouse.warehouse-planning.analytics` (dataschema `...:analytics:<EventName>:v1`) | Internal to this context (ADR 0005) |
-| operators (dead-letter triage) | a message that failed 5 times | Event (copy) | Kafka `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`, `warehouse.warehouse-planning.analytics.dlq` | Internal operational channel |
+| `workforce-management` (its `labour_requirements` copy, ADR 0043) | `LabourPlanCommitted` | Event | same topic, `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted` | OHS + PL; workforce-management downstream with an ACL |
+| none today | `WorkloadForecastReceived` | Event | same topic, `com.warehouse.wes.warehouse-planning.workloadforecast.WorkloadForecastReceived` | OHS + PL |
+| none today (surfaced to planners) | `LabourPlanDriftDetected` | Event | same topic, `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanDriftDetected` | OHS + PL |
+| own `cmd/planning-projector` | the four plan types (projected) and the three requirement types (acknowledged, not projected) | Event | Kafka `warehouse.warehouse-planning.analytics` (dataschema `...:analytics:<EventName>:v1`) | Internal to this context (ADR 0005) |
+| operators (dead-letter triage) | a message that failed 5 times | Event (copy) | Kafka `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`, `warehouse.labor-performance.events.dlq`, `warehouse.warehouse-planning.analytics.dlq` | Internal operational channel |
 
 ## Ubiquitous Language
 
@@ -195,7 +221,9 @@ Top terms: **ProcessCapacity**, **CapacityConstraint**, **CapacityRate**,
 **CapacityWindow** (and *covers*), **WorkloadProfile**, **ProcessPath**,
 **ProcessPathCapacity**, **StationStandard**, **Station count**, **Site /
 location**, **CapacityPlan**, **Shortage**, **Bottleneck**, **Expected
-demand**, **DemandSource**.
+demand**, **DemandSource**, and on the requirement side **Labour standard**,
+**Labour requirement**, **Workload forecast**, **Labour plan**, **Planned
+heads**, **Heads source**, **Committed heads**, **Labour plan drift**.
 
 ## Business Decisions
 
@@ -212,12 +240,25 @@ demand**, **DemandSource**.
 5. `shortage = max(0, demand - capacity over window)`; demand equal to capacity
    is not a shortage, and the plan keeps the requested window.
 6. A plan is published at most once (`ErrAlreadyPublished`, `409`); shortage and
-   bottleneck events are raised only at publish and only when `shortage > 0`.
+   bottleneck events are raised only at publish and only when `shortage > 0`. Publishing
+   supersedes the plan published before it for the same site, location, path and window
+   (`SUPERSEDED`, terminal, `CapacityPlanSuperseded`, ADR 0024); a superseded plan cannot be
+   published again (`ErrSuperseded`, `409 capacity-plan-superseded`).
 7. An omitted `assigned_demand` defaults to the expected orders; zero orders is
    *no data* and rejects the plan (`ErrMissingAssignedDemand`), never a
    zero-demand plan (ADR 0004).
 8. No live cross-context lookup, ever; stock from `inventory-storage` is never
    read (ADR 0001).
+9. A step's labour requirement is `tasks x standard seconds`, from the
+   labor-performance copy resolved at the window start; no standard or no task
+   factor is *unknown*, never a guessed number (ADR 0022).
+10. `planned_heads <= installed_stations`; omitted heads are
+    `ceil(forecast units due in the shift / (rate x hours))`, and zero forecast
+    buckets in the shift is *no data* (`422 missing-planned-heads`), never zero
+    heads (ADR 0023).
+11. A `PUT` that changes nothing raises nothing; the labour plan drift is
+    raised only when non-zero and new, and never corrects the plan or the
+    commitment (ADR 0023 decision 3).
 
 ## Assumptions
 
@@ -226,9 +267,13 @@ demand**, **DemandSource**.
 - `planned_rate` is in units per hour (`laborRateUnit = UnitUnit`), a
   documented default.
 - Site = building id = the first dash-separated segment of a facility zone id.
-- Every order is attributed to one configured site (`DEMAND_SITE_ID`) because
-  order-management events carry none (ADR 0004).
+- An order is attributed to the site its event names (`site_id`,
+  order-management ADR 0050), or to the fallback site `DEMAND_SITE_ID` when it
+  names none (ADR 0021). Task completions carry no site and always use it.
 - The WorkloadProfile factors are supplied on each request (no persistence).
+- The labour plan drift matches site and shift exactly as sent on both sides
+  (the path code is canonical, trimmed and upper case), and relies on the per-key order of workforce-management's topic (no
+  stale-event guard on the event time).
 
 ## Verification Metrics
 

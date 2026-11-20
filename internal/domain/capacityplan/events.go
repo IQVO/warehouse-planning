@@ -14,6 +14,7 @@ const (
 	EventCapacityPlanPublished    = "CapacityPlanPublished"
 	EventCapacityShortageDetected = "CapacityShortageDetected"
 	EventBottleneckDetected       = "BottleneckDetected"
+	EventCapacityPlanSuperseded   = "CapacityPlanSuperseded"
 )
 
 // Event is a domain event a CapacityPlan raised. Events are plain structs
@@ -124,3 +125,22 @@ type BottleneckDetected struct {
 
 // EventName implements Event.
 func (BottleneckDetected) EventName() string { return EventBottleneckDetected }
+
+// CapacityPlanSuperseded is raised when publishing a plan replaces the plan
+// published before it under the same SupersedeKey (docs/adr/0024 decision 3).
+// Its Header names the OLDER plan; SupersededBy is the newer one. It carries
+// the older plan's identity (warehouse, site, location, path, window), the
+// same fields its other events carry, and no quantities.
+type CapacityPlanSuperseded struct {
+	Header
+	SupersededBy string
+	WarehouseID  string
+	SiteID       string
+	Location     string
+	PathID       string
+	WindowStart  time.Time
+	WindowEnd    time.Time
+}
+
+// EventName implements Event.
+func (CapacityPlanSuperseded) EventName() string { return EventCapacityPlanSuperseded }

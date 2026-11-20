@@ -47,7 +47,7 @@ ENABLE_KONG = [
     "--set", "config.laborCapacityConsumerGroup=g-labor",
     "--set", "config.storageCapacityConsumerGroup=g-storage",
     "--set", "demand.consumerGroup=g-demand",
-    "--set", "inbound.consumerGroup=g-inbound",
+    "--set", "dockAppointments.consumerGroup=g-dock",
     "--set", "observed.consumerGroup=g-observed",
     "--set", "demand.siteId=SIM1",
     "--set", "analytics.projector.consumerGroup=g-analytics",
@@ -96,7 +96,7 @@ def main() -> int:
         "--set", "config.laborCapacityConsumerGroup=g-labor",
         "--set", "config.storageCapacityConsumerGroup=g-storage",
         "--set", "demand.consumerGroup=g-demand",
-        "--set", "inbound.consumerGroup=g-inbound",
+        "--set", "dockAppointments.consumerGroup=g-dock",
         "--set", "observed.consumerGroup=g-observed",
         "--set", "demand.siteId=SIM1",
     ])
@@ -152,6 +152,20 @@ def main() -> int:
                         failures.append(f"A2A route {name} rewrites to {target!r}, expected '/'")
                     if name.endswith("-reports") and target != "/reports":
                         failures.append(f"reports route {name} rewrites to {target!r}, expected '/reports'")
+
+    # 5. The reports route outranks the API prefix under Kong's traditional
+    #    router (equal regex_priority leaves /api/<ctx> vs /api/<ctx>/reports
+    #    in unspecified order, sending reports traffic to the API -> 404).
+    reports_routes = [r for r in routes if r["metadata"]["name"].endswith("-reports")]
+    if not reports_routes:
+        failures.append("enabled render contains no reports HTTPRoute")
+    for r in reports_routes:
+        prio = (r["metadata"].get("annotations") or {}).get("konghq.com/regex-priority")
+        if prio != "10":
+            failures.append(
+                f"reports route {r['metadata']['name']} has konghq.com/regex-priority {prio!r}, "
+                "expected '10' so it outranks the API prefix"
+            )
 
     if failures:
         print("FAIL: warehouse-planning chart Kong-config contract")

@@ -73,6 +73,29 @@ type Server struct {
 	ListProcessPaths  *usecases.ListProcessPaths
 	ListCapacityPlans *usecases.ListCapacityPlans
 
+	// GetProcessPath backs GET /process-paths/{id} (docs/adr/0025): the path an
+	// id resolves to, a process flow first, with its read-only source. Nil
+	// leaves the route unregistered.
+	GetProcessPath *usecases.GetProcessPath
+
+	// CompareCapacityPlans backs GET /capacity-plans/comparisons
+	// (docs/adr/0024 decision 4; REST only, no MCP tool). Nil leaves the
+	// route unregistered.
+	CompareCapacityPlans *usecases.CompareCapacityPlans
+
+	// The requirement side of docs/adr/0023. ReceiveWorkloadForecast and
+	// GetWorkloadForecast back PUT and GET /workload-forecasts/{site_id}/
+	// {path_id}; each left nil leaves its route unregistered (the router's
+	// 404), so a Server built without them behaves exactly as before.
+	ReceiveWorkloadForecast *usecases.ReceiveWorkloadForecast
+	GetWorkloadForecast     *usecases.GetWorkloadForecast
+	// CommitLabourPlan, GetLabourPlan and ListLabourPlans back PUT and GET
+	// /labour-plans/{site_id}/{shift_id}/{path_id} and GET /labour-plans
+	// (same nil rule).
+	CommitLabourPlan *usecases.CommitLabourPlan
+	GetLabourPlan    *usecases.GetLabourPlan
+	ListLabourPlans  *usecases.ListLabourPlans
+
 	// UnitOfWork and Idempotency back the Idempotency-Key middleware on every
 	// POST/PATCH route (fleet REST API guideline, docs/adr/0019): the key row
 	// commits in the same transaction as the aggregate and its outbox rows.
@@ -132,8 +155,17 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/process-capacities", s.handleGetEffectiveProcessCapacity)
 	r.Post("/process-paths", s.idempotent(s.handleRegisterProcessPath))
 	r.Get("/process-paths/{id}/capacity", s.handleGetProcessPathCapacity)
+	if s.GetProcessPath != nil {
+		r.Get("/process-paths/{id}", s.handleGetProcessPath)
+	}
 	r.Post("/capacity-plans", s.idempotent(s.handleCreateCapacityPlan))
 	r.Post("/capacity-plans/{id}/publications", s.idempotent(s.handlePublishCapacityPlan))
+	// The static comparisons route is registered before /capacity-plans/{id};
+	// chi matches a static segment before a parameter in any case, so the
+	// word "comparisons" is never read as a plan id.
+	if s.CompareCapacityPlans != nil {
+		r.Get("/capacity-plans/comparisons", s.handleCompareCapacityPlans)
+	}
 	r.Get("/capacity-plans/{id}", s.handleGetCapacityPlan)
 	r.Put("/station-standards/{location}/{process_type}", s.handleDeclareStationStandard)
 	r.Get("/station-standards", s.handleListStationStandards)
@@ -142,6 +174,7 @@ func NewRouter(s *Server) http.Handler {
 		r.Get("/demand", s.handleGetExpectedDemand)
 	}
 	s.registerInboundAndObservedRoutes(r)
+	s.registerRequirementRoutes(r)
 	if s.ListProcessPaths != nil {
 		r.Get("/process-paths", s.handleListProcessPaths)
 	}

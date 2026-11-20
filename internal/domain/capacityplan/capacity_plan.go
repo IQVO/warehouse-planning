@@ -19,10 +19,13 @@ import (
 // Status is a CapacityPlan's lifecycle state.
 type Status string
 
-// The two lifecycle states.
+// The three lifecycle states. SUPERSEDED is terminal: a PUBLISHED plan moves
+// there when a newer plan of its SupersedeKey is published (docs/adr/0024
+// decision 3).
 const (
-	StatusDraft     Status = "DRAFT"
-	StatusPublished Status = "PUBLISHED"
+	StatusDraft      Status = "DRAFT"
+	StatusPublished  Status = "PUBLISHED"
+	StatusSuperseded Status = "SUPERSEDED"
 )
 
 // DemandSource says where a plan's assigned demand came from.
@@ -63,7 +66,7 @@ var (
 	ErrNegativeInbound = errors.New("capacityplan: inbound demand must not be negative")
 )
 
-// InboundDemand is the inbound-receiving dock-appointment demand a plan was
+// InboundDemand is the dock-scheduling dock-appointment demand a plan was
 // created against (docs/adr/0017): a second demand source NEXT TO the order
 // demand, in LABOUR MINUTES. It is never summed into the plan's order demand
 // (different units) and no published event carries it. The zero value is "no
@@ -96,8 +99,15 @@ type CapacityPlan struct {
 
 	assignedDemand float64
 	// demandSource is where assignedDemand came from; informational, no
-	// published event carries it.
-	demandSource DemandSource
+	// published event carries it. forecastPathID is the canonical path code
+	// of the WorkloadForecast it was read from (docs/adr/0024); empty unless
+	// demandSource is DemandSourceForecast.
+	demandSource   DemandSource
+	forecastPathID string
+
+	// scenario is the optional what-if label of the plan (docs/adr/0024
+	// decision 2); empty is no label. Informational: no event carries it.
+	scenario string
 
 	// pathCapacity is the ORDER/HOUR rate of the path (the quantity of
 	// the normalized ProcessPathCapacity expressed per hour).
@@ -118,9 +128,18 @@ type CapacityPlan struct {
 	// (docs/adr/0017); informational, no published event carries it.
 	inbound InboundDemand
 
+	// labour is the labour each path step requires, computed at creation
+	// from the standards in force then (docs/adr/0022); informational, no
+	// published event carries it, and a later standard never rewrites it.
+	labour []LabourRequirement
+
 	status      Status
 	createdAt   time.Time
 	publishedAt time.Time
+
+	// supersededBy is the id of the plan whose publication superseded this
+	// one (docs/adr/0024 decision 3); empty unless the status is SUPERSEDED.
+	supersededBy string
 
 	events []Event
 }
@@ -142,8 +161,15 @@ type CreateParams struct {
 	BottleneckStep processcapacity.ProcessType
 
 	// DemandSource is where AssignedDemand came from; the zero value means
-	// DemandSourceRequest (the demand was stated explicitly).
-	DemandSource DemandSource
+	// DemandSourceRequest (the demand was stated explicitly). ForecastPathID
+	// is the forecast it was read from when DemandSource is
+	// DemandSourceForecast (docs/adr/0024).
+	DemandSource   DemandSource
+	ForecastPathID string
+
+	// Scenario is the optional what-if label (docs/adr/0024); empty is no
+	// label, anything else must be 1 to 64 characters (ErrInvalidScenario).
+	Scenario string
 
 	// BottleneckConstraint and Warnings come from the composed path
 	// capacity (processcapacity.ComposeProcessPathCapacity).
@@ -154,6 +180,22 @@ type CreateParams struct {
 	// (docs/adr/0017); the zero value is no inbound demand. Negative
 	// figures are rejected with ErrNegativeInbound.
 	Inbound InboundDemand
+
+	// LabourRequirement is the labour per path step (docs/adr/0022), in path
+	// order, as RequireLabour computed it; nil is no requirement evaluated.
+	LabourRequirement []LabourRequirement
+}
+
+// ValidateRequired reports ErrRequiredField when the warehouse id, site id,
+// location or process path id is blank. Create applies the same rule; a caller
+// that must refuse a blank identifying field BEFORE doing other work (looking
+// up the ProcessPath, resolving demand) calls it first, so a blank location or
+// path id is never reported as a missing step capacity or an unknown path.
+func ValidateRequired(warehouseID, siteID, location, processPathID string) error {
+	if warehouseID == "" || siteID == "" || location == "" || processPathID == "" {
+		return ErrRequiredField
+	}
+	return nil
 }
 
 // Create builds a DRAFT CapacityPlan, computes its derived fields and
@@ -163,7 +205,7 @@ type CreateParams struct {
 //	capacityOverWindow = pathCapacity x window hours
 //	shortage           = max(0, demand - capacityOverWindow), never negative
 func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
-	if p.ID == "" || p.WarehouseID == "" || p.SiteID == "" || p.Location == "" || p.ProcessPathID == "" {
+	if p.ID == "" || ValidateRequired(p.WarehouseID, p.SiteID, p.Location, p.ProcessPathID) != nil {
 		return nil, ErrRequiredField
 	}
 	if p.AssignedDemand < 0 {
@@ -174,6 +216,9 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 	}
 	if p.Inbound.Appointments < 0 || p.Inbound.LabourMinutes < 0 {
 		return nil, ErrNegativeInbound
+	}
+	if err := validateOptionalScenario(p.Scenario); err != nil {
+		return nil, err
 	}
 
 	perHour := p.PathRate.Quantity() / p.PathRate.Period().Hours()
@@ -188,6 +233,8 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 		processPathID:      p.ProcessPathID,
 		assignedDemand:     p.AssignedDemand,
 		demandSource:       sourceOrRequest(p.DemandSource),
+		forecastPathID:     forecastPathFor(p.DemandSource, p.ForecastPathID),
+		scenario:           p.Scenario,
 		pathCapacity:       perHour,
 		bottleneckStep:     p.BottleneckStep,
 		capacityOverWindow: over,
@@ -198,6 +245,7 @@ func Create(p CreateParams, now time.Time) (*CapacityPlan, error) {
 		bottleneckConstraint: p.BottleneckConstraint,
 		warnings:             append([]string(nil), p.Warnings...),
 		inbound:              p.Inbound,
+		labour:               append([]LabourRequirement(nil), p.LabourRequirement...),
 	}
 	plan.record(CapacityPlanCreated{
 		Header:             Header{PlanID: plan.id, At: now},
@@ -235,14 +283,24 @@ type RehydrateParams struct {
 	CreatedAt          time.Time
 	PublishedAt        time.Time
 
+	// SupersededBy: the newer plan's id when Status is SUPERSEDED; empty
+	// otherwise and for rows stored before migration 0017.
+	SupersededBy string
+
 	// DemandSource: empty reads back as DemandSourceRequest.
-	DemandSource DemandSource
+	// ForecastPathID and Scenario: empty for rows stored before migration 0016.
+	DemandSource   DemandSource
+	ForecastPathID string
+	Scenario       string
 
 	BottleneckConstraint processcapacity.ConstraintType
 	Warnings             []string
 
 	// Inbound: the zero value for rows stored before migration 0009.
 	Inbound InboundDemand
+
+	// LabourRequirement: empty for plans stored before migration 0013.
+	LabourRequirement []LabourRequirement
 }
 
 // Rehydrate rebuilds a CapacityPlan from persisted state. It records no
@@ -257,6 +315,8 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 		processPathID:      p.ProcessPathID,
 		assignedDemand:     p.AssignedDemand,
 		demandSource:       sourceOrRequest(p.DemandSource),
+		forecastPathID:     p.ForecastPathID,
+		scenario:           p.Scenario,
 		pathCapacity:       p.PathCapacity,
 		bottleneckStep:     p.BottleneckStep,
 		capacityOverWindow: p.CapacityOverWindow,
@@ -264,20 +324,26 @@ func Rehydrate(p RehydrateParams) *CapacityPlan {
 		status:             p.Status,
 		createdAt:          p.CreatedAt,
 		publishedAt:        p.PublishedAt,
+		supersededBy:       p.SupersededBy,
 
 		bottleneckConstraint: p.BottleneckConstraint,
 		warnings:             append([]string(nil), p.Warnings...),
 		inbound:              p.Inbound,
+		labour:               append([]LabourRequirement(nil), p.LabourRequirement...),
 	}
 }
 
 // Publish transitions DRAFT -> PUBLISHED at now and records
 // CapacityPlanPublished, plus CapacityShortageDetected and
 // BottleneckDetected when (and only when) Shortage > 0. It returns
-// ErrAlreadyPublished if the plan is already PUBLISHED, recording nothing.
+// ErrAlreadyPublished if the plan is already PUBLISHED and ErrSuperseded if
+// it is SUPERSEDED (terminal), recording nothing either way.
 func (c *CapacityPlan) Publish(now time.Time) error {
-	if c.status == StatusPublished {
+	switch c.status {
+	case StatusPublished:
 		return ErrAlreadyPublished
+	case StatusSuperseded:
+		return ErrSuperseded
 	}
 	c.status = StatusPublished
 	c.publishedAt = now
@@ -360,9 +426,18 @@ func (c *CapacityPlan) ProcessPathID() string { return c.processPathID }
 func (c *CapacityPlan) AssignedDemand() float64 { return c.assignedDemand }
 
 // DemandSource returns where AssignedDemand came from: DemandSourceRequest
-// (stated by the caller) or DemandSourceOrders (defaulted from the
-// order-management demand read model).
+// (stated by the caller), DemandSourceOrders (defaulted from the
+// order-management demand read model) or DemandSourceForecast (derived from
+// the workload forecast, docs/adr/0024).
 func (c *CapacityPlan) DemandSource() DemandSource { return c.demandSource }
+
+// ForecastPathID returns the canonical path code of the WorkloadForecast the
+// demand was read from; empty unless DemandSource is DemandSourceForecast.
+func (c *CapacityPlan) ForecastPathID() string { return c.forecastPathID }
+
+// Scenario returns the plan's what-if label (docs/adr/0024); empty when it
+// carries none.
+func (c *CapacityPlan) Scenario() string { return c.scenario }
 
 // sourceOrRequest maps the zero value to DemandSourceRequest.
 func sourceOrRequest(s DemandSource) DemandSource {
@@ -384,7 +459,7 @@ func (c *CapacityPlan) CapacityOverWindow() float64 { return c.capacityOverWindo
 // Shortage returns max(0, demand - capacityOverWindow), in orders.
 func (c *CapacityPlan) Shortage() float64 { return c.shortage }
 
-// Status returns DRAFT or PUBLISHED.
+// Status returns DRAFT, PUBLISHED or SUPERSEDED.
 func (c *CapacityPlan) Status() Status { return c.status }
 
 // CreatedAt returns when the plan was created.
@@ -417,4 +492,11 @@ func (c *CapacityPlan) InboundAverageHeads() float64 {
 		return 0
 	}
 	return c.inbound.LabourMinutes / minutes
+}
+
+// LabourRequirement returns the labour each path step requires, in path
+// order, as computed when the plan was created (docs/adr/0022); empty for
+// plans stored before it. The result is a copy.
+func (c *CapacityPlan) LabourRequirement() []LabourRequirement {
+	return append([]LabourRequirement(nil), c.labour...)
 }

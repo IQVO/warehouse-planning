@@ -45,6 +45,7 @@ In the kind cluster, `warehouse-infra` turns on `kafka`, `demand` and
 
 - Kong on `:8000`: `/api/warehouse-planning/...` goes to the `api` Service with the prefix stripped (the chart's `gatewayApi` HTTPRoute, `stripPath: true`).
 - Kong on `:8000`: `/api/warehouse-planning/reports/...` goes to the `<fullname>-reports` Service, rewritten to `/reports/...` (a second route defined in `warehouse-infra`'s `terraform/services.tf`).
+- The reports route carries `konghq.com/regex-priority: "10"` (chart `reports-route.yaml`) so the reports prefix outranks the API prefix under Kong's traditional router; without it `/reports/...` can reach the API Service and answer 404.
 - Nginx on `:80`: `/mfes/warehouse-planning/` serves the frontend remote. Kong never serves frontend assets.
 
 REST, MCP and reports are unauthenticated. Access control is the in-cluster
@@ -156,12 +157,12 @@ structured mode (`content-type: application/cloudevents+json; charset=UTF-8`).
 | consume | `warehouse.workforce.events` | `cmd/api` | `LABOR_CAPACITY_CONSUMER_GROUP`, `warehouse-planning-labor-capacity` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` |
 | consume | `warehouse.facility.events` | `cmd/api` | `STORAGE_CAPACITY_CONSUMER_GROUP`, `warehouse-planning-storage-capacity` | `...facility-layout.locationslot.LocationSlotRegistered`, `...LocationSlotDecommissioned` |
 | consume | `warehouse.order-management.events` | `cmd/api` | `DEMAND_CONSUMER_GROUP`, no default (required; `warehouse-planning-demand` in the cluster) | `...order-management.order.OrderAllocated`, `...OrderPartiallyAllocated` |
-| consume | `warehouse.inbound-receiving.events` | `cmd/api` | `INBOUND_DEMAND_CONSUMER_GROUP`, no default (required; `warehouse-planning-inbound-demand` in the cluster) | `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked`, `...DockAppointmentCancelled` |
+| consume | `warehouse.dock-scheduling.events` | `cmd/api` | `DOCK_APPOINTMENT_CONSUMER_GROUP`, no default (required; `warehouse-planning-dock-appointments` in the cluster; the retired `INBOUND_DEMAND_CONSUMER_GROUP` is a boot error) | `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked`, `...DockAppointmentRescheduled`, `...DockAppointmentCancelled`, `...DockAppointmentNoShow` |
 | consume | `warehouse.fulfillment.events` | `cmd/api` | `OBSERVED_CAPACITY_CONSUMER_GROUP`, no default (required; `warehouse-planning-observed-capacity` in the cluster) | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` |
 | produce | `warehouse.warehouse-planning.events` | `cmd/api` relay | n/a | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated`, `CapacityPlanPublished`, `CapacityShortageDetected`, `BottleneckDetected` |
 | produce | `warehouse.warehouse-planning.analytics` | `cmd/api` relay | n/a | the same four types (ADR 0005) |
 | consume | `warehouse.warehouse-planning.analytics` | `cmd/planning-projector` | `ANALYTICS_CONSUMER_GROUP`, `warehouse-planning-analytics` | the same four types |
-| produce (DLQ) | `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`, `warehouse.inbound-receiving.events.dlq`, `warehouse.fulfillment.events.dlq` | `cmd/api` | n/a | the original message plus `x-dlq-*` headers |
+| produce (DLQ) | `warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`, `warehouse.dock-scheduling.events.dlq`, `warehouse.fulfillment.events.dlq` | `cmd/api` | n/a | the original message plus `x-dlq-*` headers |
 | produce (DLQ) | `warehouse.warehouse-planning.analytics.dlq` | `cmd/planning-projector` | n/a | the original message plus `x-dlq-*` headers |
 
 The `processed_events` claim uses these consumer names: `labor-capacity-consumer`,
@@ -216,7 +217,9 @@ A re-armed row is a late delivery under its original CloudEvents `id`.
 
 ### Dead-letter behaviour
 
-- **Dock-appointment and task-completion consumers (`cmd/api`, [ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback))**: a deterministic failure (not CloudEvents 1.0, malformed `data`, a blank id, a `subject` that is not the appointment or task id, a window whose end is not after its start, no ASN, no event time, no `task_type`) is published at once to `warehouse.inbound-receiving.events.dlq` / `warehouse.fulfillment.events.dlq` and committed past; a transient failure is retried 5 times first. Other types on those shared topics are ignored.
+- **Dock-appointment and task-completion consumers (`cmd/api`, [ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback))**: a deterministic failure (not CloudEvents 1.0, malformed `data`, a blank id, a `subject` that is not the appointment or task id, a window whose end is not after its start, no ASN on an INBOUND booking, an unknown direction, no `version`, no event time, no `task_type`) is published at once to `warehouse.dock-scheduling.events.dlq` / `warehouse.fulfillment.events.dlq` and committed past; a transient failure is retried 5 times first. Other types on those shared topics are ignored.
+- **Labour-standard consumer (`cmd/api`, [ADR 0022](/docs/adr/0022-labour-standards-from-labor-performance))**: a deterministic failure (not CloudEvents 1.0, malformed `data`, no `standard_id`, `task_type`, `effective_from` or event time, `expected_seconds <= 0`, a negative `travel_component_seconds`, an unknown `handling_unit`) is published at once to `warehouse.labor-performance.events.dlq`; a transient one is retried as below. Every other type on the topic (`TaskPerformanceRecorded`, ...) is ignored.
+- **Process-flow consumer (`cmd/api`, [ADR 0025](/docs/adr/0025-process-flows-from-process-path-management))**: a deterministic failure (not CloudEvents 1.0, malformed `data`, an unknown `process_type`, no stages, a bad `status` or `version`) is dead-lettered at once to `warehouse.process-path-management.events.dlq` and never retried; every other type on the topic is ignored (acknowledged).
 - **The other domain consumers (`cmd/api`)**: deterministic problems are logged and skipped, never dead-lettered: not a CloudEvent, an unknown type, a malformed payload, missing fields, or a domain-validation rejection. A transient failure (database begin, claim, upsert or commit) is retried on the same message up to 5 times with backoff, then published to `<topic>.dlq` with the headers `x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`, `x-dlq-error` and `x-dlq-failed-at`, and committed past. The DLQ publish itself is retried until it succeeds.
 - **Projector**: a known type with an unusable payload, or a deterministic store rejection, is dead-lettered at once to `warehouse.warehouse-planning.analytics.dlq` with `x-dlq-source-topic`, `x-dlq-error` and `x-dlq-failed-at`. A transient failure is retried **forever** and never dead-lettered ([ADR 0005](/docs/adr/0005-analytics-read-side)). A non-CloudEvents message is skipped, with a WARN at most once a minute.
 
@@ -243,7 +246,7 @@ redelivered, that event is applied again.
 ## Scaling
 
 - **HPA** (`templates/hpa.yaml`, [ADR 0009](/docs/adr/0009-hpa-and-pgxpool-tuning)): each component has its own `autoscaling.<component>` block, and all are off by default. The CPU target is 70 %, and the maximum is 4 replicas for `api`, 2 for `projector`, 3 for `reports` and 3 for `frontend`. With an HPA enabled, the Deployment omits `replicas`.
-- **`api` with more than one replica**: the relay is safe because `SKIP LOCKED` hands each pass a disjoint batch. Strict `id` order then holds within one pass, not across replicas. The three consumers share partitions through their stable group ids, and every message's claim and effect form one transaction.
+- **`api` with more than one replica**: the relay is safe because `SKIP LOCKED` hands each pass a disjoint batch. Strict `id` order then holds within one pass, not across replicas. The six consumers share partitions through their stable group ids, and every message's claim and effect form one transaction.
 - **`mcp`**: it has no HPA block on purpose. The Streamable HTTP handler keeps per-process session state, so scale it only with session affinity.
 - **Connection budget**: each `api` or `mcp` process opens at most 10 OLTP connections (`pool.go`). Each projector or reports process opens at most 5 analytical connections. Budget the database with replicas × pool size before raising `maxReplicas`.
 

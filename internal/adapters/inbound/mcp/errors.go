@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/inbound"
@@ -44,6 +45,15 @@ func slugFor(err error) (slug string, ok bool) {
 		{inbound.ErrNegativeASNMinutes, "negative-asn-minutes"},
 		{inbound.ErrNonFiniteMinutes, "non-finite-minutes"},
 		{observed.ErrNonPositiveTasksPerOrder, "non-positive-tasks-per-order"},
+		{capacityplan.ErrNonPositiveTasksPerOrder, "non-positive-tasks-per-order"},
+		// Forecast demand (docs/adr/0024).
+		{capacityplan.ErrUnknownDemandSource, "unknown-demand-source"},
+		{capacityplan.ErrMissingUnitsPerOrder, "missing-units-per-order"},
+		{capacityplan.ErrDemandSourceConflict, "demand-source-conflict"},
+		{capacityplan.ErrInvalidScenario, "invalid-scenario"},
+		// Publishing supersedes (docs/adr/0024 decision 3).
+		{capacityplan.ErrSuperseded, "capacity-plan-superseded"},
+		{ports.ErrVersionConflict, "version-conflict"},
 	}
 	for _, entry := range catalog {
 		if errors.Is(err, entry.target) {

@@ -20,8 +20,8 @@ sub-tests.
 | Analytics report tests | `internal/analytics/report` | 17 tests in 2 files | `make test` | nothing |
 | Adapter tests (httptest, fake Kafka reader/writer, in-memory stores) | `internal/adapters/...` (http 57, kafka inbound 65, mcp 19, outbound kafka 22, memory 16, outbox 12, cloudevents 6, analyticsstore 3) | 200 tests | `make test` | nothing |
 | Composition-root tests | `cmd/*/main_test.go`, `cmd/api/{readiness,logger_level,outbox_relay_config}_test.go`, `cmd/planning-projector/telemetry_test.go` (boot errors that name the variable, `/readyz`, the relay) | 35 tests | `make test` | nothing |
-| BDD acceptance (godog) | `features/*.feature`, driven by `features_test.go`, `features_demand_test.go`, `features_list_test.go` at the repo root | 6 features, 34 scenarios | `make bdd` (`go test ./... -run TestFeatures -v`), also part of `make test` | nothing |
-| Integration (`-tags=integration`) | 27 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the three Kafka consumers, the analytics store, `cmd/mcp`, `cmd/api/e2e_integration_test.go` (boots the real `run()`) and `analytics_e2e_integration_test.go` | 84 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
+| BDD acceptance (godog) | `features/*.feature`, driven by `features_test.go`, `features_demand_test.go`, `features_list_test.go` at the repo root | 25 features, 191 scenarios (231 executed) | `make bdd` (`go test ./... -run TestFeatures -v`), also part of `make test` | nothing |
+| Integration (`-tags=integration`) | 37 files: the Postgres repositories and unit of work, the outbox relay (including its attempt cap and trace propagation), the six Kafka consumers, the analytics store, `cmd/mcp`, `cmd/api/e2e_integration_test.go` (boots the real `run()`) and `analytics_e2e_integration_test.go` | 84 tests | `make integration` (`go test -tags=integration ./... -race -count=1`) | Docker |
 | Architecture fitness | `internal/architecture` | 18 tests | `make arch-test` | nothing |
 | Mutation | `.gremlins.yaml` | see below | `make mutation-fast`, `make mutation-full` | `gremlins` v0.6.0 |
 | Frontend remote | `web/src/**/*.test.ts(x)` (8 files, vitest + Testing Library) | | `cd web && npm test` | Node, a built `../../warehouse-ui-kit` |
@@ -39,14 +39,52 @@ test doubles (the shipped binaries have no in-memory mode, ADR 0016). The Kafka-
 CloudEvents bytes to the real consumers' `HandleMessage`. `Strict: true` fails
 a scenario with an undefined step.
 
-| Feature file | Scenarios | What it pins |
-| --- | --- | --- |
-| `capacity_plan.feature` | 7 | the 12,000-order worked example (shortage 4,000, bottleneck REBIN, the four outbox events, a second publish = 409), no shortage under capacity, unknown path, negative demand, unknown plan, window coverage for plans |
-| `expected_demand.feature` | 8 | the demand window `[start, end)`, latest event wins, ignored events, site attribution, `demand_source` orders vs request, no data = 422, RFC 7807 validation |
-| `list_endpoints.feature` | 5 | `GET /process-paths` and `GET /capacity-plans` (empty, ordering, `PUBLISHED`, bad `limit`) |
-| `process_capacity.feature` | 3 | effective rate bound by LOCATION, unknown capacity = 404, unit mismatch = 409 |
-| `process_path_capacity.feature` | 5 | Pick, Rebin, Pack bound by Rebin, unknown path, missing step capacity, live-shaped windows resolved by coverage |
-| `station_capacity.feature` | 6 | stations binding a path once a standard exists, the no-standard warning, declare twice = replace, the storage-capacity read model |
+25 feature files hold **191** `Scenario`/`Scenario Outline` blocks (count:
+`git grep -c -E "^[[:space:]]*Scenario" -- features`). None is tagged
+`@known-bug` any more; the runner still excludes that tag by default
+(`BDD_TAGS` defaults to `~@known-bug`) so a future known gap can be parked
+there, and `make bdd` runs all 191 blocks as **231** executed
+scenarios (Examples rows expanded) and 1678 steps (`231 scenarios (231
+passed)`, `1678 steps (1678 passed)`, godog's summary from `go test . -run
+TestFeatures -count=1 -v`).
+
+| Feature file | Scenarios | Executed | What it pins |
+| --- | --- | --- | --- |
+| `capacity_plan.feature` | 7 | 7 | the 12,000-order worked example (shortage 4,000, bottleneck REBIN, the four outbox events, a second publish = 409), no shortage under capacity, unknown path, negative demand, unknown plan, window coverage for plans |
+| `capacity_plan_doc_rules.feature` | 11 | 15 | plan arithmetic over the window and the rate's period, two creates = two plans, `Idempotency-Key` replay / reuse / missing, explicit `assigned_demand: 0`, the CloudEvents attributes and payload of each plan event |
+| `capacity_plan_rules.feature` | 5 | 5 | CapacityPlan rules, events and validation |
+| `demand_and_list_limits.feature` | 2 | 2 | demand request validation and plan list limits |
+| `expected_demand.feature` | 8 | 8 | the demand window `[start, end)`, latest event wins, ignored events, site attribution, `demand_source` orders vs request, no data = 422, RFC 7807 validation |
+| `forecast_demand.feature` | 4 | 4 | `demand_source: forecast`: the `[window_start, window_end)` bucket rule, ceil to orders, no bucket = 422, `units_per_order` required, `forecast_path_id` (ADR 0024) |
+| `inbound_demand.feature` | 18 | 18 | inbound labour demand from dock-scheduling appointments |
+| `inbound_observed_paging_doc_rules.feature` | 14 | 25 | the door-window boundaries, the appointment version guard, task completions at the window boundaries, variance, and keyset paging edges (`limit`, `nextCursor`, `invalid-cursor`, `unknown-query-parameter`) |
+| `labor_capacity.feature` | 6 | 6 | labor capacity from committed shift plans |
+| `labour_plan.feature` | 9 | 9 | labour plan PUT/GET/list (ADR 0023): sent vs derived heads, no forecast in the shift = 422, heads above stations = 422, unchanged PUT raises nothing, the station warning, listing a shift, the canonical path code |
+| `labour_plan_drift.feature` | 10 | 10 | `LabourPlanDriftDetected` from both triggers: first drift raised, same drift not, cleared then returned raised, no plan or no commitment = nothing, redelivery = nothing, mixed-case path codes meet (ADR 0023 decision 3) |
+| `labour_requirement.feature` | 6 | 6 | labour required per plan step from the local labour-standard copy (ADR 0022): legacy plans unchanged, the standard in force for the site and window, uncountable tasks are unknown, PICK tasks from released lines, replays change nothing, non-positive task factor = 422 |
+| `list_endpoints.feature` | 5 | 5 | `GET /process-paths` and `GET /capacity-plans` (empty, ordering, `PUBLISHED`, bad `limit`) |
+| `observed_capacity.feature` | 8 | 8 | observed capacity feedback from task completions |
+| `plan_comparison.feature` | 5 | 5 | `GET /capacity-plans/comparisons`: 2 to 5 ids, one site and window, as stored (ADR 0024) |
+| `plan_scenarios.feature` | 3 | 3 | the `scenario` label and the additive `GET /capacity-plans` filters (ADR 0024) |
+| `process_capacity.feature` | 6 | 6 | effective rate bound by LOCATION, unknown capacity = 404, unit mismatch = 409 |
+| `process_capacity_doc_rules.feature` | 19 | 28 | tie-breaks (earliest constraint, step ties), zero vs negative quantity, window coverage at the exact boundary, `ProcessCapacityChanged` only when the effective rate moves, per-second rate comparison, stations and standards without labor |
+| `process_capacity_rules.feature` | 4 | 4 | ProcessCapacity registration rules |
+| `process_path_capacity.feature` | 5 | 5 | Pick, Rebin, Pack bound by Rebin, unknown path, missing step capacity, live-shaped windows resolved by coverage |
+| `process_path_rules.feature` | 4 | 4 | ProcessPath registration and path capacity rules |
+| `station_capacity.feature` | 6 | 6 | stations binding a path once a standard exists, the no-standard warning, declare twice = replace, the storage-capacity read model |
+| `station_lifecycle.feature` | 5 | 5 | station standards and the facility tally lifecycle |
+| `upstream_events_doc_rules.feature` | 13 | 27 | the policies driven by `ShiftPlanCommitted`, `LocationSlot*` and `OrderAllocated`: unusable messages are acknowledged and change nothing, redelivery, ordering |
+| `workload_forecast.feature` | 6 | 6 | workload forecast PUT/GET (ADR 0023): first receipt at version 1, whole replacement, identical receipt raises nothing, negative quantity refused, the canonical path code |
+| **18 files** | **146** | **186** | |
+
+The `*_doc_rules.feature` files pin rules written in the documentation; their
+steps are in `steps_doc_rules_test.go`. Two of them
+(`capacity_plan_doc_rules.feature`) pin `422 missing-required-field` for a
+blank `location` or `path_id`. They were `@known-bug` until `CreateCapacityPlan`
+started validating the required identifying fields
+(`capacityplan.ValidateRequired`) before it composes the path capacity or
+resolves the demand; `BDD_TAGS=@known-bug go test . -run TestFeatures -count=1`
+now selects no scenario.
 
 ### Integration tests
 
@@ -140,7 +178,7 @@ Triggers: push and pull request on `main` and `develop`, a weekly schedule
 | `test` | build, vet, then `make coverage` (race tests with the Makefile's coverage scope and 90 % gate) | every push/PR |
 | `bdd` | `go test ./... -run TestFeatures -v` | every push/PR |
 | `integration` | `go test -tags=integration ./... -race -count=1` on the runner's Docker | every push/PR |
-| `mutation-fast` | gremlins on the five packages | every push/PR |
+| `mutation-fast` | gremlins on the six packages of `MUTATION_FAST_PKGS` | every push/PR |
 | `mutation` | gremlins on `./internal/domain`; opens or closes a `harness:red` issue on schedule | schedule, dispatch |
 | `drift` | `deadcode`, `go mod tidy -diff`, coverage-quality (high-coverage functions with a surviving mutant); advisory | schedule, dispatch |
 | `api-lint` | Spectral on `apis/openapi.yaml` and `apis/asyncapi.yaml` (`--fail-severity=warn`) | every push/PR |

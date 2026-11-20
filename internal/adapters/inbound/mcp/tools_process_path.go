@@ -13,10 +13,14 @@ type registerProcessPathInput struct {
 	Steps []string `json:"steps" jsonschema:"the ordered, non-empty list of step process types, e.g. [PICK, REBIN, PACK]"`
 }
 
+// processPathOutput is a path as the tools return it; source is read-only
+// (docs/adr/0025): "flow" for a process flow consumed from
+// process-path-management, "local" for a path declared with this tool.
 type processPathOutput struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Steps []string `json:"steps"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Steps  []string `json:"steps"`
+	Source string   `json:"source"`
 }
 
 func (d Deps) registerProcessPath(ctx context.Context, in registerProcessPathInput) (processPathOutput, error) {
@@ -32,7 +36,7 @@ func (d Deps) registerProcessPath(ctx context.Context, in registerProcessPathInp
 	for _, step := range path.Steps() {
 		out = append(out, string(step))
 	}
-	return processPathOutput{ID: path.ID(), Name: path.Name(), Steps: out}, nil
+	return processPathOutput{ID: path.ID(), Name: path.Name(), Steps: out, Source: string(path.Source())}, nil
 }
 
 type getPathCapacityInput struct {
@@ -46,8 +50,10 @@ type getPathCapacityInput struct {
 
 // pathCapacityOutput is the REST body of GET /process-paths/{id}/capacity.
 // step_breakdown (each step's normalized ORDER-per-hour rate and the
-// constraint type binding it) and warnings (never null) are additive.
+// constraint type binding it) and warnings (never null) are additive; so is
+// source, the read-only source of the path (flow or local, docs/adr/0025).
 type pathCapacityOutput struct {
+	Source         string              `json:"source"`
 	NormalizedRate float64             `json:"normalized_rate"`
 	NormalizedUnit string              `json:"normalized_unit"`
 	BottleneckStep string              `json:"bottleneck_step"`
@@ -86,6 +92,7 @@ func (d Deps) getProcessPathCapacity(ctx context.Context, in getPathCapacityInpu
 		})
 	}
 	return pathCapacityOutput{
+		Source:         string(result.Source),
 		NormalizedRate: result.NormalizedRate.Quantity(),
 		NormalizedUnit: string(result.NormalizedRate.Unit()),
 		BottleneckStep: string(result.BottleneckStep),

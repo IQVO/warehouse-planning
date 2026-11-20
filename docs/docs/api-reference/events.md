@@ -11,7 +11,7 @@ authority for payload fields.
 
 ## Analytics stream (ADR 0005)
 
-The four published events below are ALSO written to
+The five CapacityPlan events below are ALSO written to
 `warehouse.warehouse-planning.analytics` in the same outbox transaction, with the
 **same `type` and `id`** and
 `dataschema=urn:warehouse:warehouse-planning:analytics:<EventName>:v1`. The
@@ -56,6 +56,7 @@ Topic `warehouse.warehouse-planning.events`, written by the outbox relay.
 | `CapacityPlanPublished` | plan publication | the same fields except `status`, plus `published_at` |
 | `CapacityShortageDetected` | publication, only when `shortage > 0` | `plan_id`, `warehouse_id`, `location`, `path_id`, `window_start`, `window_end`, `assigned_demand`, `capacity_over_window`, `shortage`, `bottleneck_step` |
 | `BottleneckDetected` | publication, only when `shortage > 0` | `plan_id`, `warehouse_id`, `location`, `path_id`, `window_start`, `window_end`, `bottleneck_step`, `path_capacity` |
+| `CapacityPlanSuperseded` | publication, only when another plan of the same `site_id`, `location`, `path_id` and window was PUBLISHED; queued BEFORE the newer plan's `CapacityPlanPublished`; `subject` and key are the OLDER plan ([ADR 0024](/docs/adr/0024-forecast-demand-and-plan-scenarios)) | `plan_id` (the older plan), `superseded_by`, `warehouse_id`, `site_id`, `location`, `path_id`, `window_start`, `window_end` |
 
 Each plan-event occurrence is also written once more to the analytics topic
 (see "Analytics stream" above).
@@ -79,8 +80,10 @@ analytics copy: the analytics stream is plan facts only.
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `STORAGE_CAPACITY_CONSUMER_GROUP` |
 | `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (required, always consumed) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | `DEMAND_CONSUMER_GROUP` (required, always consumed) |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | `warehouse.inbound-receiving.events` | inbound-receiving | `INBOUND_DEMAND_CONSUMER_GROUP` (required, always consumed) |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | `warehouse.inbound-receiving.events` | inbound-receiving | `INBOUND_DEMAND_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` | `warehouse.dock-scheduling.events` | dock-scheduling | `DOCK_APPOINTMENT_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled` | `warehouse.dock-scheduling.events` | dock-scheduling | `DOCK_APPOINTMENT_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled` | `warehouse.dock-scheduling.events` | dock-scheduling | `DOCK_APPOINTMENT_CONSUMER_GROUP` (required, always consumed) |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow` | `warehouse.dock-scheduling.events` | dock-scheduling | `DOCK_APPOINTMENT_CONSUMER_GROUP` (required, always consumed) |
 | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `warehouse.fulfillment.events` | fulfillment-execution | `OBSERVED_CAPACITY_CONSUMER_GROUP` (required, always consumed) |
 
 The two order-management types feed the expected-demand read model
@@ -88,18 +91,22 @@ The two order-management types feed the expected-demand read model
 on `POST /capacity-plans`); every other type on that topic, `OrderRepromised`
 included, is ignored. See `docs/adr/0004-demand-ingestion-from-order-management.md`.
 
-The two dock-appointment types feed the inbound-demand read model (`GET
-/inbound-demand`, MCP `get_inbound_demand`, the `inbound_*` fields of a capacity
-plan); the labour comes from the operator-declared inbound labour standard, not
-from the event, and a Cancelled that arrives before its Booked wins. `TaskCompleted`
+The four dock-scheduling appointment types feed the inbound-demand read model
+(`GET /inbound-demand`, MCP `get_inbound_demand`, the `inbound_*` fields of a
+capacity plan). Only INBOUND appointments count, each at the `site_id` of its
+events; a Rescheduled moves the demand, a Cancelled or NoShow removes it, and the
+aggregate `version` makes the arrival order irrelevant. The labour comes from the
+operator-declared inbound labour standard, not from the event. The
+inbound-receiving appointment types are no longer consumed
+([ADR 0020](/docs/adr/0020-inbound-demand-from-dock-scheduling)). `TaskCompleted`
 feeds the observed-capacity read model behind the advisory `GET
 /capacity-plans/{id}/variance`. Every other type on those two topics is ignored.
 See [ADR 0017](/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback).
 
-A transiently failing message on any of the five consumed topics is retried
+A transiently failing message on any of the six consumed topics is retried
 up to 5 times and then published to `<topic>.dlq`
 (`warehouse.workforce.events.dlq`, `warehouse.facility.events.dlq`,
-`warehouse.order-management.events.dlq`, `warehouse.inbound-receiving.events.dlq`,
+`warehouse.order-management.events.dlq`, `warehouse.dock-scheduling.events.dlq`,
 `warehouse.fulfillment.events.dlq`) with `x-dlq-*` headers
 ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers)).
 

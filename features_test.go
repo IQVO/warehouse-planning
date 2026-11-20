@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -31,12 +32,20 @@ import (
 // TestFeatures runs every Gherkin feature under features/ against a
 // freshly wired HTTP server.
 func TestFeatures(t *testing.T) {
+	// @known-bug scenarios describe the documented behaviour the service does
+	// not honour yet; they are excluded unless BDD_TAGS says otherwise
+	// (BDD_TAGS=@known-bug runs only them, and they must fail).
+	tags := os.Getenv("BDD_TAGS")
+	if tags == "" {
+		tags = "~@known-bug"
+	}
 	suite := godog.TestSuite{
 		ScenarioInitializer: InitializeScenario,
 		Options: &godog.Options{
 			Format:   "pretty",
 			Paths:    []string{"features"},
 			Strict:   true,
+			Tags:     tags,
 			TestingT: t,
 		},
 	}
@@ -59,6 +68,9 @@ type world struct {
 	// planID is the id of the capacity plan the last successful create
 	// returned; the publish/get steps act on it.
 	planID string
+	// scenarioIDs maps a scenario label to the id of the plan created with
+	// it (docs/adr/0024), so the comparison steps can name plans by label.
+	scenarioIDs map[string]string
 
 	// facility is the REAL facility-layout consumer over the in-memory tally:
 	// the Given steps feed it LocationSlotRegistered CloudEvents through
@@ -85,6 +97,17 @@ type world struct {
 	// io holds the ADR 0017 state (dock-appointment and task-completion
 	// consumers); see features_inbound_observed_test.go.
 	io inboundObservedState
+
+	// ls holds the ADR 0022 state (labour-standard consumer and copy); see
+	// features_labour_test.go.
+	ls labourState
+
+	// pf holds the ADR 0025 state (the process flows copy); see
+	// features_flow_test.go.
+	pf flowState
+	// doc holds the documentation-derived steps' state; see
+	// steps_doc_rules_test.go.
+	doc docRulesState
 }
 
 // start builds the composition root the way cmd/ would, but with the
@@ -96,7 +119,11 @@ func (w *world) start() {
 	standards, tallyRepo, processed := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo(), memory.NewProcessedEventRepo()
 	uow := memory.NewUnitOfWork(repo, planRepo, outboxRepo)
 	encoder := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
+	// ADR 0025: a process flow resolves a path id before the locally declared
+	// path, as cmd/api wires it.
+	w.pf = newFlowState()
+	pathFinder := &usecases.FlowFirstPathFinder{Flows: w.pf.flows, Local: pathRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: pathFinder, ProcessCapacities: repo, StationStandards: standards, Tally: tallyRepo}
 	w.facility = &inboundkafka.StorageCapacityConsumer{
 		Tally: tallyRepo, ProcessedEvents: processed, UoW: memory.NewUnitOfWork(tallyRepo, processed),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -115,6 +142,8 @@ func (w *world) start() {
 	w.planClock = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	w.w2 = newWave2State(repo, outboxRepo, encoder, uow)
 	w.io = newInboundObservedState()
+	w.ls = newLabourState()
+	w.doc = newDocRulesState()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
 			Repo: repo,
@@ -132,14 +161,20 @@ func (w *world) start() {
 			// The dock-appointment read model prices appointments with the
 			// declared inbound standard (ADR 0017), as cmd/api wires it.
 			Inbound: w.io.getInboundDemand,
+			// The labour standards copy the labour-standard consumer
+			// writes prices each step (ADR 0022), as cmd/api wires it.
+			LaborStandards: w.ls.standards,
 			// Each plan is created one minute after the previous one, so
 			// "newest first" in the list scenarios never hangs on a clock tie.
 			Now: w.nextPlanTime,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{Plans: planRepo, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		CapacityPlans:       planRepo,
-		ListProcessPaths:    &usecases.ListProcessPaths{Paths: pathRepo},
+		ListProcessPaths:    &usecases.ListProcessPaths{Paths: &usecases.FlowFirstPathLister{Flows: w.pf.flows, Local: pathRepo}},
+		GetProcessPath:      &usecases.GetProcessPath{Paths: pathFinder},
 		ListCapacityPlans:   &usecases.ListCapacityPlans{Plans: planRepo},
+		// ADR 0024 decision 4, as cmd/api wires it.
+		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: planRepo},
 
 		DeclareStationStandard: &usecases.DeclareStationStandard{Repo: standards},
 		StationStandards:       standards,
@@ -154,9 +189,15 @@ func (w *world) start() {
 		// Every POST/PATCH sits behind the Idempotency-Key middleware.
 		UnitOfWork: uow, Idempotency: memory.NewIdempotencyStore(),
 	}
+	// ADR 0023: the workload forecast and the labour plan (features_requirement_test.go),
+	// and the labour plan drift between the plans and the labor consumer
+	// (features_drift_test.go).
+	plans := wireRequirementSide(s, outboxRepo, encoder, tallyRepo, w.w2.commitments)
+	w.w2.wireDrift(plans, outboxRepo, encoder)
 	w.server = httptest.NewServer(inboundhttp.NewRouter(s))
 	w.outbox = outboxRepo
 	w.planID = ""
+	w.scenarioIDs = map[string]string{}
 	w.status = 0
 	w.body = nil
 }
@@ -682,4 +723,11 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerListSteps(sc, w)
 	registerWave2Steps(sc, w)
 	registerInboundObservedSteps(sc, w)
+	registerLabourSteps(sc, w)
+	registerFlowSteps(sc, w)
+	registerRequirementSteps(sc, w)
+	registerScenarioSteps(sc, w)
+	registerSupersedeSteps(sc, w)
+	registerDriftSteps(sc, w)
+	registerDocRulesSteps(sc, w)
 }

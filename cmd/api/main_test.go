@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	outboxrelay "github.com/claudioed/warehouse-planning/internal/adapters/outbound/outbox"
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 )
@@ -24,8 +25,10 @@ func validEnv() map[string]string {
 		"LABOR_CAPACITY_CONSUMER_GROUP":    "g-labor",
 		"STORAGE_CAPACITY_CONSUMER_GROUP":  "g-storage",
 		"DEMAND_CONSUMER_GROUP":            "g-demand",
-		"INBOUND_DEMAND_CONSUMER_GROUP":    "g-inbound",
+		"DOCK_APPOINTMENT_CONSUMER_GROUP":  "g-dock",
 		"OBSERVED_CAPACITY_CONSUMER_GROUP": "g-observed",
+		"LABOR_STANDARD_CONSUMER_GROUP":    "g-labor-standards",
+		"PROCESS_FLOW_CONSUMER_GROUP":      "g-process-flows",
 		"DEMAND_SITE_ID":                   "SIM1",
 	}
 }
@@ -42,7 +45,7 @@ func TestLoadRuntime_AcceptsACompleteEnvironment(t *testing.T) {
 	if len(rt.brokers) != 2 || rt.brokers[1] != "kafka-2.invalid:9092" {
 		t.Errorf("brokers = %v, want two trimmed addresses", rt.brokers)
 	}
-	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" || rt.groups["INBOUND_DEMAND_CONSUMER_GROUP"] != "g-inbound" || rt.groups["OBSERVED_CAPACITY_CONSUMER_GROUP"] != "g-observed" {
+	if rt.groups["LABOR_CAPACITY_CONSUMER_GROUP"] != "g-labor" || rt.groups["STORAGE_CAPACITY_CONSUMER_GROUP"] != "g-storage" || rt.groups["DEMAND_CONSUMER_GROUP"] != "g-demand" || rt.groups["DOCK_APPOINTMENT_CONSUMER_GROUP"] != "g-dock" || rt.groups["OBSERVED_CAPACITY_CONSUMER_GROUP"] != "g-observed" || rt.groups["LABOR_STANDARD_CONSUMER_GROUP"] != "g-labor-standards" || rt.groups["PROCESS_FLOW_CONSUMER_GROUP"] != "g-process-flows" {
 		t.Errorf("groups = %v", rt.groups)
 	}
 	if rt.demandSiteID != "SIM1" {
@@ -73,8 +76,10 @@ func TestLoadRuntime_BootErrorsNameTheVariable(t *testing.T) {
 		{"no labor group", func(e map[string]string) { delete(e, "LABOR_CAPACITY_CONSUMER_GROUP") }, "LABOR_CAPACITY_CONSUMER_GROUP"},
 		{"no storage group", func(e map[string]string) { delete(e, "STORAGE_CAPACITY_CONSUMER_GROUP") }, "STORAGE_CAPACITY_CONSUMER_GROUP"},
 		{"no demand group", func(e map[string]string) { delete(e, "DEMAND_CONSUMER_GROUP") }, "DEMAND_CONSUMER_GROUP"},
-		{"no inbound demand group", func(e map[string]string) { delete(e, "INBOUND_DEMAND_CONSUMER_GROUP") }, "INBOUND_DEMAND_CONSUMER_GROUP"},
+		{"no dock appointment group", func(e map[string]string) { delete(e, "DOCK_APPOINTMENT_CONSUMER_GROUP") }, "DOCK_APPOINTMENT_CONSUMER_GROUP"},
 		{"no observed capacity group", func(e map[string]string) { delete(e, "OBSERVED_CAPACITY_CONSUMER_GROUP") }, "OBSERVED_CAPACITY_CONSUMER_GROUP"},
+		{"no labor standard group", func(e map[string]string) { delete(e, "LABOR_STANDARD_CONSUMER_GROUP") }, "LABOR_STANDARD_CONSUMER_GROUP"},
+		{"no process flow group", func(e map[string]string) { delete(e, "PROCESS_FLOW_CONSUMER_GROUP") }, "PROCESS_FLOW_CONSUMER_GROUP"},
 		{"no demand site", func(e map[string]string) { delete(e, "DEMAND_SITE_ID") }, "DEMAND_SITE_ID"},
 	}
 	for _, tc := range cases {
@@ -92,6 +97,31 @@ func TestLoadRuntime_BootErrorsNameTheVariable(t *testing.T) {
 	}
 }
 
+// ADR 0020: the retired inbound-receiving source must fail LOUDLY, naming both
+// the stale variable and its replacement, whether or not the new group is set
+// (a stale deployment must not degrade to an unread topic and an empty model).
+func TestLoadRuntime_RefusesTheRetiredInboundReceivingGroup(t *testing.T) {
+	for name, mutate := range map[string]func(map[string]string){
+		"alongside the new group": func(e map[string]string) { e["INBOUND_DEMAND_CONSUMER_GROUP"] = "g-inbound" },
+		"instead of the new group": func(e map[string]string) {
+			delete(e, "DOCK_APPOINTMENT_CONSUMER_GROUP")
+			e["INBOUND_DEMAND_CONSUMER_GROUP"] = "g-inbound"
+		},
+	} {
+		env := validEnv()
+		mutate(env)
+		_, err := loadRuntime(envFunc(env))
+		if err == nil {
+			t.Fatalf("%s: a stale INBOUND_DEMAND_CONSUMER_GROUP must be a boot error", name)
+		}
+		for _, want := range []string{"INBOUND_DEMAND_CONSUMER_GROUP", "DOCK_APPOINTMENT_CONSUMER_GROUP", "dock-scheduling"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q does not mention %s", name, err, want)
+			}
+		}
+	}
+}
+
 func TestParsePublisherMode(t *testing.T) {
 	for _, raw := range []string{"", "kafka"} {
 		if err := parsePublisherMode(raw); err != nil {
@@ -104,6 +134,33 @@ func TestParsePublisherMode(t *testing.T) {
 	}
 	if err := parsePublisherMode("rabbit"); err == nil {
 		t.Error("an unknown EVENT_PUBLISHER must be a config error")
+	}
+}
+
+// ADR 0022: the labour-standard consumer is always on, reads labor-performance's
+// INTEGRATION topic and takes its group from LABOR_STANDARD_CONSUMER_GROUP;
+// every required group variable has exactly one consumer.
+func TestConsumerSpecs_OneConsumerPerRequiredGroup(t *testing.T) {
+	specs := consumerSpecs(adapters{}, runtimeEnv{}, nil, nil, quietLogger())
+	if len(specs) != len(consumerGroupEnvs) {
+		t.Fatalf("%d consumers for %d required group variables", len(specs), len(consumerGroupEnvs))
+	}
+	byEnv := map[string]consumerSpec{}
+	for _, s := range specs {
+		byEnv[s.groupEnv] = s
+	}
+	for _, env := range consumerGroupEnvs {
+		if _, ok := byEnv[env]; !ok {
+			t.Errorf("no consumer takes its group from %s", env)
+		}
+	}
+	ls, ok := byEnv["LABOR_STANDARD_CONSUMER_GROUP"]
+	if !ok || ls.name != "labor-standards" || ls.topic != inboundkafka.LaborPerformanceTopic {
+		t.Fatalf("labor-standard consumer spec = %+v, want labor-standards on warehouse.labor-performance.events", ls)
+	}
+	pf, ok := byEnv["PROCESS_FLOW_CONSUMER_GROUP"]
+	if !ok || pf.name != "process-flows" || pf.topic != inboundkafka.ProcessPathManagementTopic {
+		t.Fatalf("process flow consumer spec = %+v, want process-flows on warehouse.process-path-management.events", pf)
 	}
 }
 

@@ -96,7 +96,7 @@ export interface PathCapacityQuery {
   packagesPerOrder?: number;
 }
 
-export type PlanStatus = "DRAFT" | "PUBLISHED";
+export type PlanStatus = "DRAFT" | "PUBLISHED" | "SUPERSEDED";
 export type DemandSource = "request" | "orders";
 
 /** One CapacityPlan: GET /capacity-plans items, GET/POST /capacity-plans and

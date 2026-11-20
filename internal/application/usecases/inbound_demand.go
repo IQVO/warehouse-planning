@@ -10,11 +10,11 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
-// RecordInboundAppointment writes one inbound-receiving dock-appointment event
-// (Booked or Cancelled) into the inbound demand read model. The processed-event
-// claim and the ordering-guarded write are ONE ports.UnitOfWork.Do, so a
+// RecordInboundAppointment writes one dock-scheduling dock-appointment event
+// (Booked, Rescheduled, Cancelled or NoShow) into the inbound demand read
+// model. The processed-event claim and the version-guarded write are ONE ports.UnitOfWork.Do, so a
 // failure after the claim rolls the claim back and the redelivery is processed
-// instead of skipped (docs/adr/0017 decision 5).
+// instead of skipped (docs/adr/0017 decision 5, ordering rule docs/adr/0020).
 type RecordInboundAppointment struct {
 	UoW             ports.UnitOfWork
 	ProcessedEvents ports.ProcessedEventRepository

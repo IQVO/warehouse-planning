@@ -13,6 +13,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/labourplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
 )
 
@@ -51,8 +52,11 @@ const laborRatePeriod = time.Hour
 // from that service's own Go types (see how-to-add-an-integration-event.md
 // §"Never import the sibling's Go packages"). One Kafka message = one
 // PathPlan line within a committed ShiftPlan (fan-out already performed
-// by the producer).
+// by the producer). site_code is the canonical site; building_id is its
+// deprecated twin (same value), still read for messages produced before
+// site_code existed (ADR 0021).
 type shiftPlanCommittedData struct {
+	SiteCode     string  `json:"site_code"`
 	BuildingID   string  `json:"building_id"`
 	ShiftID      string  `json:"shift_id"`
 	PathID       string  `json:"path_id"`
@@ -63,13 +67,15 @@ type shiftPlanCommittedData struct {
 
 // LaborCapacityConsumer upserts a LABOR CapacityConstraint on the
 // ProcessCapacity aggregate identified by (ProcessType derived from
-// path_id, Location=building_id, window=[event time, event time +
+// path_id, Location=site_code or else building_id, window=[event time, event time +
 // planned_hours)) for every ShiftPlanCommitted fan-out message it
-// receives.
+// receives. A line that carries a shift_id also feeds the labour plan drift
+// (docs/adr/0023 decision 3) through Commitments.
 //
-// UoW is REQUIRED: the processed-event claim and the constraint upsert run
-// inside one UoW.Do, so they commit or roll back together. Retry tunes the
-// run loop's backoff (zero value = defaults).
+// UoW is REQUIRED: the processed-event claim, the constraint upsert and the
+// committed heads (with the drift they raise) run inside one UoW.Do, so they
+// commit or roll back together. Retry tunes the run loop's backoff (zero
+// value = defaults).
 type LaborCapacityConsumer struct {
 	Reader          Reader
 	Register        *usecases.RegisterProcessCapacityConstraint
@@ -77,6 +83,11 @@ type LaborCapacityConsumer struct {
 	UoW             ports.UnitOfWork
 	Logger          *slog.Logger
 	Retry           RetryPolicy
+
+	// Commitments is the commitment trigger of the labour plan drift, the
+	// second step of the claim's unit of work (after the LABOR
+	// registration, which it never changes). Nil records no commitment.
+	Commitments *usecases.RecordShiftCommitment
 
 	// DLQ is this consumer's dead-letter writer (topic LaborTopic +
 	// DLQSuffix), built by NewLaborCapacityConsumer. A transient failure
@@ -92,11 +103,13 @@ type LaborCapacityConsumer struct {
 // NewLaborCapacityConsumer constructs a LaborCapacityConsumer reading
 // LaborTopic from brokers under groupID (an env-configured value supplied
 // by the composition root -- never a literal, see
-// TestKafkaConsumerGroupNeverHardcodedInline).
+// TestKafkaConsumerGroupNeverHardcodedInline). commitments is the labour
+// plan drift's commitment trigger (nil records no commitment).
 func NewLaborCapacityConsumer(
 	brokers []string,
 	groupID string,
 	register *usecases.RegisterProcessCapacityConstraint,
+	commitments *usecases.RecordShiftCommitment,
 	processedEvents ports.ProcessedEventRepository,
 	uow ports.UnitOfWork,
 	logger *slog.Logger,
@@ -104,6 +117,7 @@ func NewLaborCapacityConsumer(
 	return &LaborCapacityConsumer{
 		Reader:          kafkago.NewReader(readerConfig(brokers, LaborTopic, groupID)),
 		Register:        register,
+		Commitments:     commitments,
 		ProcessedEvents: processedEvents,
 		UoW:             uow,
 		Logger:          defaultLogger(logger),
@@ -161,15 +175,16 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 		c.Logger.WarnContext(ctx, "skipping malformed ShiftPlanCommitted payload", "error", err, "event_id", e.ID())
 		return nil
 	}
-	if data.BuildingID == "" || data.PathID == "" {
-		c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted with missing building_id/path_id", "event_id", e.ID())
+	site := data.site()
+	if site == "" || data.PathID == "" {
+		c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted with missing site_code/building_id or path_id", "event_id", e.ID())
 		return nil
 	}
 
 	windowStart := e.Time()
 	cmd := usecases.RegisterProcessCapacityConstraintCommand{
 		ProcessType:    processcapacity.ProcessType(strings.ToUpper(data.PathID)),
-		Location:       data.BuildingID,
+		Location:       site,
 		WindowStart:    windowStart,
 		WindowEnd:      windowStart.Add(durationFromHours(data.PlannedHours)),
 		ConstraintType: processcapacity.ConstraintLabor,
@@ -178,8 +193,9 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 		Period:         laborRatePeriod,
 	}
 
-	// Claim + upsert are ONE transaction: if the upsert fails the claim
-	// rolls back with it, so the retry is processed instead of skipped.
+	// Claim + upsert + committed heads are ONE transaction: if a later step
+	// fails the claim rolls back with it, so the retry is processed instead
+	// of skipped. A redelivered event (already claimed) does none of them.
 	return c.UoW.Do(ctx, func(ctx context.Context) error {
 		claimed, err := c.ProcessedEvents.Claim(ctx, laborConsumerName, e.ID())
 		if err != nil {
@@ -190,15 +206,53 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 			return nil
 		}
 
-		if _, err := c.Register.Handle(ctx, cmd); err != nil {
-			if usecases.IsDomainValidationError(err) {
-				c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted that failed domain validation", "error", err, "event_id", e.ID())
-				return nil
-			}
-			return fmt.Errorf("register labor constraint: %w", err)
+		if err := c.registerLabor(ctx, cmd, e.ID()); err != nil {
+			return err
 		}
-		return nil
+		return c.recordCommitment(ctx, data, site, e.Time(), e.ID())
 	})
+}
+
+// registerLabor upserts the LABOR constraint of the line. A domain-validation
+// rejection is logged and skipped (nil); anything else is returned wrapped.
+func (c *LaborCapacityConsumer) registerLabor(ctx context.Context, cmd usecases.RegisterProcessCapacityConstraintCommand, eventID string) error {
+	if _, err := c.Register.Handle(ctx, cmd); err != nil {
+		if usecases.IsDomainValidationError(err) {
+			c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted that failed domain validation", "error", err, "event_id", eventID)
+			return nil
+		}
+		return fmt.Errorf("register labor constraint: %w", err)
+	}
+	return nil
+}
+
+// recordCommitment is the commitment trigger of the labour plan drift
+// (docs/adr/0023 decision 3), the second step of the claim's unit of work: it
+// upserts the heads committed for (site, shift_id, path_id) and raises a
+// LabourPlanDriftDetected when the drift against the stored labour plan is
+// news. The path_id passes through labourplan.CanonicalPathID (trimmed, upper
+// case), the form the labour plan is keyed on, so a line for "PICK" meets a
+// plan PUT as "pick". It runs whatever the LABOR registration decided (the
+// commitment is workforce-management's, not the constraint's). A line without
+// shift_id, or no Commitments wired, records nothing; a rejected commitment
+// (negative heads) is logged and skipped.
+func (c *LaborCapacityConsumer) recordCommitment(ctx context.Context, data shiftPlanCommittedData, site string, observedAt time.Time, eventID string) error {
+	shift := strings.TrimSpace(data.ShiftID)
+	if c.Commitments == nil || shift == "" {
+		return nil
+	}
+	err := c.Commitments.Handle(ctx, usecases.RecordShiftCommitmentCommand{
+		SiteID: site, ShiftID: shift, PathID: labourplan.CanonicalPathID(data.PathID),
+		CommittedHeads: data.PlannedHeads, ObservedAt: observedAt,
+	})
+	if usecases.IsCommitmentRejection(err) {
+		c.Logger.WarnContext(ctx, "skipping the labour plan drift of a ShiftPlanCommitted with an invalid commitment", "error", err, "event_id", eventID)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("record committed heads: %w", err)
+	}
+	return nil
 }
 
 // Close releases the underlying Kafka reader and dead-letter writer.
@@ -208,6 +262,15 @@ func (c *LaborCapacityConsumer) Close() error {
 		err = errors.Join(err, c.DLQ.Close())
 	}
 	return err
+}
+
+// site is the line's site: the canonical site_code, or the deprecated
+// building_id when site_code is absent or blank (ADR 0021).
+func (d shiftPlanCommittedData) site() string {
+	if s := strings.TrimSpace(d.SiteCode); s != "" {
+		return s
+	}
+	return strings.TrimSpace(d.BuildingID)
 }
 
 // durationFromHours converts a float64 hour count (workforce-management's

@@ -5,7 +5,10 @@
 `github.com/claudioed/warehouse-planning`). It answers: *can this warehouse
 process the demand assigned to it, given its labor, location, equipment,
 station, conveyor and buffer constraints?* It owns the `ProcessCapacity` and
-`CapacityPlan` aggregates, station-capacity composition and window coverage.
+`CapacityPlan` aggregates, station-capacity composition and window coverage,
+and the requirement side: the `WorkloadForecast` and `LabourPlan` aggregates
+(ADR 0023; REST only, no MCP tool or A2A skill, decision 7) and a local copy
+of labor-performance's labour standards (ADR 0022).
 Study project: not production software.
 
 ## Hard rules (each one cost an incident or is fitness-tested)
@@ -37,9 +40,11 @@ Study project: not production software.
    MCP at request time and never import its Go packages: capacity facts from
    `workforce-management` and `facility-layout`, and expected demand from
    `order-management` (ADR 0004), arrive as Kafka events and live in local read
-   models (ADR 0001). `process-path-management` is deliberately NOT consumed;
-   this context owns its `ProcessPath`. Stock from `inventory-storage` is not
-   capacity and is never read.
+   models (ADR 0001). Labour standards from `labor-performance` (ADR 0022) and
+   process flows from `process-path-management` (ADR 0025) arrive the same way;
+   a flow wins over a locally declared `ProcessPath` of the same id (`source: flow`) until the
+   local declaration retires (ADR 0025 stages 2-3). Stock from
+   `inventory-storage` is not capacity and is never read.
 6. **Station capacity is composed at READ time** (`stationCount x
    StationStandard`, ADR 0002; nothing derived is stored as a
    `ProcessCapacity`) and a registered window applies when it COVERS the
@@ -49,7 +54,7 @@ Study project: not production software.
    bearer/JWT/API-key middleware (`TestNoAuthMiddlewareReintroduced`).
    **MCP is additive**: `cmd/mcp` and `internal/adapters/inbound/mcp/` depend
    only on application and domain, nothing depends on them, Streamable HTTP
-   only, tool surface capped at 11 (`maxTools` in
+   only, tool surface capped at 14 (`maxTools` in
    `internal/adapters/inbound/mcp/governance_test.go`; `.claude/rules/mcp.md`,
    `.claude/rules/fleet/no-auth-and-mcp.md`).
 8. **Frontend remote in `web/`.** `capacity_mfe` (Vite + React Module Federation
@@ -63,7 +68,7 @@ Study project: not production software.
    otherwise.
 10. **An ADR comes first** for a new cross-context contract, a custom
     CloudEvents extension attribute or any auth. ADRs live in `docs/adr/`
-    (0001-0011 today).
+    (0001-0025 today).
 
 ## Commands
 
@@ -72,7 +77,7 @@ make check-fast   # fmt-check + vet + arch-test + tests of changed packages: run
 make check        # fmt-check vet build lint test
 make check-all    # check + coverage (90% gate on domain+application) + arch-test + bdd
 make integration  # real Postgres/Kafka via testcontainers (needs Docker); not in check-all
-make mutation-fast  # gremlins on processcapacity, capacityplan, processpath (blocking in CI)
+make mutation-fast  # gremlins on MUTATION_FAST_PKGS in the Makefile (blocking in CI)
 make guide-lint   # these guides: skills load, references resolve, context budget
 ```
 

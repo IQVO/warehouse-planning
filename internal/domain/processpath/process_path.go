@@ -1,10 +1,9 @@
 // Package processpath holds ProcessPath, the ordered sequence of process
-// steps a workload flows through (Pick -> Rebin -> Pack). It is a LOCALLY
-// OWNED, operator-declared concept of warehouse-planning (declared via
-// POST /process-paths): process-path-management publishes only routing and
-// capability metadata, never a step sequence, so nothing is consumed from
-// it and this is NOT a Conformist copy (ADR 0001 Addendum). The two
-// contexts only share the `path_id` string as a loose cross-reference.
+// steps a workload flows through (Pick -> Rebin -> Pack). A path is either
+// declared locally (POST /process-paths, source local) or the view of a
+// process flow consumed from process-path-management (source flow, ADR 0025,
+// which wins over a local path with the same id). Before ADR 0025 the two
+// contexts shared only the `path_id` string (ADR 0001 Addendum).
 // ProcessPath is a value-like read model: it offers construction only and
 // no update/mutation method; a changed path replaces the old one wholesale.
 package processpath
@@ -37,20 +36,46 @@ var ErrEmptySteps = errors.New("processpath: steps must not be empty")
 // a brand new ProcessPath that replaces the old one wholesale via
 // RegisterProcessPath/Save, never an in-place edit of this struct.
 type ProcessPath struct {
-	id    string
-	name  string
-	steps []ProcessType
+	id     string
+	name   string
+	steps  []ProcessType
+	source Source
 }
 
-// NewProcessPath constructs a ProcessPath, rejecting an empty step list.
+// Source says where a ProcessPath came from (docs/adr/0025): a process flow
+// consumed from process-path-management, or a path declared locally with
+// POST /process-paths. It is read-only: reads report it, nothing sets it.
+type Source string
+
+// The two sources that coexist until the local declaration retires.
+const (
+	SourceFlow  Source = "flow"
+	SourceLocal Source = "local"
+)
+
+// NewProcessPath constructs a locally declared ProcessPath (source local),
+// rejecting an empty step list.
 func NewProcessPath(id, name string, steps []ProcessType) (ProcessPath, error) {
+	return build(id, name, steps, SourceLocal)
+}
+
+// NewFlowProcessPath constructs the ProcessPath a process flow resolves to
+// (source flow): the flow's id and name, the stages' process types as steps.
+func NewFlowProcessPath(id, name string, steps []ProcessType) (ProcessPath, error) {
+	return build(id, name, steps, SourceFlow)
+}
+
+func build(id, name string, steps []ProcessType, source Source) (ProcessPath, error) {
 	if len(steps) == 0 {
 		return ProcessPath{}, ErrEmptySteps
 	}
 	stepsCopy := make([]ProcessType, len(steps))
 	copy(stepsCopy, steps)
-	return ProcessPath{id: id, name: name, steps: stepsCopy}, nil
+	return ProcessPath{id: id, name: name, steps: stepsCopy, source: source}, nil
 }
+
+// Source reports where the path came from: SourceFlow or SourceLocal.
+func (p ProcessPath) Source() Source { return p.source }
 
 // ID returns the path's identifier.
 func (p ProcessPath) ID() string { return p.id }

@@ -39,7 +39,7 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api-reference/rest/list-process-paths",
-          label: "List the registered ProcessPaths",
+          label: "List the ProcessPaths (process flows and locally declared paths)",
           className: "api-method get",
         },
         {
@@ -47,6 +47,12 @@ const sidebar: SidebarsConfig = {
           id: "api-reference/rest/register-process-path",
           label: "Register (seed) a ProcessPath read model",
           className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-process-path",
+          label: "Get the ProcessPath an id resolves to",
+          className: "api-method get",
         },
         {
           type: "doc",
@@ -75,6 +81,12 @@ const sidebar: SidebarsConfig = {
           id: "api-reference/rest/create-capacity-plan",
           label: "Create a DRAFT CapacityPlan and compute its shortage",
           className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/compare-capacity-plans",
+          label: "Lay 2 to 5 capacity plan scenarios of one site and window side by side",
+          className: "api-method get",
         },
         {
           type: "doc",
@@ -157,7 +169,7 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api-reference/rest/get-inbound-demand",
-          label: "Inbound demand of a site over a window (inbound-receiving read model)",
+          label: "Inbound demand of a site over a window (dock-scheduling read model)",
           className: "api-method get",
         },
       ],
@@ -174,6 +186,56 @@ const sidebar: SidebarsConfig = {
           type: "doc",
           id: "api-reference/rest/get-capacity-plan-variance",
           label: "Planned versus observed throughput of a capacity plan (advisory)",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "workload-forecasts",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/workload-forecasts",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/receive-workload-forecast",
+          label: "Receive the workload forecast of a process path at a site",
+          className: "api-method put",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-workload-forecast",
+          label: "Read the workload forecast of a process path at a site",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "labour-plans",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/labour-plans",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/commit-labour-plan",
+          label: "Commit the labour plan of a process path for a shift at a site",
+          className: "api-method put",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-labour-plan",
+          label: "Read the labour plan of a process path for a shift at a site",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/list-labour-plans",
+          label: "List the labour plans of a shift at a site",
           className: "api-method get",
         },
       ],

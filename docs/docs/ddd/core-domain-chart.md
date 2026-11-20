@@ -51,7 +51,7 @@ it re-plans labor or moves demand.
   (`CapacityRate`, `CapacityWindow`, `WorkloadProfile`, `StationStandard`).
 - Twenty domain sentinel errors across `internal/domain/**` enforce the rules, among them
   `ErrUnitMismatch`, `ErrMissingStepCapacity`, `ErrUnsupportedNormalizationUnit`,
-  `ErrPathRateNotOrder` and `ErrAlreadyPublished`.
+  `ErrPathRateNotOrder`, `ErrAlreadyPublished` and `ErrSuperseded`.
 - Non-trivial rules that each needed an ADR: read-time station composition
   (`count x StationStandard`, ADR 0002), window **coverage** with
   newest-start-wins per constraint type (ADR 0003), and demand defaulting from

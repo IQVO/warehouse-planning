@@ -107,12 +107,22 @@ spec:
               value: {{ .Values.demand.consumerGroup | quote }}
             - name: DEMAND_SITE_ID
               value: {{ .Values.demand.siteId | quote }}
-            # Dock-appointment and task-completion consumers (docs/adr/0017):
-            # always on, each group comes from its dedicated value.
-            - name: INBOUND_DEMAND_CONSUMER_GROUP
-              value: {{ .Values.inbound.consumerGroup | quote }}
+            # Dock-appointment (docs/adr/0020, dock-scheduling's events) and
+            # task-completion (docs/adr/0017) consumers: always on, each group
+            # comes from its dedicated value. INBOUND_DEMAND_CONSUMER_GROUP
+            # (the retired inbound-receiving source) is never rendered.
+            - name: DOCK_APPOINTMENT_CONSUMER_GROUP
+              value: {{ .Values.dockAppointments.consumerGroup | quote }}
             - name: OBSERVED_CAPACITY_CONSUMER_GROUP
               value: {{ .Values.observed.consumerGroup | quote }}
+            # Labour-standard consumer (docs/adr/0022, labor-performance's
+            # integration topic): always on, group from laborStandard.
+            - name: LABOR_STANDARD_CONSUMER_GROUP
+              value: {{ .Values.laborStandard.consumerGroup | quote }}
+            # Process flow consumer (docs/adr/0025, process-path-management's
+            # integration topic): always on, group from processFlow.
+            - name: PROCESS_FLOW_CONSUMER_GROUP
+              value: {{ .Values.processFlow.consumerGroup | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

@@ -319,7 +319,7 @@ func (failingPathLister) ListPage(context.Context, *pagecursor.Cursor, int) ([]p
 
 type failingPlanLister struct{}
 
-func (failingPlanLister) ListRecent(context.Context, string, *pagecursor.Cursor, int) ([]*capacityplan.CapacityPlan, error) {
+func (failingPlanLister) ListRecent(context.Context, capacityplan.ListFilter, *pagecursor.Cursor, int) ([]*capacityplan.CapacityPlan, error) {
 	return nil, errors.New("database unavailable")
 }
 

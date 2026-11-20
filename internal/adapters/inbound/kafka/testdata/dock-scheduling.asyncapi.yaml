@@ -1,0 +1,764 @@
+asyncapi: 2.6.0
+
+info:
+  title: dock-scheduling Domain Events
+  version: "1.0.0"
+  contact:
+    name: dock-scheduling maintainers
+    url: https://github.com/IQVO/dock-scheduling
+    email: dock-scheduling@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: |
+    Event catalog for the **dock-scheduling** bounded context (WMS subdomain): the door calendar of every site (ADR 0001, ADR 0002).
+
+    **Published.** The `DockAppointment` aggregate raises eight events, the `DockCalendar` aggregate three and the `Carrier` aggregate
+    (the carrier registry, ADR 0012) three. Ten of the fourteen go to `warehouse.dock-scheduling.events` (`DockAppointmentDoorReassigned`
+    since ADR 0010, `CarrierRegistered`, `CarrierSuspended` and `CarrierReinstated` since ADR 0012); the analytics-only facts
+    (`DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentAtRisk`, `DoorOperatingHoursDeclared`) go ONLY to
+    `warehouse.dock-scheduling.analytics`, where every published fact also appears as its analytics twin.
+    Every fact is written to its stream through a **transactional outbox**: the aggregate row and its already-encoded events commit in
+    ONE database transaction and a relay drains them to Kafka (at-least-once; the CloudEvents `id` is stored with the outbox row, so a
+    retry republishes the same `id`). Kafka key = appointment id (site id for the calendar events, SCAC for the carrier events), so one
+    appointment's (or carrier's) history stays ordered on one partition.
+
+    **Consumed (ADR 0003).** facility-layout (`ZoneRegistered`, `LocationSlotRegistered`, `LocationSlotDecommissioned`),
+    inbound-receiving (`ASNRegistered`, `ASNCancelled`),
+    process-path-management (`CPTScheduleChanged`) and yard-management (`VisitCheckedIn`, `VisitRejected`, `TrailerDocked`,
+    `TrailerUndocked`). The consumed messages below are restated from the producers' own contracts and never imported.
+
+    **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka header `content-type: application/cloudevents+json;
+    charset=UTF-8`. `specversion`, `id`, `source` (`/warehouse/dock-scheduling`), `type`, `subject`, `time`, `datacontenttype`
+    (`application/json`) and `dataschema` (`urn:warehouse:dock-scheduling:events:<EventName>:v1`) are all required. Type =
+    `com.warehouse.wms.dock-scheduling.<entity>.<EventName>` with entity `dockappointment`, `dockcalendar` or `carrier`. A breaking payload
+    change is a new `.v2` type, never a mutation.
+
+    **Standard semantics (ADR 0013).** Partners read standard vocabularies, not this context's private enums, so every fact about an
+    appointment (and every door closure) carries, as ADDITIVE optional `data` fields, the standard meaning it corresponds to:
+    `x12_status` (the ANSI X12 214 status code, where an honest mapping exists), `cbv_biz_step` (the GS1 EPCIS Core Business Vocabulary
+    business step, as its `urn:epcglobal:cbv:bizstep:` URN) and `read_point_gln` (the GS1 GLN of the door where the fact happened, when
+    facility-layout gave the door one, ADR 0045 there). The mapping is one table (`internal/domain/standards`, listed in ADR 0013 with the
+    official code names and sources); an event with no honest code simply never carries the field. A field is omitted, never null, when it
+    has no value, so a payload with none of them is byte-for-byte what it was before, and a consumer that does not know them keeps
+    working. The integration and analytics twins carry identical `data`.
+
+servers:
+  production:
+    url: "{brokers}"
+    protocol: kafka
+    description: Fleet-shared Kafka broker (host supplied by the deployment environment).
+    variables:
+      brokers:
+        default: "kafka.warehouse-systems.internal:9092"
+
+defaultContentType: application/cloudevents+json
+
+tags:
+  - name: dock-scheduling
+    description: The dock-scheduling bounded context (WMS subdomain).
+  - name: dockappointment
+    description: Events raised by the DockAppointment aggregate.
+  - name: dockcalendar
+    description: Events raised by the DockCalendar aggregate.
+  - name: analytics
+    description: "The analytics read side of this context (ADR 0006): the analytics topic, its projector and the reports binary."
+  - name: consumed
+    description: Events produced by sibling contexts that this service consumes (ADR 0003).
+
+channels:
+  warehouse.dock-scheduling.events:
+    description: |
+      This service's integration topic. Written by the outbox relay; key = appointment id (site id for the door calendar events, SCAC for the carrier events);
+      the only Kafka header on every message is the CloudEvents `content-type`. Rows the relay can never encode are parked raw on
+      `warehouse.dock-scheduling.events.dlq`. Dispatch on the full `type`, ignore unknown types, dedupe on `id`.
+    subscribe:
+      operationId: receiveDockSchedulingEvents
+      summary: Receive the appointment lifecycle and door closures.
+      description: |
+        Route on the full `type` (`com.warehouse.wms.dock-scheduling.dockappointment.<EventName>`,
+        `com.warehouse.wms.dock-scheduling.dockcalendar.<EventName>` and `com.warehouse.wms.dock-scheduling.carrier.<EventName>`). `DockAppointmentBooked` and `DockAppointmentRescheduled` carry the
+        site's arrival tolerance; `DockAppointmentCancelled` carries the reason; `DockAppointmentNoShow` is terminal;
+        `DockAppointmentDoorReassigned` moves the appointment to the door the trailer actually docked at, window unchanged (ADR 0010).
+        `CarrierRegistered` is the whole carrier snapshot after a registration or an update (the latest `version` wins, an older one is
+        stale); `CarrierSuspended` and `CarrierReinstated` change the carrier's status (ADR 0012). Suspending a carrier cancels nothing:
+        the appointments it holds stay and a person decides.
+      tags:
+        - name: dockappointment
+      message:
+        oneOf:
+          - $ref: "#/components/messages/DockAppointmentBooked"
+          - $ref: "#/components/messages/DockAppointmentRescheduled"
+          - $ref: "#/components/messages/DockAppointmentCancelled"
+          - $ref: "#/components/messages/DockAppointmentNoShow"
+          - $ref: "#/components/messages/DockAppointmentDoorReassigned"
+          - $ref: "#/components/messages/DoorClosureScheduled"
+          - $ref: "#/components/messages/DoorClosureLifted"
+          - $ref: "#/components/messages/CarrierRegistered"
+          - $ref: "#/components/messages/CarrierSuspended"
+          - $ref: "#/components/messages/CarrierReinstated"
+
+  warehouse.dock-scheduling.analytics:
+    description: |
+      This service's own analytics stream (ADR 0006), written by the SAME transactional outbox relay as the integration topic: every
+      published fact appears here too, under the SAME CloudEvents id and `type`, with only the `dataschema` stream segment different
+      (urn:warehouse:dock-scheduling:analytics:<EventName>:v1); the four analytics-only facts (`DockAppointmentCheckedIn`,
+      `DockAppointmentCompleted`, `DockAppointmentAtRisk`, `DoorOperatingHoursDeclared`) appear ONLY here. It is NOT an integration
+      contract: the only consumer is this service's `cmd/dock-projector` (fixed group from `ANALYTICS_CONSUMER_GROUP`, starting at the
+      earliest retained offset), which folds the events into the analytical database; its deterministic poison goes to
+      `warehouse.dock-scheduling.analytics.dlq`.
+    subscribe:
+      operationId: receiveDockSchedulingAnalytics
+      summary: Receive the analytics twin of every published fact.
+      description: |
+        Payloads are byte-for-byte the integration payloads (ADR 0006); only the dataschema names the analytics stream. The projector
+        answers the schedule-adherence report from the folded facts.
+      tags:
+        - name: analytics
+      message:
+        oneOf:
+          - $ref: "#/components/messages/DockAppointmentBookedAnalytics"
+          - $ref: "#/components/messages/DockAppointmentRescheduledAnalytics"
+          - $ref: "#/components/messages/DockAppointmentCancelledAnalytics"
+          - $ref: "#/components/messages/DockAppointmentNoShowAnalytics"
+          - $ref: "#/components/messages/DockAppointmentCheckedInAnalytics"
+          - $ref: "#/components/messages/DockAppointmentDoorReassignedAnalytics"
+          - $ref: "#/components/messages/DockAppointmentCompletedAnalytics"
+          - $ref: "#/components/messages/DockAppointmentAtRiskAnalytics"
+          - $ref: "#/components/messages/DoorClosureScheduledAnalytics"
+          - $ref: "#/components/messages/DoorClosureLiftedAnalytics"
+          - $ref: "#/components/messages/DoorOperatingHoursDeclaredAnalytics"
+          - $ref: "#/components/messages/CarrierRegisteredAnalytics"
+          - $ref: "#/components/messages/CarrierSuspendedAnalytics"
+          - $ref: "#/components/messages/CarrierReinstatedAnalytics"
+
+  warehouse.facility.events:
+    description: |
+      facility-layout's integration topic. This service consumes `ZoneRegistered`, `LocationSlotRegistered` and `LocationSlotDecommissioned` under a stable consumer group read from env `FACILITY_CONSUMER_GROUP`. Every other type on the topic is ignored. Key = zoneId / locationCode.
+    publish:
+      operationId: consumeFacilityEvents
+      summary: Consume the zone and dock-slot registrations.
+      description: |
+        A `LocationSlotRegistered` with `role=Dock` upserts a door (`dockFlow` Inbound, Outbound or Both); any other role removes it; a decommission deletes it. A door's site is resolved at use time by joining its zone to `ZoneRegistered.siteCode`. The CloudEvents `id` claim and the effect commit in one transaction; the offset is committed afterwards.
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ZoneRegistered"
+          - $ref: "#/components/messages/LocationSlotRegistered"
+          - $ref: "#/components/messages/LocationSlotDecommissioned"
+
+  warehouse.inbound-receiving.events:
+    description: |
+      inbound-receiving's integration topic. One consumer reads it: the ASN consumer (`ASNRegistered`, `ASNCancelled`; group env `ASN_CONSUMER_GROUP`). Every other type is ignored (the retired inbound-receiving `dockappointment.*` types included, ADR 0011). Key = ASN number.
+    publish:
+      operationId: consumeInboundReceivingEvents
+      summary: Consume the ASN lifecycle events.
+      description: |
+        ASN events feed the `asns` copy (CANCELLED is sticky) and CancelWhenAllAsnsCancelled. The CloudEvents `id` claim and the effect commit in one transaction.
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ASNRegistered"
+          - $ref: "#/components/messages/ASNCancelled"
+
+  warehouse.process-path-management.events:
+    description: |
+      process-path-management's integration topic. This service consumes ONLY `CPTScheduleChanged` under a stable consumer group read from env `CPT_CONSUMER_GROUP`. Every other type is ignored. Key = site id.
+    publish:
+      operationId: consumeProcessPathEvents
+      summary: Consume the CPT schedule of a site.
+      description: |
+        The event is the whole schedule of the site: its rows in the `cutoffs` copy are replaced. v1 creates no appointment from it (PickupFromCutoffs is phase 2); an OUTBOUND booking may name a `cpt_id` of the copy.
+      tags:
+        - name: consumed
+      message:
+        $ref: "#/components/messages/CPTScheduleChanged"
+
+  warehouse.yard-management.events:
+    description: |
+      yard-management's integration topic. This service consumes `VisitCheckedIn`, `VisitRejected`, `TrailerDocked` and `TrailerUndocked` under a stable consumer group read from env `YARD_CONSUMER_GROUP`. Every other type is ignored. Yard events are keyed by visit or trailer, not by appointment, so they can arrive in any order across partitions.
+    publish:
+      operationId: consumeYardEvents
+      summary: Consume the physical yard facts.
+      description: |
+        ArrivalFromGate, CancelOnVisitRejected, ActualDoorWins, CompleteOnDoorRelease and OutOfOrderYardFacts (ADR 0002, ADR 0003). Facts for unknown or terminal appointments are ignored and counted. The CloudEvents `id` claim and the effect commit in one transaction.
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/VisitCheckedIn"
+          - $ref: "#/components/messages/VisitRejected"
+          - $ref: "#/components/messages/TrailerDocked"
+          - $ref: "#/components/messages/TrailerUndocked"
+
+components:
+  messages:
+    DockAppointmentBooked:
+      name: DockAppointmentBooked
+      title: "DockAppointmentBooked"
+      summary: "A door window was booked."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked`; subject and Kafka key = appointment id. Integration stream. Consumers: yard-management, warehouse-planning, inbound-receiving. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: dockappointment
+      payload:
+        $ref: "#/components/schemas/DockAppointmentBookedCloudEvent"
+      examples:
+        - name: dockAppointmentBooked
+          summary: "A door window was booked."
+          payload: {"specversion": "1.0", "id": "00001000-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DockAppointmentBooked:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "direction": "INBOUND", "door_code": "WH1-DOCK-IN-01", "carrier": "ACME Freight", "carrier_scac": "ACMF", "window_start": "2026-11-06T08:00:00Z", "window_end": "2026-11-06T10:00:00Z", "asn_numbers": ["ASN-1001"], "cpt_id": null, "shipment_refs": [], "expected_seal_number": "SEAL-77120", "arrival_tolerance_minutes": 15, "provenance": "native", "version": 1, "x12_status": "AB"}}
+        - name: dockAppointmentBookedOutbound
+          summary: "An OUTBOUND appointment on a door with a GLN: a pick-up appointment (AA) and its read point."
+          payload: {"specversion": "1.0", "id": "00001100-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked", "subject": "appt-223e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DockAppointmentBooked:v1", "data": {"appointment_id": "appt-223e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "direction": "OUTBOUND", "door_code": "WH1-DOCK-OUT-01", "carrier": "ACME Freight", "carrier_scac": "ACMF", "window_start": "2026-11-06T08:00:00Z", "window_end": "2026-11-06T10:00:00Z", "asn_numbers": [], "cpt_id": "WH1-1500", "shipment_refs": ["SHP-2001"], "expected_seal_number": "SEAL-77120", "arrival_tolerance_minutes": 15, "provenance": "native", "version": 1, "x12_status": "AA", "read_point_gln": "4006381333931"}}
+    DockAppointmentBookedAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentBooked
+      title: "DockAppointmentBooked"
+      summary: "A door window was booked."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: yard-management, warehouse-planning, inbound-receiving. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentBookedAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentBooked
+          summary: "A door window was booked."
+          payload: {"specversion": "1.0", "id": "00001001-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentBooked:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "direction": "INBOUND", "door_code": "WH1-DOCK-IN-01", "carrier": "ACME Freight", "carrier_scac": "ACMF", "window_start": "2026-11-06T08:00:00Z", "window_end": "2026-11-06T10:00:00Z", "asn_numbers": ["ASN-1001"], "cpt_id": null, "shipment_refs": [], "expected_seal_number": "SEAL-77120", "arrival_tolerance_minutes": 15, "provenance": "native", "version": 1, "x12_status": "AB"}}
+    DockAppointmentRescheduled:
+      name: DockAppointmentRescheduled
+      title: "DockAppointmentRescheduled"
+      summary: "A BOOKED appointment moved to another window and/or door."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled`; subject and Kafka key = appointment id. Integration stream. Consumers: yard-management, warehouse-planning. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: dockappointment
+      payload:
+        $ref: "#/components/schemas/DockAppointmentRescheduledCloudEvent"
+      examples:
+        - name: dockAppointmentRescheduled
+          summary: "A BOOKED appointment moved to another window and/or door."
+          payload: {"specversion": "1.0", "id": "00001002-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DockAppointmentRescheduled:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-02", "previous_door_code": "WH1-DOCK-IN-01", "window_start": "2026-11-06T09:00:00Z", "window_end": "2026-11-06T11:00:00Z", "previous_window_start": "2026-11-06T08:00:00Z", "previous_window_end": "2026-11-06T10:00:00Z", "arrival_tolerance_minutes": 15, "version": 2, "x12_status": "AB", "read_point_gln": "4012345000009"}}
+    DockAppointmentRescheduledAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentRescheduled
+      title: "DockAppointmentRescheduled"
+      summary: "A BOOKED appointment moved to another window and/or door."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: yard-management, warehouse-planning. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentRescheduledAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentRescheduled
+          summary: "A BOOKED appointment moved to another window and/or door."
+          payload: {"specversion": "1.0", "id": "00001003-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentRescheduled:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-02", "previous_door_code": "WH1-DOCK-IN-01", "window_start": "2026-11-06T09:00:00Z", "window_end": "2026-11-06T11:00:00Z", "previous_window_start": "2026-11-06T08:00:00Z", "previous_window_end": "2026-11-06T10:00:00Z", "arrival_tolerance_minutes": 15, "version": 2, "x12_status": "AB", "read_point_gln": "4012345000009"}}
+    DockAppointmentCancelled:
+      name: DockAppointmentCancelled
+      title: "DockAppointmentCancelled"
+      summary: "A BOOKED or CHECKED_IN appointment was cancelled."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled`; subject and Kafka key = appointment id. Integration stream. Consumers: yard-management, warehouse-planning, inbound-receiving. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: dockappointment
+      payload:
+        $ref: "#/components/schemas/DockAppointmentCancelledCloudEvent"
+      examples:
+        - name: dockAppointmentCancelled
+          summary: "A BOOKED or CHECKED_IN appointment was cancelled."
+          payload: {"specversion": "1.0", "id": "00001004-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DockAppointmentCancelled:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "reason": "CARRIER_REQUEST", "version": 2}}
+    DockAppointmentCancelledAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentCancelled
+      title: "DockAppointmentCancelled"
+      summary: "A BOOKED or CHECKED_IN appointment was cancelled."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: yard-management, warehouse-planning, inbound-receiving. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentCancelledAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentCancelled
+          summary: "A BOOKED or CHECKED_IN appointment was cancelled."
+          payload: {"specversion": "1.0", "id": "00001005-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentCancelled:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "reason": "CARRIER_REQUEST", "version": 2}}
+    DockAppointmentNoShow:
+      name: DockAppointmentNoShow
+      title: "DockAppointmentNoShow"
+      summary: "A BOOKED appointment saw no arrival by window end plus grace."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow`; subject and Kafka key = appointment id. Integration stream. Consumers: yard-management, warehouse-planning, exception-management. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: dockappointment
+      payload:
+        $ref: "#/components/schemas/DockAppointmentNoShowCloudEvent"
+      examples:
+        - name: dockAppointmentNoShow
+          summary: "A BOOKED appointment saw no arrival by window end plus grace."
+          payload: {"specversion": "1.0", "id": "00001006-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DockAppointmentNoShow:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "direction": "INBOUND", "carrier_scac": "ACMF", "window_end": "2026-11-06T10:00:00Z", "version": 2}}
+    DockAppointmentNoShowAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentNoShow
+      title: "DockAppointmentNoShow"
+      summary: "A BOOKED appointment saw no arrival by window end plus grace."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: yard-management, warehouse-planning, exception-management. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentNoShowAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentNoShow
+          summary: "A BOOKED appointment saw no arrival by window end plus grace."
+          payload: {"specversion": "1.0", "id": "00001007-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentNoShow:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "direction": "INBOUND", "carrier_scac": "ACMF", "window_end": "2026-11-06T10:00:00Z", "version": 2}}
+    DockAppointmentCheckedInAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentCheckedIn
+      title: "DockAppointmentCheckedIn"
+      summary: "The carrier arrived at the gate (applied from the yard fact)."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCheckedIn`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: analytics only. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentCheckedInAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentCheckedIn
+          summary: "The carrier arrived at the gate (applied from the yard fact)."
+          payload: {"specversion": "1.0", "id": "00001008-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCheckedIn", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentCheckedIn:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "checked_in_at": "2026-11-06T07:55:00Z", "arrival_status": "ON_TIME", "visit_id": "visit-0b5c1f2e-7a9d-4c31-8e64-5d2f9a7b3c10", "version": 2, "x12_status": "X1", "cbv_biz_step": "urn:epcglobal:cbv:bizstep:arriving"}}
+    DockAppointmentDoorReassigned:
+      name: DockAppointmentDoorReassigned
+      title: "DockAppointmentDoorReassigned"
+      summary: "The trailer docked at another door than the booked one; the physical fact won."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned`; subject and Kafka key = appointment id. Integration stream (ADR 0010). The window is unchanged; `to_door_code` is the appointment's door from now on. Consumers: inbound-receiving. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: dockappointment
+      payload:
+        $ref: "#/components/schemas/DockAppointmentDoorReassignedCloudEvent"
+      examples:
+        - name: dockAppointmentDoorReassigned
+          summary: "The trailer docked at another door than the booked one; the physical fact won."
+          payload: {"specversion": "1.0", "id": "00001020-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DockAppointmentDoorReassigned:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "from_door_code": "WH1-DOCK-IN-01", "to_door_code": "WH1-DOCK-IN-02", "version": 3, "read_point_gln": "4012345000009"}}
+    DockAppointmentDoorReassignedAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentDoorReassigned
+      title: "DockAppointmentDoorReassigned"
+      summary: "The trailer docked at another door than the booked one; the physical fact won."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: inbound-receiving. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentDoorReassignedAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentDoorReassigned
+          summary: "The trailer docked at another door than the booked one; the physical fact won."
+          payload: {"specversion": "1.0", "id": "00001009-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentDoorReassigned:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "from_door_code": "WH1-DOCK-IN-01", "to_door_code": "WH1-DOCK-IN-02", "version": 3, "read_point_gln": "4012345000009"}}
+    DockAppointmentCompletedAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentCompleted
+      title: "DockAppointmentCompleted"
+      summary: "The trailer left the door (applied from the yard fact)."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCompleted`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: analytics only. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentCompletedAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentCompleted
+          summary: "The trailer left the door (applied from the yard fact)."
+          payload: {"specversion": "1.0", "id": "0000100a-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCompleted", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentCompleted:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "completed_at": "2026-11-06T09:40:00Z", "version": 3}}
+    DockAppointmentAtRiskAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DockAppointmentAtRisk
+      title: "DockAppointmentAtRisk"
+      summary: "Advisory: a late ETA or a door reassignment threatens the window. Nothing reschedules automatically."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentAtRisk`; subject and Kafka key = appointment id. Analytics twin (same id and type, dataschema `analytics`). Consumers: analytics only. Optional standard fields (ADR 0013): `x12_status`, `cbv_biz_step`, `read_point_gln`; each is omitted when it has no honest value."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DockAppointmentAtRiskAnalyticsCloudEvent"
+      examples:
+        - name: dockAppointmentAtRisk
+          summary: "Advisory: a late ETA or a door reassignment threatens the window. Nothing reschedules automatically."
+          payload: {"specversion": "1.0", "id": "0000100b-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentAtRisk", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DockAppointmentAtRisk:v1", "data": {"appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "eta_at": "2026-11-06T09:10:00Z", "window_start": "2026-11-06T08:00:00Z", "window_end": "2026-11-06T10:00:00Z", "cause": "LATE_ETA"}}
+    DoorClosureScheduled:
+      name: DoorClosureScheduled
+      title: "DoorClosureScheduled"
+      summary: "A door is closed for a span."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled`; subject and Kafka key = site id. Integration stream. Consumers: yard-management. Optional standard field (ADR 0013): `read_point_gln`, omitted when the door has no GLN."
+      contentType: application/cloudevents+json
+      tags:
+        - name: dockcalendar
+      payload:
+        $ref: "#/components/schemas/DoorClosureScheduledCloudEvent"
+      examples:
+        - name: doorClosureScheduled
+          summary: "A door is closed for a span."
+          payload: {"specversion": "1.0", "id": "0000100c-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled", "subject": "WH1", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DoorClosureScheduled:v1", "data": {"site_id": "WH1", "closure_id": "clo-123e4567-e89b-12d3-a456-426614174001", "door_code": "WH1-DOCK-IN-01", "from": "2026-11-10T00:00:00Z", "to": "2026-11-11T00:00:00Z", "reason": "Leveller maintenance", "version": 3}}
+    DoorClosureScheduledAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DoorClosureScheduled
+      title: "DoorClosureScheduled"
+      summary: "A door is closed for a span."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled`; subject and Kafka key = site id. Analytics twin (same id and type, dataschema `analytics`). Consumers: yard-management. Optional standard field (ADR 0013): `read_point_gln`, omitted when the door has no GLN."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DoorClosureScheduledAnalyticsCloudEvent"
+      examples:
+        - name: doorClosureScheduled
+          summary: "A door is closed for a span."
+          payload: {"specversion": "1.0", "id": "0000100d-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled", "subject": "WH1", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DoorClosureScheduled:v1", "data": {"site_id": "WH1", "closure_id": "clo-123e4567-e89b-12d3-a456-426614174001", "door_code": "WH1-DOCK-IN-01", "from": "2026-11-10T00:00:00Z", "to": "2026-11-11T00:00:00Z", "reason": "Leveller maintenance", "version": 3}}
+    DoorClosureLifted:
+      name: DoorClosureLifted
+      title: "DoorClosureLifted"
+      summary: "A scheduled closure was lifted."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureLifted`; subject and Kafka key = site id. Integration stream. Consumers: yard-management. Optional standard field (ADR 0013): `read_point_gln`, omitted when the door has no GLN."
+      contentType: application/cloudevents+json
+      tags:
+        - name: dockcalendar
+      payload:
+        $ref: "#/components/schemas/DoorClosureLiftedCloudEvent"
+      examples:
+        - name: doorClosureLifted
+          summary: "A scheduled closure was lifted."
+          payload: {"specversion": "1.0", "id": "0000100e-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureLifted", "subject": "WH1", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:DoorClosureLifted:v1", "data": {"site_id": "WH1", "closure_id": "clo-123e4567-e89b-12d3-a456-426614174001", "door_code": "WH1-DOCK-IN-01", "version": 4}}
+    DoorClosureLiftedAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DoorClosureLifted
+      title: "DoorClosureLifted"
+      summary: "A scheduled closure was lifted."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureLifted`; subject and Kafka key = site id. Analytics twin (same id and type, dataschema `analytics`). Consumers: yard-management. Optional standard field (ADR 0013): `read_point_gln`, omitted when the door has no GLN."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DoorClosureLiftedAnalyticsCloudEvent"
+      examples:
+        - name: doorClosureLifted
+          summary: "A scheduled closure was lifted."
+          payload: {"specversion": "1.0", "id": "0000100f-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureLifted", "subject": "WH1", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DoorClosureLifted:v1", "data": {"site_id": "WH1", "closure_id": "clo-123e4567-e89b-12d3-a456-426614174001", "door_code": "WH1-DOCK-IN-01", "version": 4}}
+    DoorOperatingHoursDeclaredAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: DoorOperatingHoursDeclared
+      title: "DoorOperatingHoursDeclared"
+      summary: "The site's operating-hours rows were replaced."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.dockcalendar.DoorOperatingHoursDeclared`; subject and Kafka key = site id. Analytics twin (same id and type, dataschema `analytics`). Consumers: analytics only."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/DoorOperatingHoursDeclaredAnalyticsCloudEvent"
+      examples:
+        - name: doorOperatingHoursDeclared
+          summary: "The site's operating-hours rows were replaced."
+          payload: {"specversion": "1.0", "id": "00001010-1111-4222-8333-444455556666", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.dockcalendar.DoorOperatingHoursDeclared", "subject": "WH1", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:DoorOperatingHoursDeclared:v1", "data": {"site_id": "WH1", "door_code": null, "operating_hours": [{"door_code": null, "weekday": "MON", "opens_at": "06:00", "closes_at": "22:00", "timezone": "America/Sao_Paulo"}], "version": 2}}
+    CarrierRegistered:
+      name: CarrierRegistered
+      title: "CarrierRegistered"
+      summary: "A carrier was registered or its data was updated."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.carrier.CarrierRegistered`; subject and Kafka key = SCAC. Integration stream. Consumed by yard-management (the carrier registry copy, ADR 0016 / YF-1). Full carrier snapshot after the first registration and after each update; `version` is the carrier version."
+      contentType: application/cloudevents+json
+      tags:
+        - name: carrier
+      payload:
+        $ref: "#/components/schemas/CarrierRegisteredCloudEvent"
+      examples:
+        - name: carrierRegistered
+          summary: "A carrier was registered or its data was updated."
+          payload: {"specversion": "1.0", "id": "7c6b5a49-3827-4f16-9e05-d4c3b2a19f8e", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.carrier.CarrierRegistered", "subject": "ACMF", "time": "2026-11-10T14:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:CarrierRegistered:v1", "data": {"scac": "ACMF", "name": "ACME Freight", "usdot": "1234567", "mc": "MC654321", "status": "ACTIVE", "reason": null, "suspended_at": null, "version": 1}}
+    CarrierSuspended:
+      name: CarrierSuspended
+      title: "CarrierSuspended"
+      summary: "A carrier was suspended; it can no longer book."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.carrier.CarrierSuspended`; subject and Kafka key = SCAC. Integration stream. Consumed by yard-management (the carrier registry copy, ADR 0016 / YF-1). `scac`, `reason`, `suspended_at`, `version`. Existing appointments of the carrier are not cancelled."
+      contentType: application/cloudevents+json
+      tags:
+        - name: carrier
+      payload:
+        $ref: "#/components/schemas/CarrierSuspendedCloudEvent"
+      examples:
+        - name: carrierSuspended
+          summary: "A carrier was suspended; it can no longer book."
+          payload: {"specversion": "1.0", "id": "b8a79685-7463-4e52-8d41-30f2e1d0c9ba", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.carrier.CarrierSuspended", "subject": "ACMF", "time": "2026-11-10T15:30:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:CarrierSuspended:v1", "data": {"scac": "ACMF", "reason": "insurance lapsed", "suspended_at": "2026-11-10T15:30:00Z", "version": 2}}
+    CarrierReinstated:
+      name: CarrierReinstated
+      title: "CarrierReinstated"
+      summary: "A suspended carrier was reinstated; it can book again."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.carrier.CarrierReinstated`; subject and Kafka key = SCAC. Integration stream. Consumed by yard-management (the carrier registry copy, ADR 0016 / YF-1). `scac`, `reinstated_at`, `version`."
+      contentType: application/cloudevents+json
+      tags:
+        - name: carrier
+      payload:
+        $ref: "#/components/schemas/CarrierReinstatedCloudEvent"
+      examples:
+        - name: carrierReinstated
+          summary: "A suspended carrier was reinstated; it can book again."
+          payload: {"specversion": "1.0", "id": "e9f8a7b6-c5d4-4e3f-a2b1-0c9d8e7f6a5b", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.carrier.CarrierReinstated", "subject": "ACMF", "time": "2026-11-11T09:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:events:CarrierReinstated:v1", "data": {"scac": "ACMF", "reinstated_at": "2026-11-11T09:00:00Z", "version": 3}}
+    CarrierRegisteredAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: CarrierRegistered
+      title: "CarrierRegistered"
+      summary: "A carrier was registered or its data was updated."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.carrier.CarrierRegistered`; subject and Kafka key = SCAC. Analytics twin (same id and type, dataschema `analytics`). Consumed by yard-management (the carrier registry copy, ADR 0016 / YF-1). Full carrier snapshot after the first registration and after each update; `version` is the carrier version."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/CarrierRegisteredAnalyticsCloudEvent"
+      examples:
+        - name: carrierRegistered
+          summary: "A carrier was registered or its data was updated."
+          payload: {"specversion": "1.0", "id": "7c6b5a49-3827-4f16-9e05-d4c3b2a19f8e", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.carrier.CarrierRegistered", "subject": "ACMF", "time": "2026-11-10T14:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:CarrierRegistered:v1", "data": {"scac": "ACMF", "name": "ACME Freight", "usdot": "1234567", "mc": "MC654321", "status": "ACTIVE", "reason": null, "suspended_at": null, "version": 1}}
+    CarrierSuspendedAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: CarrierSuspended
+      title: "CarrierSuspended"
+      summary: "A carrier was suspended; it can no longer book."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.carrier.CarrierSuspended`; subject and Kafka key = SCAC. Analytics twin (same id and type, dataschema `analytics`). Consumed by yard-management (the carrier registry copy, ADR 0016 / YF-1). `scac`, `reason`, `suspended_at`, `version`. Existing appointments of the carrier are not cancelled."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/CarrierSuspendedAnalyticsCloudEvent"
+      examples:
+        - name: carrierSuspended
+          summary: "A carrier was suspended; it can no longer book."
+          payload: {"specversion": "1.0", "id": "b8a79685-7463-4e52-8d41-30f2e1d0c9ba", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.carrier.CarrierSuspended", "subject": "ACMF", "time": "2026-11-10T15:30:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:CarrierSuspended:v1", "data": {"scac": "ACMF", "reason": "insurance lapsed", "suspended_at": "2026-11-10T15:30:00Z", "version": 2}}
+    CarrierReinstatedAnalytics:
+      x-no-consumer-reason: "analytics twin: consumed by this service's own projector only"
+      name: CarrierReinstated
+      title: "CarrierReinstated"
+      summary: "A suspended carrier was reinstated; it can book again."
+      description: "`type` = `com.warehouse.wms.dock-scheduling.carrier.CarrierReinstated`; subject and Kafka key = SCAC. Analytics twin (same id and type, dataschema `analytics`). Consumed by yard-management (the carrier registry copy, ADR 0016 / YF-1). `scac`, `reinstated_at`, `version`."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/CarrierReinstatedAnalyticsCloudEvent"
+      examples:
+        - name: carrierReinstated
+          summary: "A suspended carrier was reinstated; it can book again."
+          payload: {"specversion": "1.0", "id": "e9f8a7b6-c5d4-4e3f-a2b1-0c9d8e7f6a5b", "source": "/warehouse/dock-scheduling", "type": "com.warehouse.wms.dock-scheduling.carrier.CarrierReinstated", "subject": "ACMF", "time": "2026-11-11T09:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:dock-scheduling:analytics:CarrierReinstated:v1", "data": {"scac": "ACMF", "reinstated_at": "2026-11-11T09:00:00Z", "version": 3}}
+    ZoneRegistered:
+      name: ZoneRegistered
+      title: "ZoneRegistered (from facility-layout)"
+      summary: "Consumed from facility-layout."
+      description: "`type` = `com.warehouse.wms.facility-layout.zone.ZoneRegistered`; key = zoneId. Feeds the `zones` copy (zoneId to siteCode)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedZoneRegisteredCloudEvent"
+      examples:
+        - name: zoneRegistered
+          summary: "Consumed from facility-layout."
+          payload: {"specversion": "1.0", "id": "00001011-1111-4222-8333-444455556666", "source": "/warehouse/facility-layout", "type": "com.warehouse.wms.facility-layout.zone.ZoneRegistered", "subject": "zone-WH1-DOCK", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:facility-layout:events:ZoneRegistered:v1", "data": {"zoneId": "zone-WH1-DOCK", "siteCode": "WH1", "eventName": "ZoneRegistered", "occurredAt": "2026-10-01T08:00:00Z"}}
+    LocationSlotRegistered:
+      name: LocationSlotRegistered
+      title: "LocationSlotRegistered (from facility-layout)"
+      summary: "Consumed from facility-layout."
+      description: "`type` = `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`; key = locationCode. Role Dock slots feed the `doors` copy; absent role means Storage and is ignored. Its optional `gln` (facility-layout ADR 0045) is kept with the door and published as `read_point_gln` (ADR 0013)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedLocationSlotRegisteredCloudEvent"
+      examples:
+        - name: locationSlotRegistered
+          summary: "Consumed from facility-layout."
+          payload: {"specversion": "1.0", "id": "00001012-1111-4222-8333-444455556666", "source": "/warehouse/facility-layout", "type": "com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered", "subject": "zone-WH1-DOCK", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:facility-layout:events:LocationSlotRegistered:v1", "data": {"locationCode": "WH1-DOCK-IN-01", "zoneId": "zone-WH1-DOCK", "role": "Dock", "dockFlow": "Both", "eventName": "LocationSlotRegistered", "occurredAt": "2026-10-01T08:01:00Z", "gln": "4006381333931"}}
+    LocationSlotDecommissioned:
+      name: LocationSlotDecommissioned
+      title: "LocationSlotDecommissioned (from facility-layout)"
+      summary: "Consumed from facility-layout."
+      description: "`type` = `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned`; key = locationCode. Deletes the door from the `doors` copy (blocks new bookings)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedLocationSlotDecommissionedCloudEvent"
+      examples:
+        - name: locationSlotDecommissioned
+          summary: "Consumed from facility-layout."
+          payload: {"specversion": "1.0", "id": "00001013-1111-4222-8333-444455556666", "source": "/warehouse/facility-layout", "type": "com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned", "subject": "WH1-DOCK-IN-01", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1", "data": {"locationCode": "WH1-DOCK-IN-01", "eventName": "LocationSlotDecommissioned", "occurredAt": "2026-10-02T08:00:00Z"}}
+    ASNRegistered:
+      name: ASNRegistered
+      title: "ASNRegistered (from inbound-receiving)"
+      summary: "Consumed from inbound-receiving."
+      description: "`type` = `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`; key = asn number. Feeds the `asns` copy (REGISTERED)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedASNRegisteredCloudEvent"
+      examples:
+        - name: aSNRegistered
+          summary: "Consumed from inbound-receiving."
+          payload: {"specversion": "1.0", "id": "00001014-1111-4222-8333-444455556666", "source": "/warehouse/inbound-receiving", "type": "com.warehouse.wms.inbound-receiving.asn.ASNRegistered", "subject": "ASN-1001", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:inbound-receiving:events:ASNRegistered:v1", "data": {"asn_number": "ASN-1001", "supplier_ref": "ACME", "expected_arrival": "2026-11-06T08:00:00Z", "lines": [{"line_no": 1, "sku": "SKU-1", "expected_qty": 40}]}}
+    ASNCancelled:
+      name: ASNCancelled
+      title: "ASNCancelled (from inbound-receiving)"
+      summary: "Consumed from inbound-receiving."
+      description: "`type` = `com.warehouse.wms.inbound-receiving.asn.ASNCancelled`; key = asn number. Marks the ASN CANCELLED and runs CancelWhenAllAsnsCancelled."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedASNCancelledCloudEvent"
+      examples:
+        - name: aSNCancelled
+          summary: "Consumed from inbound-receiving."
+          payload: {"specversion": "1.0", "id": "00001015-1111-4222-8333-444455556666", "source": "/warehouse/inbound-receiving", "type": "com.warehouse.wms.inbound-receiving.asn.ASNCancelled", "subject": "ASN-1001", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:inbound-receiving:events:ASNCancelled:v1", "data": {"asn_number": "ASN-1001", "reason": "Supplier cancelled the shipment"}}
+    CPTScheduleChanged:
+      name: CPTScheduleChanged
+      title: "CPTScheduleChanged (from process-path-management)"
+      summary: "Consumed from process-path-management."
+      description: "`type` = `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged`; key = site_id. The whole CPT schedule of a site; replaces its rows of the `cutoffs` copy (phase 2 reads them, v1 creates no appointment)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedCPTScheduleChangedCloudEvent"
+      examples:
+        - name: cPTScheduleChanged
+          summary: "Consumed from process-path-management."
+          payload: {"specversion": "1.0", "id": "0000101a-1111-4222-8333-444455556666", "source": "/warehouse/process-path-management", "type": "com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged", "subject": "WH1", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:process-path-management:events:CPTScheduleChanged:v1", "data": {"site_id": "WH1", "timezone": "America/Sao_Paulo", "cutoffs": [{"cpt_id": "WH1-1500", "local_time": "15:00", "days_of_week": ["Mon", "Tue"], "ship_method": "ground", "eligible_path_ids": ["PICK", "PACK"]}]}}
+    VisitCheckedIn:
+      name: VisitCheckedIn
+      title: "VisitCheckedIn (from yard-management)"
+      summary: "Consumed from yard-management."
+      description: "`type` = `com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn`; key = visit_id. ArrivalFromGate: RecordArrival on the named appointment."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedVisitCheckedInCloudEvent"
+      examples:
+        - name: visitCheckedIn
+          summary: "Consumed from yard-management."
+          payload: {"specversion": "1.0", "id": "0000101b-1111-4222-8333-444455556666", "source": "/warehouse/yard-management", "type": "com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:yard-management:events:VisitCheckedIn:v1", "data": {"visit_id": "visit-0b5c1f2e-7a9d-4c31-8e64-5d2f9a7b3c10", "site_id": "WH1", "carrier": "ACME Freight", "carrier_scac": "ACMF", "purpose": "LIVE_UNLOAD", "appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "trailers": [], "arrived_at": "2026-11-06T07:55:00Z", "version": 1}}
+    VisitRejected:
+      name: VisitRejected
+      title: "VisitRejected (from yard-management)"
+      summary: "Consumed from yard-management."
+      description: "`type` = `com.warehouse.wms.yard-management.yardvisit.VisitRejected`; key = visit_id. CancelOnVisitRejected: cancels a BOOKED appointment with reason TURNED_AWAY."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedVisitRejectedCloudEvent"
+      examples:
+        - name: visitRejected
+          summary: "Consumed from yard-management."
+          payload: {"specversion": "1.0", "id": "0000101c-1111-4222-8333-444455556666", "source": "/warehouse/yard-management", "type": "com.warehouse.wms.yard-management.yardvisit.VisitRejected", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:yard-management:events:VisitRejected:v1", "data": {"visit_id": "visit-0b5c1f2e-7a9d-4c31-8e64-5d2f9a7b3c10", "site_id": "WH1", "carrier_scac": "ACMF", "appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "reason": "NO_APPOINTMENT", "rejected_at": "2026-11-06T07:56:00Z"}}
+    TrailerDocked:
+      name: TrailerDocked
+      title: "TrailerDocked (from yard-management)"
+      summary: "Consumed from yard-management."
+      description: "`type` = `com.warehouse.wms.yard-management.trailer.TrailerDocked`; key = trailer_id. ActualDoorWins: ReassignDoor when the door differs from the booked one."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedTrailerDockedCloudEvent"
+      examples:
+        - name: trailerDocked
+          summary: "Consumed from yard-management."
+          payload: {"specversion": "1.0", "id": "0000101d-1111-4222-8333-444455556666", "source": "/warehouse/yard-management", "type": "com.warehouse.wms.yard-management.trailer.TrailerDocked", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:yard-management:events:TrailerDocked:v1", "data": {"trailer_id": "trl-5f3a9c1e-2b7d-4e68-9a41-0c8d7e6f5a32", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "asn_numbers": ["ASN-1001"], "visit_id": "visit-0b5c1f2e-7a9d-4c31-8e64-5d2f9a7b3c10", "docked_at": "2026-11-06T08:10:00Z", "version": 3}}
+    TrailerUndocked:
+      name: TrailerUndocked
+      title: "TrailerUndocked (from yard-management)"
+      summary: "Consumed from yard-management."
+      description: "`type` = `com.warehouse.wms.yard-management.trailer.TrailerUndocked`; key = trailer_id. CompleteOnDoorRelease: RecordDoorRelease on the named appointment."
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ConsumedTrailerUndockedCloudEvent"
+      examples:
+        - name: trailerUndocked
+          summary: "Consumed from yard-management."
+          payload: {"specversion": "1.0", "id": "0000101e-1111-4222-8333-444455556666", "source": "/warehouse/yard-management", "type": "com.warehouse.wms.yard-management.trailer.TrailerUndocked", "subject": "appt-123e4567-e89b-12d3-a456-426614174000", "time": "2026-11-05T12:00:00Z", "datacontenttype": "application/json", "dataschema": "urn:warehouse:yard-management:events:TrailerUndocked:v1", "data": {"trailer_id": "trl-5f3a9c1e-2b7d-4e68-9a41-0c8d7e6f5a32", "site_id": "WH1", "door_code": "WH1-DOCK-IN-01", "appointment_id": "appt-123e4567-e89b-12d3-a456-426614174000", "undocked_at": "2026-11-06T09:40:00Z", "version": 4}}
+
+  schemas:
+    CloudEventEnvelope:
+      type: object
+      description: CloudEvents 1.0 structured-mode envelope. Every attribute below is REQUIRED in this fleet.
+      required: [specversion, id, source, type, subject, time, datacontenttype, dataschema, data]
+      properties:
+        specversion: { type: string, enum: ["1.0"] }
+        id: { type: string, description: "Minted once per domain event and persisted with the outbox row; `(source, id)` is the consumer idempotency key." }
+        source: { type: string }
+        type: { type: string }
+        subject: { type: string, minLength: 1 }
+        time: { type: string, format: date-time }
+        datacontenttype: { type: string, enum: [application/json] }
+        dataschema: { type: string }
+        data: { type: object }
+
+    DockAppointmentBookedCloudEvent: {"title": "CloudEvent + DockAppointmentBooked data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:DockAppointmentBooked:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentBookedData"}}}]}
+    DockAppointmentBookedAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentBooked data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentBooked:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentBookedData"}}}]}
+    DockAppointmentBookedData: {"type": "object", "required": ["appointment_id", "site_id", "direction", "door_code", "carrier", "carrier_scac", "window_start", "window_end", "asn_numbers", "cpt_id", "shipment_refs", "expected_seal_number", "arrival_tolerance_minutes", "provenance", "version"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "direction": {"type": "string", "enum": ["INBOUND", "OUTBOUND"]}, "door_code": {"type": "string"}, "carrier": {"type": "string"}, "carrier_scac": {"type": "string", "nullable": true}, "window_start": {"type": "string", "format": "date-time"}, "window_end": {"type": "string", "format": "date-time"}, "asn_numbers": {"type": "array", "items": {"type": "string"}}, "cpt_id": {"type": "string", "nullable": true}, "shipment_refs": {"type": "array", "items": {"type": "string"}}, "expected_seal_number": {"type": "string", "nullable": true}, "arrival_tolerance_minutes": {"type": "integer"}, "provenance": {"type": "string", "enum": ["native", "legacy-import"], "description": "`legacy-import` is historical: nothing sets it since the legacy importer was removed (ADR 0011); the value stays a published enum value."}, "version": {"type": "integer"}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code this fact corresponds to: `AB` (Delivery Appointment Date and/or Time) for an INBOUND appointment, `AA` (Pick-up Appointment Date and/or Time) for an OUTBOUND one; both are Shipment Appointment Status Codes (X12 element 1652, AT7-03) and the date and time they state is `window_start`. Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step of this fact, as a `urn:epcglobal:cbv:bizstep:` URN. NOT MAPPED for this event: the CBV has no business step that says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened, as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DockAppointmentRescheduledCloudEvent: {"title": "CloudEvent + DockAppointmentRescheduled data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:DockAppointmentRescheduled:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentRescheduledData"}}}]}
+    DockAppointmentRescheduledAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentRescheduled data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentRescheduled:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentRescheduledData"}}}]}
+    DockAppointmentRescheduledData: {"type": "object", "required": ["appointment_id", "site_id", "door_code", "previous_door_code", "window_start", "window_end", "previous_window_start", "previous_window_end", "arrival_tolerance_minutes", "version"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "previous_door_code": {"type": "string"}, "window_start": {"type": "string", "format": "date-time"}, "window_end": {"type": "string", "format": "date-time"}, "previous_window_start": {"type": "string", "format": "date-time"}, "previous_window_end": {"type": "string", "format": "date-time"}, "arrival_tolerance_minutes": {"type": "integer"}, "version": {"type": "integer"}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code this fact corresponds to: the appointment restated at its new window, `AB` (Delivery Appointment Date and/or Time) for an INBOUND appointment, `AA` (Pick-up Appointment Date and/or Time) for an OUTBOUND one (X12 element 1652, AT7-03); X12 has no rescheduled code. Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step of this fact, as a `urn:epcglobal:cbv:bizstep:` URN. NOT MAPPED for this event: the CBV has no business step that says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened (the NEW door of the reschedule), as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when that door has no GLN or is unknown. Never sent as null."}}}
+    DockAppointmentCancelledCloudEvent: {"title": "CloudEvent + DockAppointmentCancelled data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:DockAppointmentCancelled:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentCancelledData"}}}]}
+    DockAppointmentCancelledAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentCancelled data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentCancelled:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentCancelledData"}}}]}
+    DockAppointmentCancelledData: {"type": "object", "required": ["appointment_id", "site_id", "door_code", "reason", "version"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "reason": {"type": "string", "enum": ["CARRIER_REQUEST", "SITE_REQUEST", "ASN_CANCELLED", "TURNED_AWAY"]}, "version": {"type": "integer"}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code of this fact. NOT MAPPED for this event: no code of the X12 214 lists says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step of this fact, as a `urn:epcglobal:cbv:bizstep:` URN. NOT MAPPED for this event: the CBV has no business step that says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened, as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DockAppointmentNoShowCloudEvent: {"title": "CloudEvent + DockAppointmentNoShow data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:DockAppointmentNoShow:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentNoShowData"}}}]}
+    DockAppointmentNoShowAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentNoShow data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentNoShow:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentNoShowData"}}}]}
+    DockAppointmentNoShowData: {"type": "object", "required": ["appointment_id", "site_id", "door_code", "direction", "carrier_scac", "window_end", "version"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "direction": {"type": "string", "enum": ["INBOUND", "OUTBOUND"]}, "carrier_scac": {"type": "string", "nullable": true}, "window_end": {"type": "string", "format": "date-time"}, "version": {"type": "integer"}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code of this fact. NOT MAPPED for this event: no code of the X12 214 lists says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step of this fact, as a `urn:epcglobal:cbv:bizstep:` URN. NOT MAPPED for this event: the CBV has no business step that says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened, as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DockAppointmentCheckedInAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentCheckedIn data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCheckedIn"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentCheckedIn:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentCheckedInData"}}}]}
+    DockAppointmentCheckedInData: {"type": "object", "required": ["appointment_id", "site_id", "door_code", "checked_in_at", "arrival_status", "visit_id", "version"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "checked_in_at": {"type": "string", "format": "date-time"}, "arrival_status": {"type": "string", "enum": ["EARLY", "ON_TIME", "LATE"]}, "visit_id": {"type": "string", "nullable": true}, "version": {"type": "integer"}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code this fact corresponds to: `X1` (Arrived at Delivery Location) for an INBOUND appointment, `X3` (Arrived at Pick-up Location) for an OUTBOUND one (X12 element 1650, AT7-01). Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step this fact corresponds to: `urn:epcglobal:cbv:bizstep:arriving` (an object arrives at a location), the carrier arriving at the site. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened, as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DockAppointmentDoorReassignedCloudEvent: {"title": "CloudEvent + DockAppointmentDoorReassigned data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:DockAppointmentDoorReassigned:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentDoorReassignedData"}}}]}
+    DockAppointmentDoorReassignedAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentDoorReassigned data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentDoorReassigned:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentDoorReassignedData"}}}]}
+    DockAppointmentDoorReassignedData: {"type": "object", "required": ["appointment_id", "site_id", "from_door_code", "to_door_code", "version"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "from_door_code": {"type": "string"}, "to_door_code": {"type": "string"}, "version": {"type": "integer"}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code of this fact. NOT MAPPED for this event: no code of the X12 214 lists says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step of this fact, as a `urn:epcglobal:cbv:bizstep:` URN. NOT MAPPED for this event: the CBV has no business step that says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened (the door the trailer docked at, `to_door_code`), as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when that door has no GLN or is unknown. Never sent as null."}}}
+    DockAppointmentCompletedAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentCompleted data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCompleted"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentCompleted:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentCompletedData"}}}]}
+    DockAppointmentCompletedData: {"type": "object", "required": ["appointment_id", "site_id", "door_code", "completed_at", "version"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "completed_at": {"type": "string", "format": "date-time"}, "version": {"type": "integer"}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code of this fact. NOT MAPPED for this event: no code of the X12 214 lists says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step of this fact, as a `urn:epcglobal:cbv:bizstep:` URN. NOT MAPPED for this event: the CBV has no business step that says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened, as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DockAppointmentAtRiskAnalyticsCloudEvent: {"title": "CloudEvent + DockAppointmentAtRisk data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentAtRisk"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DockAppointmentAtRisk:v1"]}, "data": {"$ref": "#/components/schemas/DockAppointmentAtRiskData"}}}]}
+    DockAppointmentAtRiskData: {"type": "object", "required": ["appointment_id", "site_id", "door_code", "eta_at", "window_start", "window_end", "cause"], "properties": {"appointment_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "eta_at": {"type": "string", "format": "date-time", "nullable": true}, "window_start": {"type": "string", "format": "date-time"}, "window_end": {"type": "string", "format": "date-time"}, "cause": {"type": "string", "enum": ["LATE_ETA", "DOOR_REASSIGNED_OVERLAP"]}, "x12_status": {"type": "string", "nullable": true, "pattern": "^[A-Z0-9]{2}$", "description": "Optional (ADR 0013). The ANSI X12 214 status code of this fact. NOT MAPPED for this event: no code of the X12 214 lists says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "cbv_biz_step": {"type": "string", "nullable": true, "pattern": "^urn:epcglobal:cbv:bizstep:[a-z_]+$", "description": "Optional (ADR 0013). The GS1 EPCIS Core Business Vocabulary 2.0 business step of this fact, as a `urn:epcglobal:cbv:bizstep:` URN. NOT MAPPED for this event: the CBV has no business step that says what this fact says, so the field is never present today (ADR 0013 gives the reason). It is declared so every appointment fact has the same shape. Omitted when absent; never sent as null."}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened, as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DoorClosureScheduledCloudEvent: {"title": "CloudEvent + DoorClosureScheduled data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:DoorClosureScheduled:v1"]}, "data": {"$ref": "#/components/schemas/DoorClosureScheduledData"}}}]}
+    DoorClosureScheduledAnalyticsCloudEvent: {"title": "CloudEvent + DoorClosureScheduled data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DoorClosureScheduled:v1"]}, "data": {"$ref": "#/components/schemas/DoorClosureScheduledData"}}}]}
+    DoorClosureScheduledData: {"type": "object", "required": ["site_id", "closure_id", "door_code", "from", "to", "reason", "version"], "properties": {"site_id": {"type": "string"}, "closure_id": {"type": "string"}, "door_code": {"type": "string"}, "from": {"type": "string", "format": "date-time"}, "to": {"type": "string", "format": "date-time"}, "reason": {"type": "string"}, "version": {"type": "integer"}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened (the closed door), as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DoorClosureLiftedCloudEvent: {"title": "CloudEvent + DoorClosureLifted data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureLifted"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:DoorClosureLifted:v1"]}, "data": {"$ref": "#/components/schemas/DoorClosureLiftedData"}}}]}
+    DoorClosureLiftedAnalyticsCloudEvent: {"title": "CloudEvent + DoorClosureLifted data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureLifted"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DoorClosureLifted:v1"]}, "data": {"$ref": "#/components/schemas/DoorClosureLiftedData"}}}]}
+    DoorClosureLiftedData: {"type": "object", "required": ["site_id", "closure_id", "door_code", "version"], "properties": {"site_id": {"type": "string"}, "closure_id": {"type": "string"}, "door_code": {"type": "string"}, "version": {"type": "integer"}, "read_point_gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (ADR 0013). The GS1 Global Location Number (13 digits, mod-10 check digit) of the door where this fact happened (the closed door), as facility-layout registered it on the dock slot and this service kept in its local door copy. Omitted when the door has no GLN or is unknown. Never sent as null."}}}
+    DoorOperatingHoursDeclaredAnalyticsCloudEvent: {"title": "CloudEvent + DoorOperatingHoursDeclared data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.dockcalendar.DoorOperatingHoursDeclared"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:DoorOperatingHoursDeclared:v1"]}, "data": {"$ref": "#/components/schemas/DoorOperatingHoursDeclaredData"}}}]}
+    DoorOperatingHoursDeclaredData: {"type": "object", "required": ["site_id", "door_code", "operating_hours", "version"], "properties": {"site_id": {"type": "string"}, "door_code": {"type": "string", "nullable": true}, "operating_hours": {"type": "array", "items": {"type": "object", "required": ["weekday", "opens_at", "closes_at", "timezone"], "properties": {"door_code": {"type": "string", "nullable": true}, "weekday": {"type": "string", "enum": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]}, "opens_at": {"type": "string"}, "closes_at": {"type": "string"}, "timezone": {"type": "string"}}}}, "version": {"type": "integer"}}}
+    CarrierRegisteredCloudEvent: {"title": "CloudEvent + CarrierRegistered data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.carrier.CarrierRegistered"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:CarrierRegistered:v1"]}, "data": {"$ref": "#/components/schemas/CarrierRegisteredData"}}}]}
+    CarrierRegisteredAnalyticsCloudEvent: {"title": "CloudEvent + CarrierRegistered data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.carrier.CarrierRegistered"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:CarrierRegistered:v1"]}, "data": {"$ref": "#/components/schemas/CarrierRegisteredData"}}}]}
+    CarrierRegisteredData: {"type": "object", "required": ["scac", "name", "usdot", "mc", "status", "reason", "suspended_at", "version"], "properties": {"scac": {"type": "string", "pattern": "^[A-Z]{2,4}$"}, "name": {"type": "string"}, "usdot": {"type": "string", "nullable": true}, "mc": {"type": "string", "nullable": true}, "status": {"type": "string", "enum": ["ACTIVE", "SUSPENDED"]}, "reason": {"type": "string", "nullable": true}, "suspended_at": {"type": "string", "format": "date-time", "nullable": true}, "version": {"type": "integer"}, "initiated_by": {"type": "object", "description": "Present only when an agent made the change through MCP (ADR 0012); REST writes carry none.", "required": ["via"], "properties": {"via": {"type": "string", "enum": ["mcp"]}, "proposal_id": {"type": "string"}, "approved_by": {"type": "string"}, "agent_id": {"type": "string"}}}}}
+    CarrierSuspendedCloudEvent: {"title": "CloudEvent + CarrierSuspended data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.carrier.CarrierSuspended"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:CarrierSuspended:v1"]}, "data": {"$ref": "#/components/schemas/CarrierSuspendedData"}}}]}
+    CarrierSuspendedAnalyticsCloudEvent: {"title": "CloudEvent + CarrierSuspended data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.carrier.CarrierSuspended"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:CarrierSuspended:v1"]}, "data": {"$ref": "#/components/schemas/CarrierSuspendedData"}}}]}
+    CarrierSuspendedData: {"type": "object", "required": ["scac", "reason", "suspended_at", "version"], "properties": {"scac": {"type": "string", "pattern": "^[A-Z]{2,4}$"}, "reason": {"type": "string", "nullable": false}, "suspended_at": {"type": "string", "format": "date-time", "nullable": false}, "version": {"type": "integer"}, "initiated_by": {"type": "object", "description": "Present only when an agent made the change through MCP (ADR 0012); REST writes carry none.", "required": ["via"], "properties": {"via": {"type": "string", "enum": ["mcp"]}, "proposal_id": {"type": "string"}, "approved_by": {"type": "string"}, "agent_id": {"type": "string"}}}}}
+    CarrierReinstatedCloudEvent: {"title": "CloudEvent + CarrierReinstated data (events stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.carrier.CarrierReinstated"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:events:CarrierReinstated:v1"]}, "data": {"$ref": "#/components/schemas/CarrierReinstatedData"}}}]}
+    CarrierReinstatedAnalyticsCloudEvent: {"title": "CloudEvent + CarrierReinstated data (analytics stream)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/dock-scheduling"]}, "type": {"enum": ["com.warehouse.wms.dock-scheduling.carrier.CarrierReinstated"]}, "dataschema": {"enum": ["urn:warehouse:dock-scheduling:analytics:CarrierReinstated:v1"]}, "data": {"$ref": "#/components/schemas/CarrierReinstatedData"}}}]}
+    CarrierReinstatedData: {"type": "object", "required": ["scac", "reinstated_at", "version"], "properties": {"scac": {"type": "string", "pattern": "^[A-Z]{2,4}$"}, "reinstated_at": {"type": "string", "format": "date-time"}, "version": {"type": "integer"}, "initiated_by": {"type": "object", "description": "Present only when an agent made the change through MCP (ADR 0012); REST writes carry none.", "required": ["via"], "properties": {"via": {"type": "string", "enum": ["mcp"]}, "proposal_id": {"type": "string"}, "approved_by": {"type": "string"}, "agent_id": {"type": "string"}}}}}
+    ConsumedZoneRegisteredCloudEvent: {"title": "CloudEvent + ZoneRegistered data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/facility-layout"]}, "type": {"enum": ["com.warehouse.wms.facility-layout.zone.ZoneRegistered"]}, "dataschema": {"enum": ["urn:warehouse:facility-layout:events:ZoneRegistered:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedZoneRegisteredData"}}}]}
+    ConsumedZoneRegisteredData: {"type": "object", "required": ["zoneId", "siteCode"], "properties": {"zoneId": {"type": "string"}, "siteCode": {"type": "string"}}}
+    ConsumedLocationSlotRegisteredCloudEvent: {"title": "CloudEvent + LocationSlotRegistered data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/facility-layout"]}, "type": {"enum": ["com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered"]}, "dataschema": {"enum": ["urn:warehouse:facility-layout:events:LocationSlotRegistered:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedLocationSlotRegisteredData"}}}]}
+    ConsumedLocationSlotRegisteredData: {"type": "object", "required": ["locationCode", "zoneId"], "properties": {"locationCode": {"type": "string"}, "zoneId": {"type": "string"}, "role": {"type": "string"}, "dockFlow": {"type": "string", "enum": ["Inbound", "Outbound", "Both"]}, "gln": {"type": "string", "nullable": true, "pattern": "^[0-9]{13}$", "description": "Optional (facility-layout ADR 0045). The slot's GS1 Global Location Number. A Dock slot's GLN is kept with the door and published as `read_point_gln` on the facts at that door (ADR 0013). Absent or null means none; a value that is not a valid GLN (13 digits with the GS1 check digit) is ignored, never an error; a re-registration that carries none keeps the one already known."}}}
+    ConsumedLocationSlotDecommissionedCloudEvent: {"title": "CloudEvent + LocationSlotDecommissioned data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/facility-layout"]}, "type": {"enum": ["com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned"]}, "dataschema": {"enum": ["urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedLocationSlotDecommissionedData"}}}]}
+    ConsumedLocationSlotDecommissionedData: {"type": "object", "required": ["locationCode"], "properties": {"locationCode": {"type": "string"}}}
+    ConsumedASNRegisteredCloudEvent: {"title": "CloudEvent + ASNRegistered data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/inbound-receiving"]}, "type": {"enum": ["com.warehouse.wms.inbound-receiving.asn.ASNRegistered"]}, "dataschema": {"enum": ["urn:warehouse:inbound-receiving:events:ASNRegistered:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedASNRegisteredData"}}}]}
+    ConsumedASNRegisteredData: {"type": "object", "required": ["asn_number"], "properties": {"asn_number": {"type": "string"}, "expected_arrival": {"type": "string", "format": "date-time"}, "lines": {"type": "array", "items": {"type": "object"}}}}
+    ConsumedASNCancelledCloudEvent: {"title": "CloudEvent + ASNCancelled data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/inbound-receiving"]}, "type": {"enum": ["com.warehouse.wms.inbound-receiving.asn.ASNCancelled"]}, "dataschema": {"enum": ["urn:warehouse:inbound-receiving:events:ASNCancelled:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedASNCancelledData"}}}]}
+    ConsumedASNCancelledData: {"type": "object", "required": ["asn_number"], "properties": {"asn_number": {"type": "string"}}}
+    ConsumedCPTScheduleChangedCloudEvent: {"title": "CloudEvent + CPTScheduleChanged data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/process-path-management"]}, "type": {"enum": ["com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged"]}, "dataschema": {"enum": ["urn:warehouse:process-path-management:events:CPTScheduleChanged:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedCPTScheduleChangedData"}}}]}
+    ConsumedCPTScheduleChangedData: {"type": "object", "required": ["site_id", "timezone", "cutoffs"], "properties": {"site_id": {"type": "string"}, "timezone": {"type": "string"}, "cutoffs": {"type": "array", "items": {"type": "object", "properties": {"cpt_id": {"type": "string"}, "local_time": {"type": "string"}, "days_of_week": {"type": "array", "items": {"type": "string"}}, "ship_method": {"type": "string"}}}}}}
+    ConsumedVisitCheckedInCloudEvent: {"title": "CloudEvent + VisitCheckedIn data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/yard-management"]}, "type": {"enum": ["com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn"]}, "dataschema": {"enum": ["urn:warehouse:yard-management:events:VisitCheckedIn:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedVisitCheckedInData"}}}]}
+    ConsumedVisitCheckedInData: {"type": "object", "required": ["visit_id", "site_id", "arrived_at"], "properties": {"visit_id": {"type": "string"}, "site_id": {"type": "string"}, "appointment_id": {"type": "string", "nullable": true}, "arrived_at": {"type": "string", "format": "date-time"}, "version": {"type": "integer"}}}
+    ConsumedVisitRejectedCloudEvent: {"title": "CloudEvent + VisitRejected data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/yard-management"]}, "type": {"enum": ["com.warehouse.wms.yard-management.yardvisit.VisitRejected"]}, "dataschema": {"enum": ["urn:warehouse:yard-management:events:VisitRejected:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedVisitRejectedData"}}}]}
+    ConsumedVisitRejectedData: {"type": "object", "required": ["visit_id", "site_id"], "properties": {"visit_id": {"type": "string"}, "site_id": {"type": "string"}, "appointment_id": {"type": "string", "nullable": true}, "reason": {"type": "string"}, "rejected_at": {"type": "string", "format": "date-time"}}}
+    ConsumedTrailerDockedCloudEvent: {"title": "CloudEvent + TrailerDocked data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/yard-management"]}, "type": {"enum": ["com.warehouse.wms.yard-management.trailer.TrailerDocked"]}, "dataschema": {"enum": ["urn:warehouse:yard-management:events:TrailerDocked:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedTrailerDockedData"}}}]}
+    ConsumedTrailerDockedData: {"type": "object", "required": ["trailer_id", "site_id", "door_code"], "properties": {"trailer_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "appointment_id": {"type": "string", "nullable": true}, "docked_at": {"type": "string", "format": "date-time"}, "version": {"type": "integer"}}}
+    ConsumedTrailerUndockedCloudEvent: {"title": "CloudEvent + TrailerUndocked data (consumed)", "allOf": [{"$ref": "#/components/schemas/CloudEventEnvelope"}, {"type": "object", "properties": {"source": {"enum": ["/warehouse/yard-management"]}, "type": {"enum": ["com.warehouse.wms.yard-management.trailer.TrailerUndocked"]}, "dataschema": {"enum": ["urn:warehouse:yard-management:events:TrailerUndocked:v1"]}, "data": {"$ref": "#/components/schemas/ConsumedTrailerUndockedData"}}}]}
+    ConsumedTrailerUndockedData: {"type": "object", "required": ["trailer_id", "site_id", "door_code", "undocked_at"], "properties": {"trailer_id": {"type": "string"}, "site_id": {"type": "string"}, "door_code": {"type": "string"}, "appointment_id": {"type": "string", "nullable": true}, "undocked_at": {"type": "string", "format": "date-time"}, "version": {"type": "integer"}}}

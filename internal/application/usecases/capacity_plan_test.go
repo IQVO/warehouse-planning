@@ -11,7 +11,9 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/outbox"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/labourplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
+	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
 
 var (
@@ -52,6 +54,38 @@ func (e fakeEncoder) EncodeProcessCapacityEvents(events ...processcapacity.Event
 		out = append(out, outbox.Message{
 			EventID:   fmt.Sprintf("evt-%s-%d", ev.EventName(), i),
 			EventType: ev.EventName(),
+		})
+	}
+	return out, nil
+}
+
+// The three ADR 0023 methods complete ports.EventEncoder: one message per
+// event named after it (no plan use case under test raises them).
+func (e fakeEncoder) EncodeWorkloadForecastEvents(events ...workloadforecast.Received) ([]outbox.Message, error) {
+	return fakeMessages(e.err, events)
+}
+
+func (e fakeEncoder) EncodeLabourPlanCommitted(events ...labourplan.Committed) ([]outbox.Message, error) {
+	return fakeMessages(e.err, events)
+}
+
+func (e fakeEncoder) EncodeLabourPlanDriftDetected(events ...labourplan.DriftDetected) ([]outbox.Message, error) {
+	return fakeMessages(e.err, events)
+}
+
+func fakeMessages[E interface {
+	EventName() string
+	AggregateID() string
+}](err error, events []E) ([]outbox.Message, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := make([]outbox.Message, 0, len(events))
+	for i, ev := range events {
+		out = append(out, outbox.Message{
+			EventID:   fmt.Sprintf("evt-%s-%d", ev.EventName(), i),
+			EventType: ev.EventName(),
+			Subject:   ev.AggregateID(),
 		})
 	}
 	return out, nil
@@ -175,6 +209,13 @@ func TestCreateCapacityPlan_Rejections(t *testing.T) {
 		{"negative demand", func(c *CreateCapacityPlanCommand) { c.AssignedDemand = -1 }, capacityplan.ErrNegativeDemand},
 		{"blank warehouse", func(c *CreateCapacityPlanCommand) { c.WarehouseID = "" }, capacityplan.ErrRequiredField},
 		{"blank site id", func(c *CreateCapacityPlanCommand) { c.SiteID = "" }, capacityplan.ErrRequiredField},
+		// A blank location / path id is a required-field refusal, never the
+		// missing-step-capacity or unknown-path answer the path lookup would
+		// give (openapi, ADR 0012, troubleshooting).
+		{"blank location", func(c *CreateCapacityPlanCommand) { c.Location = "" }, capacityplan.ErrRequiredField},
+		{"blank path id", func(c *CreateCapacityPlanCommand) { c.ProcessPathID = "" }, capacityplan.ErrRequiredField},
+		{"blank location and inverted window", func(c *CreateCapacityPlanCommand) { c.Location = ""; c.WindowEnd = c.WindowStart }, capacityplan.ErrRequiredField},
+		{"blank location and omitted demand", func(c *CreateCapacityPlanCommand) { c.Location = ""; c.DemandFromOrders = true }, capacityplan.ErrRequiredField},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -345,6 +386,9 @@ type findFailsPlans struct{ err error }
 
 func (f findFailsPlans) Save(context.Context, *capacityplan.CapacityPlan) error { return nil }
 func (f findFailsPlans) FindByID(context.Context, string) (*capacityplan.CapacityPlan, error) {
+	return nil, f.err
+}
+func (f findFailsPlans) FindPublished(context.Context, capacityplan.SupersedeKey, string) (*capacityplan.CapacityPlan, error) {
 	return nil, f.err
 }
 

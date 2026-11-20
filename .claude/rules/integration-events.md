@@ -7,7 +7,7 @@ paths:
 
 # Cross-service integration events (Kafka)
 
-This service both PUBLISHES and CONSUMES. Publishes the four CapacityPlan
+This service both PUBLISHES and CONSUMES. Publishes the five CapacityPlan
 events to `warehouse.warehouse-planning.events` (Phase 4, through a
 transactional outbox -- see "Publishing: the transactional outbox" below).
 Consumes
@@ -82,11 +82,15 @@ through the `cloudevents` helper; golden exact-JSON tests in
 | `type` | raised | `dataschema` |
 | --- | --- | --- |
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated` | `POST /capacity-plans` | `urn:warehouse:warehouse-planning:events:CapacityPlanCreated:v1` |
+| `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanSuperseded` | publish, when a PUBLISHED plan of the same site, location, path and window exists: subject/key = the OLDER plan id; `data` plan_id, superseded_by, warehouse_id, site_id, location, path_id, window_start, window_end; queued BEFORE the newer plan's Published in the same unit (docs/adr/0024 decision 3; consumed by order-management, its ADR 0052; the projector acknowledges it unprojected) | `urn:warehouse:warehouse-planning:events:CapacityPlanSuperseded:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | publish | `urn:warehouse:warehouse-planning:events:CapacityPlanPublished:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:CapacityShortageDetected:v1` |
 | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | publish, ONLY when `shortage > 0` | `urn:warehouse:warehouse-planning:events:BottleneckDetected:v1` |
 | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered` | `RegisterProcessCapacityConstraint` (REST, MCP, labor consumer) — the FIRST constraint of a (process, location, window) | `urn:warehouse:warehouse-planning:events:ProcessCapacityRegistered:v1` |
 | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged` | `RegisterProcessCapacityConstraint`, when a registration moves the effective rate (value, binding, or both) | `urn:warehouse:warehouse-planning:events:ProcessCapacityChanged:v1` |
+| `com.warehouse.wes.warehouse-planning.workloadforecast.WorkloadForecastReceived` | `PUT /workload-forecasts/{site_id}/{path_id}`, ONLY when the buckets changed (ADR 0023) | `urn:warehouse:warehouse-planning:events:WorkloadForecastReceived:v1` |
+| `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted` | `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`, ONLY when the plan changed; consumed by workforce-management (its ADR 0043, group `workforce-management-labour-plans`) | `urn:warehouse:warehouse-planning:events:LabourPlanCommitted:v1` |
+| `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanDriftDetected` | a new commitment (labor consumer) or a CHANGED labour plan, ONLY when the drift is non-zero and differs from the last recorded one | `urn:warehouse:warehouse-planning:events:LabourPlanDriftDetected:v1` |
 
 Payloads (snake_case; quantities are orders; `path_capacity` is ORDER/HOUR;
 times RFC 3339 UTC) are documented field by field in `apis/asyncapi.yaml`.
@@ -106,7 +110,7 @@ refuses one rather than silently dropping it).
 
 ### The analytics stream (ADR 0005)
 
-The same four events are ALSO written to `warehouse.warehouse-planning.analytics`
+The same five events are ALSO written to `warehouse.warehouse-planning.analytics`
 (`outboundkafka.AnalyticsTopic`), consumed ONLY by this service's own
 `cmd/planning-projector` (DLQ `warehouse.warehouse-planning.analytics.dlq`). Rules:
 
@@ -186,10 +190,10 @@ Confirmed 2026-10-03 against each producer's own `apis/asyncapi.yaml` on
 
 | `type` | topic | producer | fields used |
 | --- | --- | --- | --- |
-| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (fan-out: one message per PathPlan line) -> LABOR `CapacityConstraint` = `planned_heads * planned_rate`; window = `[event.time, event.time + planned_hours]` (documented assumption, no real shift-start field exists yet) |
+| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `warehouse.workforce.events` | workforce-management | `path_id`, `planned_heads`, `planned_rate`, `planned_hours` (fan-out: one message per PathPlan line) -> LABOR `CapacityConstraint` = `planned_heads * planned_rate`; window = `[event.time, event.time + planned_hours]` (documented assumption, no real shift-start field exists yet). A line with `shift_id` ALSO records its committed heads in `labour_plan_commitments` and may raise `LabourPlanDriftDetected` (ADR 0023 decision 3), in the same unit of work; the LABOR step must stay byte-identical |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout | `zoneId`, `locationType`, `role` (default `Storage`), `activities` (present only when `role=WorkCenter`) -> tallied per `(zoneId, locationType)` as storage positions (role=Storage), or per zone+activity as stations (role=WorkCenter). Tally only: no ProcessCapacity constraint is registered |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout | `locationCode` -> decrements the same tally |
-| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `order_id` (= `subject`), `promise_date`, `len(lines)` -> upserts ONE row per order id in the expected-demand read model (`order_demand`), site = the configured `DEMAND_SITE_ID` (the event carries none), last writer wins on the CloudEvents `time`. Consumer group env `DEMAND_CONSUMER_GROUP` (REQUIRED, no default; the consumer is always on, docs/adr/0004 + ADR 0016) |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `warehouse.order-management.events` | order-management | `order_id` (= `subject`), `promise_date`, `len(lines)` -> upserts ONE row per order id in the expected-demand read model (`order_demand`), site = the event's optional `site_id`, else the fallback `DEMAND_SITE_ID` (ADR 0021), last writer wins on the CloudEvents `time`. Consumer group env `DEMAND_CONSUMER_GROUP` (REQUIRED, no default; the consumer is always on, docs/adr/0004 + ADR 0016) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | `warehouse.order-management.events` | order-management | same payload shape and effect as `OrderAllocated` |
 
 `OrderRepromised` (same topic: cpt ids only, no new cutoff instant), the
@@ -203,9 +207,30 @@ upsert, offsets committed after success, transient errors retried, validation
 before the transaction, never blocking the partition. `cmd/mcp` reads the table
 and never dials Kafka.
 
-`process-path-management` is deliberately NOT consumed — its `ProcessPath`
-carries `path_id`/`required_capabilities`/`eligibility`, never an ordered
-step sequence, so there is nothing structural to sync.
+| type (labour standards, ADR 0022) | topic | producer | fields used |
+| --- | --- | --- | --- |
+| `com.warehouse.wes.labor-performance.standard.LaborStandardDefined` | `warehouse.labor-performance.events` | labor-performance (its ADR 0038) | `standard_id`, `task_type`, `expected_seconds`, `effective_from`, optional `handling_unit`, `site_code`, `travel_component_seconds` -> one immutable row in `labor_standards` |
+| `com.warehouse.wes.labor-performance.standard.LaborStandardRevised` | `warehouse.labor-performance.events` | labor-performance | same fields; a revision is a new `standard_id`, so it is a new row |
+
+`LaborStandardConsumer` (group `LABOR_STANDARD_CONSUMER_GROUP`, required; processed-event
+consumer `labor-standard-consumer`) claims and stores in ONE unit of work, dead-letters a
+deterministic failure to `warehouse.labor-performance.events.dlq`, ignores every other type
+on the topic and never reads labor-performance's analytics topic. `cmd/mcp` and `cmd/a2a`
+read the copy and never start the consumer.
+
+| type (process flows, ADR 0025) | topic | producer | fields used |
+| --- | --- | --- | --- |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined` | `warehouse.process-path-management.events` | process-path-management (its ADR 0042) | the FULL flow: `flow_id`, `name`, `stages` (`[{path_id, process_type}]` in order), `status` ACTIVE\|RETIRED, `version` -> one row in `process_flows` |
+| `...processflow.ProcessFlowRevised` / `...ProcessFlowRetired` | same | same | same fields; the status field is the truth, not the type |
+
+`ProcessFlowConsumer` (group `PROCESS_FLOW_CONSUMER_GROUP`, required; processed-event consumer
+`process-flow-consumer`) claims and applies in ONE unit of work, and only when `version` is greater than
+the stored one (equal or lower is a no-op, so replay and reordering are harmless). It dead-letters a
+deterministic failure (unknown `process_type`, no stages, bad status or version) to
+`warehouse.process-path-management.events.dlq`, counts `warehouse_planning.process_flows.messages`
+(`applied|stale|duplicate|rejected`), and ignores every other type on the topic (`ProcessPath*`,
+`CPTScheduleChanged`). `cmd/mcp` and `cmd/a2a` read the copy and never start the consumer. A flow wins
+over a locally declared `ProcessPath` of the same id; reads carry `source: flow|local`.
 
 ### Keying decisions
 
@@ -215,8 +240,8 @@ cannot derive honestly.
 
 - **LABOR** (`ShiftPlanCommitted`, the labor consumer -- unchanged): a clean
   fit onto `ProcessCapacity`'s `(ProcessType, Location, CapacityWindow)`
-  identity. `ProcessType` = uppercase(`path_id`), `Location` = `building_id`
-  (the SITE code, e.g. `SIM1`), `CapacityWindow` = `[event.time, event.time +
+  identity. `ProcessType` = uppercase(`path_id`), `Location` = `site_code`, or
+  the deprecated `building_id` when it is absent (the SITE code, e.g. `SIM1`; ADR 0021), `CapacityWindow` = `[event.time, event.time +
   planned_hours)`. The window derivation is kept as is: one commit's lines
   share the start and differ in end per path (live `SIM1`: PICK +32h, REBIN
   +8h, PACK +24h), which is why capacity lookups match by window COVERAGE

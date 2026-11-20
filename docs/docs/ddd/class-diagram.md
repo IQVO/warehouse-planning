@@ -210,6 +210,12 @@ classDiagram
     +WindowStart, WindowEnd
     +BottleneckStep, PathCapacity
   }
+  class CapacityPlanSuperseded {
+    <<DomainEvent>>
+    +PlanID (the older plan), SupersededBy
+    +WarehouseID, SiteID, Location, PathID
+    +WindowStart, WindowEnd
+  }
   class ProcessPath {
     <<Entity>>
     -id string
@@ -245,6 +251,7 @@ classDiagram
   Event <|.. CapacityPlanPublished
   Event <|.. CapacityShortageDetected
   Event <|.. BottleneckDetected
+  Event <|.. CapacityPlanSuperseded
   CapacityPlanCreated *-- Header
   CapacityPlanPublished *-- Header
   CapacityShortageDetected *-- Header
@@ -258,6 +265,139 @@ Omits: `CreateParams` / `RehydrateParams` / `OrderParams`, getters, sentinel
 errors, and `CapacityPlan`'s `CapacityWindow` (drawn in the first diagram).
 Event fields are grouped per line for readability. `Order` is the entity of a
 read model, not an aggregate root.
+
+## Packages `workloadforecast`, `labourplan` and `laborstandard`
+
+The requirement side (ADR 0022, ADR 0023). Both aggregates are versioned
+(optimistic concurrency in the repositories) and change only when the content
+differs; the drift is two pure functions over the plan's and the commitment's
+heads.
+
+```mermaid
+classDiagram
+  direction LR
+  class Forecast {
+    <<AggregateRoot>>
+    -siteID string
+    -pathID string
+    -buckets Bucket[]
+    -receivedAt Time
+    -version int64
+    +New(siteID, pathID, buckets, receivedAt)$ Forecast, Received, error
+    +Rehydrate(siteID, pathID, buckets, receivedAt, version)$ Forecast, error
+    +Receive(siteID, pathID, buckets, receivedAt) Received, bool, error
+    +TotalQuantity() int64
+    +QuantityDueIn(from, to) int64, int
+  }
+  class Bucket {
+    <<ValueObject>>
+    +CPT Time
+    +Quantity int64
+  }
+  class Received {
+    <<DomainEvent>>
+    +SiteID, PathID string
+    +TotalQuantity int64
+    +BucketCount int
+    +ReceivedAt Time
+    +Version int64
+  }
+  class Plan {
+    <<AggregateRoot>>
+    -spec Spec
+    -version int64
+    +New(spec, at)$ Plan, Committed, error
+    +Rehydrate(spec, version)$ Plan, error
+    +Revise(spec, at) Committed, bool, error
+    +PlannedThroughput() float64
+    +ShiftEnd() Time, bool
+  }
+  class Spec {
+    <<ValueObject>>
+    +SiteID, ShiftID, PathID string
+    +PlannedHeads int
+    +RateUnitsPerHour float64
+    +Hours float64
+    +InstalledStations int
+    +ShiftStart Time optional
+    +HeadsSource HeadsSource
+  }
+  class HeadsSource {
+    <<Enumeration>>
+    request
+    forecast
+  }
+  class Committed {
+    <<DomainEvent>>
+    +SiteID, ShiftID, PathID string
+    +PlannedHeads, InstalledStations int
+    +RateUnitsPerHour, Hours float64
+    +ShiftStart Time optional
+    +HeadsSource HeadsSource
+    +Version int64
+    +At Time
+  }
+  class DeriveHeads {
+    <<DomainService>>
+    +DeriveHeads(unitsDue, rateUnitsPerHour, hours)$ int, error
+  }
+  class Commitment {
+    <<ValueObject>>
+    +SiteID, ShiftID, PathID string
+    +Heads int
+    +ObservedAt Time
+    +LastDriftHeads int
+    +HasLastDrift bool
+  }
+  class Drift {
+    <<ValueObject>>
+    +PlannedHeads int
+    +CommittedHeads int
+    +Heads int
+    +CompareHeads(planned, committed)$ Drift
+    +Detected() bool
+    +ShouldRaise(last, hasLast) bool
+    +Event(siteID, shiftID, pathID, at) DriftDetected
+  }
+  class DriftDetected {
+    <<DomainEvent>>
+    +SiteID, ShiftID, PathID string
+    +PlannedHeads, CommittedHeads, DriftHeads int
+    +At Time
+  }
+  class Standard {
+    <<ValueObject>>
+    -id string
+    -taskType string
+    -handlingUnit HandlingUnit
+    -siteCode string
+    -expectedSeconds int64
+    -travelComponentSeconds int64 optional
+    -effectiveFrom Time
+    -asOf Time
+    +SiteScoped() bool
+    +Resolve(candidates, siteCode, taskType, windowStart)$ Standard, bool
+  }
+  Forecast "1" *-- "1..*" Bucket : buckets
+  Forecast ..> Received : records
+  Plan "1" *-- "1" Spec : spec
+  Spec --> HeadsSource
+  Plan ..> Committed : records
+  DeriveHeads ..> Bucket : units due in the shift
+  Drift ..> Commitment : compares heads
+  Drift ..> Plan : compares heads
+  Drift ..> DriftDetected : Event
+```
+
+Source: `internal/domain/workloadforecast/forecast.go`, `events.go`,
+`internal/domain/labourplan/plan.go`, `commitment.go`, `drift.go`, `events.go`,
+`internal/domain/laborstandard/standard.go`.
+Omits: getters, sentinel errors, `MaxCount`, `ShiftEnd(start, hours)` (the
+package function), `laborstandard.Params` and `HandlingUnit`'s values (`EACH`,
+`CASE`, `PALLET`, empty). `DeriveHeads` and `CompareHeads` are package
+functions drawn as classes; `CommitLabourPlan` sums the buckets with
+`Forecast.QuantityDueIn` and hands the units to `DeriveHeads`.
+`Commitment` and `Standard` are read models, not aggregate roots.
 
 ## Ports and adapters
 
@@ -313,6 +453,23 @@ classDiagram
     <<Repository>>
     +Claim(ctx, consumer, eventID) bool
   }
+  class WorkloadForecastRepository {
+    <<Repository>>
+    +Get(ctx, siteID, pathID) Forecast, bool
+    +Save(ctx, forecast) error
+  }
+  class LabourPlanRepository {
+    <<Repository>>
+    +Get(ctx, siteID, shiftID, pathID) Plan, bool
+    +Save(ctx, plan) error
+    +List(ctx, siteID, shiftID, afterPathID, limit) Plan[], bool
+  }
+  class CommittedHeadsRepository {
+    <<Repository>>
+    +Get(ctx, siteID, shiftID, pathID) Commitment, bool
+    +SaveCommitment(ctx, commitment) error
+    +RecordDrift(ctx, siteID, shiftID, pathID, driftHeads) error
+  }
   class OutboxRepository {
     <<Repository>>
     +Insert(ctx, msgs) error
@@ -324,6 +481,9 @@ classDiagram
   class EventEncoder {
     <<interface>>
     +Encode(events) Message[]
+    +EncodeWorkloadForecastEvents(events) Message[]
+    +EncodeLabourPlanCommitted(events) Message[]
+    +EncodeLabourPlanDriftDetected(events) Message[]
   }
   class PlanMetrics {
     <<interface>>
@@ -337,6 +497,10 @@ classDiagram
     postgres.StorageTallyRepo
     postgres.OrderDemandRepo
     postgres.ProcessedEventRepo
+    postgres.WorkloadForecastRepo
+    postgres.LabourPlanRepo
+    postgres.CommittedHeadsRepo
+    postgres.LaborStandardRepo
     postgres.OutboxRepo
     postgres.UnitOfWork
   }
@@ -363,6 +527,9 @@ classDiagram
   StorageTallyReader <|.. PostgresAdapters
   OrderDemandRepository <|.. PostgresAdapters
   ProcessedEventRepository <|.. PostgresAdapters
+  WorkloadForecastRepository <|.. PostgresAdapters
+  LabourPlanRepository <|.. PostgresAdapters
+  CommittedHeadsRepository <|.. PostgresAdapters
   OutboxRepository <|.. PostgresAdapters
   UnitOfWork <|.. PostgresAdapters
   UnitOfWork <|.. MemoryAdapters
@@ -378,8 +545,11 @@ Source: `internal/application/ports/*.go`,
 Omits: the `ctx` / error result details, every memory implementation edge but
 two (each port has a memory implementation), the analytics ports
 (`report.Projection`, `report.Reader`, implemented by `analyticsstore`), which
-sit outside the OLTP ports, and the relay's own `outbox.Store` / `outbox.Sink`
-interfaces.
+sit outside the OLTP ports, the relay's own `outbox.Store` / `outbox.Sink`
+interfaces, and `LaborStandardRepository` (ADR 0022, implemented by
+`postgres.LaborStandardRepo`, drawn only as an adapter). The forecast and
+labour plan repositories insert at version 1 and update only
+`WHERE version = new - 1`; a lost race is `ports.ErrVersionConflict`.
 
 ## Hexagonal view
 

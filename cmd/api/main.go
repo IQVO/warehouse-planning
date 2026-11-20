@@ -1,7 +1,7 @@
 // Command api is the warehouse-planning composition root: it wires env
 // config into adapters, adapters into use cases, and use cases into the HTTP
-// router, the five Kafka consumers (labor capacity, storage capacity, order
-// demand, inbound dock appointments, observed task completions) and the outbox relay, all on real Postgres and real Kafka (ADR
+// router, the six Kafka consumers (labor capacity, storage capacity, order
+// demand, dock-scheduling appointments, observed task completions, labor-performance's labour standards) and the outbox relay, all on real Postgres and real Kafka (ADR
 // 0016): there is no in-memory mode, no log sink and no consumer that is off.
 //
 // Environment:
@@ -17,9 +17,12 @@
 //	LABOR_CAPACITY_CONSUMER_GROUP    stable group id of the labor-capacity consumer (REQUIRED)
 //	STORAGE_CAPACITY_CONSUMER_GROUP  stable group id of the storage-capacity consumer (REQUIRED)
 //	DEMAND_CONSUMER_GROUP            stable group id of the order-demand consumer (REQUIRED)
-//	INBOUND_DEMAND_CONSUMER_GROUP    stable group id of the dock-appointment consumer (REQUIRED, ADR 0017)
+//	DOCK_APPOINTMENT_CONSUMER_GROUP  stable group id of the dock-appointment consumer on dock-scheduling's topic (REQUIRED, ADR 0020)
+//	INBOUND_DEMAND_CONSUMER_GROUP    RETIRED (ADR 0017's inbound-receiving source): setting it is a boot error
 //	OBSERVED_CAPACITY_CONSUMER_GROUP stable group id of the task-completion consumer (REQUIRED, ADR 0017)
-//	DEMAND_SITE_ID                   the one site every consumed order, dock appointment and task completion is attributed to (REQUIRED)
+//	LABOR_STANDARD_CONSUMER_GROUP    stable group id of the labour-standard consumer on labor-performance's topic (REQUIRED, ADR 0022)
+//	PROCESS_FLOW_CONSUMER_GROUP      stable group id of the process flow consumer on process-path-management's topic (REQUIRED, ADR 0025)
+//	DEMAND_SITE_ID                   fallback site for orders without a site_id, and the site of every task completion (REQUIRED; ADR 0021)
 //	OTEL_EXPORTER_OTLP_ENDPOINT      OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY             wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
@@ -114,8 +117,9 @@ func run(ctx context.Context) error {
 		Outbox: ad.outbox, Encoder: encoder, UnitOfWork: ad.uow,
 	}
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: pathRepo, ProcessCapacities: pcRepo,
-		StationStandards: ad.stationStandards, Tally: ad.tallyReader,
+		ProcessPaths:      &usecases.FlowFirstPathFinder{Flows: ad.processFlows, Local: pathRepo},
+		ProcessCapacities: pcRepo,
+		StationStandards:  ad.stationStandards, Tally: ad.tallyReader,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: ad.orderDemand}
 	readiness := newReadiness(ad.pool.Ping, rt.brokers)
@@ -127,7 +131,7 @@ func run(ctx context.Context) error {
 	}
 
 	// The consumers are always on; their readers dial lazily inside Run.
-	consumers, closeConsumers := startConsumers(consumerSpecs(ad, rt, register, logger), rt, logger)
+	consumers, closeConsumers := startConsumers(consumerSpecs(ad, rt, register, encoder, logger), rt, logger)
 
 	// The outbox relay runs next to the consumers. It never dials Kafka at
 	// boot (the writer connects lazily on its first send), so a broker
@@ -158,7 +162,7 @@ func buildServer(
 ) *inboundhttp.Server {
 	// ADR 0017: the same use case prices the plan's inbound demand and backs GET /inbound-demand.
 	inboundDemand := &usecases.GetInboundDemand{Appointments: ad.inboundAppointments, Standards: ad.inboundStandards}
-	return &inboundhttp.Server{
+	server := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: register,
 		ProcessCapacities:                 ad.processCapacities,
 		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: ad.processPaths},
@@ -174,6 +178,10 @@ func buildServer(
 			Demand:       expectedDemand,
 			Inbound:      inboundDemand,
 			Metrics:      planMetrics,
+			// ADR 0022: each step priced with the labour standards copy.
+			LaborStandards: ad.laborStandards,
+			// ADR 0024: demand_source forecast reads the workload forecasts.
+			Forecasts: ad.workloadForecasts,
 		},
 		PublishCapacityPlan: &usecases.PublishCapacityPlan{
 			Plans:      ad.capacityPlans,
@@ -199,8 +207,11 @@ func buildServer(
 		GetInboundDemand:             inboundDemand,
 		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: ad.capacityPlans, Observed: ad.observedCapacity},
 		// Console remote list reads (REST only; no MCP tool).
-		ListProcessPaths:  &usecases.ListProcessPaths{Paths: ad.pathLister},
+		ListProcessPaths:  &usecases.ListProcessPaths{Paths: &usecases.FlowFirstPathLister{Flows: ad.processFlows, Local: ad.pathLister}},
+		GetProcessPath:    &usecases.GetProcessPath{Paths: pathCapacity.ProcessPaths},
 		ListCapacityPlans: &usecases.ListCapacityPlans{Plans: ad.planLister},
+		// ADR 0024 decision 4: scenarios side by side (REST only).
+		CompareCapacityPlans: &usecases.CompareCapacityPlans{Plans: ad.capacityPlans},
 
 		// Readiness backs GET /readyz (graceful-shutdown fix): flipped to
 		// not-ready as the FIRST step of shutdown (serveUntilSignal).
@@ -209,6 +220,9 @@ func buildServer(
 
 		Readiness: readiness,
 	}
+	// ADR 0023: the workload forecast and the shift labour plan.
+	wireRequirementSide(server, ad, encoder)
+	return server
 }
 
 // adapters is the set of outbound adapters the composition root wires.
@@ -244,11 +258,27 @@ type adapters struct {
 	inboundStandards    ports.InboundStandardRepository
 	observedCapacity    ports.ObservedCapacityRepository
 
+	// laborStandards is the local copy of labor-performance's engineered
+	// labour standards (ADR 0022), written by the labour-standard consumer
+	// and read by plan creation.
+	laborStandards ports.LaborStandardRepository
+
+	// processFlows is the local copy of process-path-management's process
+	// flows (ADR 0025), written by the process flow consumer and read by the
+	// path capacity and the path reads (flows first).
+	processFlows ports.ProcessFlowRepository
 	// pathLister and planLister are the list-read sides of processPaths and
 	// capacityPlans (the same repositories), behind GET /process-paths and
 	// GET /capacity-plans.
 	pathLister ports.ProcessPathLister
 	planLister ports.CapacityPlanLister
+
+	// ADR 0023: the workload forecasts and the shift labour plans, and the
+	// heads workforce-management committed for a plan's key (decision 3,
+	// the labour plan drift).
+	workloadForecasts ports.WorkloadForecastRepository
+	labourPlans       ports.LabourPlanRepository
+	committedHeads    ports.CommittedHeadsRepository
 
 	// pool is the Postgres pool (the readiness check pings it).
 	pool *pgxpool.Pool
@@ -305,8 +335,13 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		inboundAppointments: postgres.NewInboundAppointmentRepo(pool),
 		inboundStandards:    postgres.NewInboundStandardRepo(pool),
 		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
+		laborStandards:      postgres.NewLaborStandardRepo(pool),
+		processFlows:        postgres.NewProcessFlowRepo(pool),
 		pathLister:          pathRepo,
 		planLister:          planRepo,
+		workloadForecasts:   postgres.NewWorkloadForecastRepo(pool),
+		labourPlans:         postgres.NewLabourPlanRepo(pool),
+		committedHeads:      postgres.NewCommittedHeadsRepo(pool),
 		pool:                pool,
 	}, pool.Close, nil
 }

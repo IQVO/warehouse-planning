@@ -52,8 +52,9 @@ it.
 The computations are deterministic minimums over small sets, with no
 optimisation or forecasting model, which keeps the chart point off the far
 right. Several inputs are still documented assumptions (the labor window is
-derived from the event time, `planned_rate` is assumed to be `UNIT/HOUR`,
-demand is attributed to the one configured `DEMAND_SITE_ID`). The context
+derived from the event time, `planned_rate` is read as `UNIT/HOUR` from the
+producer's field description rather than a unit field, and task completions
+plus unsited orders are attributed to the configured `DEMAND_SITE_ID`). The context
 should stay custom-built while those are replaced by real upstream facts.
 
 ### Slices are not classified separately

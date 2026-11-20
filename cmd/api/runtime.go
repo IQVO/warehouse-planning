@@ -14,6 +14,8 @@ import (
 	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	outboxrelay "github.com/claudioed/warehouse-planning/internal/adapters/outbound/outbox"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/telemetry"
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
 
@@ -26,12 +28,21 @@ const (
 	envLaborGroup          = "LABOR_CAPACITY_CONSUMER_GROUP"
 	envStorageGroup        = "STORAGE_CAPACITY_CONSUMER_GROUP"
 	envDemandConsumerGrp   = "DEMAND_CONSUMER_GROUP"
-	envInboundGroup        = "INBOUND_DEMAND_CONSUMER_GROUP"
+	envDockGroup           = "DOCK_APPOINTMENT_CONSUMER_GROUP"
 	envObservedGroup       = "OBSERVED_CAPACITY_CONSUMER_GROUP"
+	envLaborStandardGroup  = "LABOR_STANDARD_CONSUMER_GROUP"
+	envProcessFlowGroup    = "PROCESS_FLOW_CONSUMER_GROUP"
 	envDemandSiteID        = "DEMAND_SITE_ID"
 	envOutboxRelayInterval = "OUTBOX_RELAY_INTERVAL"
 	envOutboxMaxAttempts   = "OUTBOX_MAX_ATTEMPTS"
 )
+
+// retiredInboundGroup is the consumer-group variable of the retired source of
+// the inbound labour demand: inbound-receiving's DockAppointment* events
+// (ADR 0017), replaced by dock-scheduling's (ADR 0020). A deployment that still
+// sets it is a stale one, and the fleet rule is that it fails loudly at boot
+// instead of silently degrading (an unread topic and an empty model).
+const retiredInboundGroup = "INBOUND_DEMAND_CONSUMER_GROUP"
 
 var (
 	errMissingDatabaseURL = errors.New("DATABASE_URL is required: this context runs on real Postgres, there is no in-memory mode")
@@ -46,15 +57,17 @@ type runtimeEnv struct {
 	// ...) to its value; every consumer always runs, so every entry is
 	// present.
 	groups map[string]string
-	// demandSiteID is the ONE site every consumed order is attributed to
-	// (DEMAND_SITE_ID): order-management's events carry no fulfillment site.
+	// demandSiteID (DEMAND_SITE_ID) is the site every task completion is
+	// attributed to (fulfillment-execution's events carry no site) and the
+	// fallback for an order whose event carries no site_id (ADR 0021). Dock
+	// appointments carry their own site_id and do not use it (ADR 0020).
 	demandSiteID string
 }
 
-// consumerGroupEnvs are the five Kafka consumers of cmd/api, each with the
+// consumerGroupEnvs are the seven Kafka consumers of cmd/api, each with the
 // env var that carries its STABLE group id (never a literal, never a default:
 // a default would let a locally run process join the live group).
-var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp, envInboundGroup, envObservedGroup}
+var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp, envDockGroup, envObservedGroup, envLaborStandardGroup, envProcessFlowGroup}
 
 // loadRuntime validates the environment before anything is opened or bound:
 // DATABASE_URL, KAFKA_BROKERS, every consumer group and DEMAND_SITE_ID are
@@ -71,6 +84,9 @@ func loadRuntime(env func(string) string) (runtimeEnv, error) {
 	if err := parsePublisherMode(env(envEventPublisher)); err != nil {
 		return runtimeEnv{}, err
 	}
+	if env(retiredInboundGroup) != "" {
+		return runtimeEnv{}, fmt.Errorf("%s is no longer supported: the inbound labour demand is read from dock-scheduling (warehouse.dock-scheduling.events), not inbound-receiving; unset it and set %s (ADR 0020)", retiredInboundGroup, envDockGroup)
+	}
 	for _, name := range consumerGroupEnvs {
 		group := env(name)
 		if group == "" {
@@ -80,7 +96,7 @@ func loadRuntime(env func(string) string) (runtimeEnv, error) {
 	}
 	rt.demandSiteID = env(envDemandSiteID)
 	if rt.demandSiteID == "" {
-		return runtimeEnv{}, fmt.Errorf("%s is required: order-management orders carry no site, so the site the demand is attributed to must be configured", envDemandSiteID)
+		return runtimeEnv{}, fmt.Errorf("%s is required: task completions carry no site and orders without a site_id need a fallback, so that site must be configured", envDemandSiteID)
 	}
 	return rt, nil
 }
@@ -141,11 +157,19 @@ type consumerSpec struct {
 	build                 func(brokers []string, group string) runner
 }
 
-// consumerSpecs lists the five consumers; they are always on.
-func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProcessCapacityConstraint, logger *slog.Logger) []consumerSpec {
+// consumerSpecs lists the seven consumers; they are always on. encoder is the
+// fan-out encoder the labor consumer's labour plan drift outboxes with.
+func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProcessCapacityConstraint, encoder ports.EventEncoder, logger *slog.Logger) []consumerSpec {
 	return []consumerSpec{
+		// ADR 0023 decision 3: the same ShiftPlanCommitted line also upserts
+		// the committed heads and raises LabourPlanDriftDetected, in the
+		// claim's unit of work.
 		{"labor-capacity", inboundkafka.LaborTopic, envLaborGroup, func(brokers []string, group string) runner {
-			return inboundkafka.NewLaborCapacityConsumer(brokers, group, register, ad.processedEvents, ad.uow, logger)
+			commitments := &usecases.RecordShiftCommitment{
+				Commitments: ad.committedHeads, Plans: ad.labourPlans,
+				Outbox: ad.outbox, Encoder: encoder, UnitOfWork: ad.uow,
+			}
+			return inboundkafka.NewLaborCapacityConsumer(brokers, group, register, commitments, ad.processedEvents, ad.uow, logger)
 		}},
 		{"storage-capacity", inboundkafka.FacilityTopic, envStorageGroup, func(brokers []string, group string) runner {
 			return inboundkafka.NewStorageCapacityConsumer(brokers, group, ad.storageTally, ad.processedEvents, ad.uow, logger)
@@ -154,17 +178,42 @@ func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProces
 			record := &usecases.RecordOrderDemand{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Demand: ad.orderDemand}
 			return inboundkafka.NewOrderDemandConsumer(brokers, group, rt.demandSiteID, record, logger)
 		}},
-		// ADR 0017: dock appointments (inbound-receiving) and task completions
+		// ADR 0017 / ADR 0020: dock appointments (dock-scheduling, attributed
+		// by the events' own site_id) and task completions
 		// (fulfillment-execution), each into its own read model.
-		{"inbound-demand", inboundkafka.InboundTopic, envInboundGroup, func(brokers []string, group string) runner {
+		{"dock-appointments", inboundkafka.DockSchedulingTopic, envDockGroup, func(brokers []string, group string) runner {
 			record := &usecases.RecordInboundAppointment{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Appointments: ad.inboundAppointments}
-			return inboundkafka.NewInboundDemandConsumer(brokers, group, rt.demandSiteID, record, logger)
+			return inboundkafka.NewDockAppointmentConsumer(brokers, group, record, logger)
 		}},
 		{"observed-capacity", inboundkafka.FulfillmentTopic, envObservedGroup, func(brokers []string, group string) runner {
 			record := &usecases.RecordObservedCompletion{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Observed: ad.observedCapacity}
 			return inboundkafka.NewObservedCapacityConsumer(brokers, group, rt.demandSiteID, record, logger)
 		}},
+		// ADR 0022: labor-performance's engineered standards, into the local
+		// copy the capacity plans price their steps with.
+		{"labor-standards", inboundkafka.LaborPerformanceTopic, envLaborStandardGroup, func(brokers []string, group string) runner {
+			record := &usecases.RecordLaborStandard{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Standards: ad.laborStandards}
+			return inboundkafka.NewLaborStandardConsumer(brokers, group, record, logger)
+		}},
+		// ADR 0025: process-path-management's process flows, into the local
+		// copy the path capacity resolves a path id from (flows first).
+		{"process-flows", inboundkafka.ProcessPathManagementTopic, envProcessFlowGroup, func(brokers []string, group string) runner {
+			record := &usecases.RecordProcessFlow{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Flows: ad.processFlows}
+			return inboundkafka.NewProcessFlowConsumer(brokers, group, record, newProcessFlowMetrics(logger), logger)
+		}},
 	}
+}
+
+// newProcessFlowMetrics builds the process flow message counter; a failure to
+// register it runs the consumer un-instrumented (a nil port is a no-op), never
+// refuses to boot.
+func newProcessFlowMetrics(logger *slog.Logger) ports.ProcessFlowMetrics {
+	metrics, err := telemetry.NewProcessFlowMetrics()
+	if err != nil {
+		logger.Warn("process flow metrics not registered; the consumer runs without its counter", "error", err)
+		return nil
+	}
+	return metrics
 }
 
 // startConsumers starts every consumer; they are always on. The readers dial

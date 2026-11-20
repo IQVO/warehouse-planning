@@ -45,9 +45,13 @@ tags:
   - name: demand
     description: Expected demand of a site, read from the local read model fed by order-management's order events (ADR 0004).
   - name: inbound-demand
-    description: Operator-declared inbound labour standards and the inbound demand of a site, read from the local read model fed by inbound-receiving's dock appointment events (ADR 0017).
+    description: Operator-declared inbound labour standards and the inbound demand of a site, read from the local read model fed by dock-scheduling's dock appointment events (ADR 0017, source switched by ADR 0020).
   - name: observed-capacity
     description: Advisory planned-versus-observed variance of a capacity plan, from the local read model fed by fulfillment-execution's task completions (ADR 0017).
+  - name: workload-forecasts
+    description: The volume a process path is expected to receive at a site, as CPT buckets (ADR 0023; moved from wes-work-planning's charge forecast).
+  - name: labour-plans
+    description: The heads a process path needs for one shift at a site, sent or derived from the workload forecast (ADR 0023; moved from wes-work-planning's path plan).
   - name: reports
     description: >
       Read-only analytics reports (ADR 0005) served by the separate planning-reports binary on port 8092,
@@ -175,20 +179,23 @@ paths:
   /process-paths:
     get:
       operationId: listProcessPaths
-      summary: List the registered ProcessPaths
+      summary: List the ProcessPaths (process flows and locally declared paths)
       tags: [process-paths]
       description: >
-        The ProcessPaths registered with POST /process-paths, ordered by id,
-        each with its ordered steps, one keyset page at a time (limit +
-        cursor; follow nextCursor until it is absent). 200 with an empty
-        items list when none is registered. Read-only; there is no MCP tool
-        for it.
+        The ACTIVE process flows consumed from process-path-management and the
+        ProcessPaths declared with POST /process-paths, ordered by id, each
+        with its ordered steps and its read-only `source` (`flow` or `local`),
+        one keyset page at a time (limit + cursor; follow nextCursor until it
+        is absent). A flow wins over a locally declared path with the same id
+        (docs/adr/0025) and shows up even when no local path exists. 200 with
+        an empty items list when none is known. Read-only; there is no MCP
+        tool for it.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of registered paths (possibly empty).
+          description: One page of paths (possibly empty).
           content:
             application/json:
               schema:
@@ -236,6 +243,41 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
         "500":
           $ref: "#/components/responses/InternalError"
+  /process-paths/{id}:
+    get:
+      operationId: getProcessPath
+      x-pagination-exempt: view
+      summary: Get the ProcessPath an id resolves to
+      tags: [process-paths]
+      description: >
+        The ProcessPath an id resolves to: an ACTIVE process flow consumed from
+        process-path-management first (its steps are the stages' process types
+        in order), else the locally declared path (docs/adr/0025). `source` is
+        read-only, `flow` or `local`. A flow with no locally declared path is a
+        200; a RETIRED flow does not resolve, so the locally declared path of
+        that id, if any, is returned. Read-only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: pick-rebin-pack
+      responses:
+        "200":
+          description: The resolved ProcessPath.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathResponse"
+        "404":
+          description: No ACTIVE process flow and no locally declared path under id (process-path-not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /process-paths/{id}/capacity:
     get:
       operationId: getProcessPathCapacity
@@ -243,7 +285,9 @@ paths:
       summary: Get a ProcessPath's normalized, end-to-end capacity
       tags: [process-paths]
       description: >
-        Loads the ProcessPath identified by id, loads each of its steps'
+        Loads the ProcessPath identified by id (an ACTIVE process flow first,
+        else the locally declared path; the response says which in `source`,
+        docs/adr/0025), loads each of its steps'
         ProcessCapacity for the given location and window (matched by
         COVERAGE, see below), normalizes each
         step's effective rate into ORDER/period via the WorkloadProfile
@@ -325,7 +369,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
         "404":
-          description: No ProcessPath registered under id.
+          description: No ACTIVE process flow and no locally declared path under id.
           content:
             application/problem+json:
               schema:
@@ -351,10 +395,13 @@ paths:
         The most recently created plans, newest first (ties broken by id,
         descending), each in exactly the shape of GET /capacity-plans/{id},
         one keyset page at a time (limit + cursor; follow nextCursor until it
-        is absent). `location` restricts the list to one location (repeat it
-        on every page request); omitted means every location. 200 with an
-        empty items list when nothing matches. Read-only; there is no MCP tool
-        for it.
+        is absent). `location`, `site_id`, `path_id`, `window_start` and
+        `window_end` are optional, ADDITIVE filters (docs/adr/0024): a plan is
+        listed only when it matches every filter sent; an omitted or empty one
+        does not filter (repeat them on every page request). Together
+        site_id, path_id and the window list the what-if scenarios of one
+        window. 200 with an empty items list when nothing matches. Read-only;
+        there is no MCP tool for it.
       parameters:
         - name: location
           in: query
@@ -362,6 +409,41 @@ paths:
           schema:
             type: string
           example: SIM1
+        - name: site_id
+          in: query
+          required: false
+          description: Only plans of this canonical site (exact match).
+          schema:
+            type: string
+          example: SIM1
+        - name: path_id
+          in: query
+          required: false
+          description: Only plans evaluating this ProcessPath id (exact match).
+          schema:
+            type: string
+          example: pick-rebin-pack
+        - name: window_start
+          in: query
+          required: false
+          description: >
+            Only plans whose window starts at this instant (RFC 3339; equal
+            instants match in any zone). Malformed: 400 malformed-window-start.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T08:00:00Z"
+        - name: window_end
+          in: query
+          required: false
+          description: >
+            Only plans whose window ends at this instant (RFC 3339). Malformed:
+            400 malformed-window-end; with window_start, an end that is not
+            after the start is 400 invalid-capacity-window.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-10-05T16:00:00Z"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -372,7 +454,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/CapacityPlanPage"
         "400":
-          $ref: "#/components/responses/PageBadRequest"
+          description: >
+            invalid-limit, invalid-cursor, unknown-query-parameter,
+            malformed-window-start, malformed-window-end or
+            invalid-capacity-window.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
         "500":
           $ref: "#/components/responses/InternalError"
     post:
@@ -411,6 +500,20 @@ paths:
         response is that figure. When the read model has no order for that
         location and window the request is rejected with 422
         missing-assigned-demand: absence never silently means zero demand.
+        demand_source (docs/adr/0024) may name the source instead:
+        "forecast" derives assigned_demand from the workload forecast of
+        (site_id, forecast_path_id, default path_id) -- the units of the
+        buckets whose cpt is in the window over units_per_order, rounded up
+        to orders -- and the plan returns forecast_path_id.
+        labour_requirement (docs/adr/0022) states, per path step, the labour
+        its demand requires: tasks x the standard seconds of the step's task
+        type, read from the local copy of labor-performance's labour
+        standards (fed by its LaborStandardDefined / LaborStandardRevised
+        events, never by a live call) for the plan's site at window_start.
+        The optional tasks_per_order map counts a step's tasks; a step without
+        a standard or without a task count is known false with a reason. It
+        is informational: the shortage, the bottleneck and every published
+        event are unchanged by it.
         The plan is saved and its
         CapacityPlanCreated event is queued in the transactional outbox in
         ONE database transaction.
@@ -451,8 +554,69 @@ paths:
             positive, or cannot normalize a step's unit; assigned_demand is
             negative, or is omitted and the order-demand read model has no
             order for this location and window (missing-assigned-demand);
-            site_id is absent/blank; or warehouse_id/location/path_id is
-            blank.
+            a tasks_per_order value is not positive
+            (non-positive-tasks-per-order); site_id is absent/blank; or
+            warehouse_id/location/path_id is blank. demand_source
+            (docs/adr/0024): an unknown value (unknown-demand-source), an
+            input the source does not read (demand-source-conflict),
+            demand_source forecast without units_per_order
+            (missing-units-per-order) or with no forecast bucket in the window
+            (missing-assigned-demand); a scenario label that is empty or longer
+            than 64 characters (invalid-scenario).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /capacity-plans/comparisons:
+    get:
+      operationId: compareCapacityPlans
+      x-pagination-exempt: view
+      summary: Lay 2 to 5 capacity plan scenarios of one site and window side by side
+      tags: [capacity-plans]
+      description: >
+        docs/adr/0024 decision 4. ids names 2 to 5 distinct stored plans, all
+        of one site_id and one window (same window_start and window_end); their
+        paths, locations and statuses may differ. Per plan, in the order of
+        ids, it returns the scenario, status, assigned demand and its source,
+        path capacity, capacity over the window, shortage, bottleneck step and
+        constraint and the ADR 0022 labour requirement exactly as stored when
+        the plan was created: nothing is recomputed, so a comparison is
+        reproducible. Read-only; REST only (no MCP tool).
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          description: 2 to 5 distinct plan ids, comma-separated.
+          schema:
+            type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10,5e963738-f2d6-494f-b88d-8ef73365e4a3
+      responses:
+        "200":
+          description: The plans side by side.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanComparisonResponse"
+        "400":
+          description: A query parameter other than ids (unknown-query-parameter).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "404":
+          description: One of the ids names no CapacityPlan (capacity-plan-not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            ids does not name 2 to 5 distinct, non-blank plans
+            (invalid-comparison-ids), or the plans are not all of one site
+            (comparison-site-mismatch) or of one window
+            (comparison-window-mismatch).
           content:
             application/problem+json:
               schema:
@@ -502,6 +666,11 @@ paths:
         BottleneckDetected in the transactional outbox. A relay publishes
         them to Kafka as CloudEvents (see asyncapi.yaml). Publishing twice
         is never silent: the second call is a 409 and queues nothing.
+        Publishing supersedes (docs/adr/0024 decision 3): when another plan of
+        the same site_id, location, path_id and window is PUBLISHED, that older
+        plan becomes SUPERSEDED (superseded_by: this plan) and
+        CapacityPlanSuperseded is queued first, in the same transaction. A
+        SUPERSEDED plan is never published again (409).
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - name: id
@@ -529,7 +698,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
         "409":
-          description: The plan is already PUBLISHED (capacity-plan-already-published), or the Idempotency-Key was already used with a different request (idempotency-key-reused).
+          description: The plan is already PUBLISHED (capacity-plan-already-published), was SUPERSEDED by a newer published plan of its window (capacity-plan-superseded), a concurrent publish of the same site, location, path and window won twice (version-conflict; retry it), or the Idempotency-Key was already used with a different request (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
@@ -676,9 +845,10 @@ paths:
         is counted once, at the promise of its latest event (last writer wins on
         the CloudEvents time). `released_lines` sums the lines their latest
         allocation pass released; it is NOT units -- order-management's events
-        carry no quantities. order-management orders carry no fulfillment
-        site, so every consumed order is attributed to the ONE site configured
-        on this service (DEMAND_SITE_ID); any other location reads 0. Cancellations
+        carry no quantities. An order is attributed to the fulfillment site its
+        event carries (site_id, order-management ADR 0050), or to the fallback
+        site configured on this service (DEMAND_SITE_ID) when it carries none
+        (docs/adr/0021). Cancellations
         are not published on the integration topic and are not netted, and an
         OrderRepromised event carries no new cutoff, so it is ignored. 200 with
         orders 0 and as_of null when nothing is known -- an empty answer that
@@ -811,21 +981,23 @@ paths:
   /inbound-demand:
     get:
       operationId: getInboundDemand
-      summary: Inbound demand of a site over a window (inbound-receiving read model)
+      summary: Inbound demand of a site over a window (dock-scheduling read model)
       tags: [inbound-demand]
       description: >
-        The BOOKED dock appointments at a site whose door window STARTS in the
-        half-open window [window_start, window_end), read from the LOCAL read
-        model this service builds from inbound-receiving's
-        DockAppointmentBooked / DockAppointmentCancelled CloudEvents
-        (docs/adr/0017; never a live call). A cancelled appointment never
-        counts, whatever the arrival order of the two events (the producer's
-        event time is the ordering guard). `labour_minutes` is what the
-        standard declared for `path_id` attributes to them; with no standard it
-        is 0 and `standard_missing` is true when appointments exist.
-        Appointments carry no site, so every one is attributed to the ONE site
-        configured on this service; any other location reads 0. 200 with
-        appointments 0 and as_of null when nothing is known.
+        The BOOKED INBOUND dock appointments at a site whose door window STARTS
+        in the half-open window [window_start, window_end), read from the LOCAL
+        read model this service builds from dock-scheduling's
+        DockAppointmentBooked / Rescheduled / Cancelled / NoShow CloudEvents
+        (docs/adr/0017, source switched by docs/adr/0020; never a live call).
+        A rescheduled appointment counts at its new window; a cancelled or
+        no-show one never counts, whatever the arrival order of the events (the
+        producer's aggregate `version` is the ordering guard). OUTBOUND
+        appointments are never counted. `labour_minutes` is what the standard
+        declared for `path_id` attributes to them; with no standard it is 0
+        and `standard_missing` is true when appointments exist. Each
+        appointment is attributed to the `site_id` of its events, so
+        `location` is that site code; a site with no appointment reads 0.
+        200 with appointments 0 and as_of null when nothing is known.
       parameters:
         - name: location
           in: query
@@ -921,6 +1093,219 @@ paths:
                 $ref: "#/components/schemas/ProblemDetail"
         "422":
           description: tasks_per_order is not positive.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /workload-forecasts/{site_id}/{path_id}:
+    put:
+      operationId: receiveWorkloadForecast
+      summary: Receive the workload forecast of a process path at a site
+      tags: [workload-forecasts]
+      description: >
+        Stores the volume a process path is expected to receive at a site, as CPT buckets
+        (docs/adr/0023 decision 1; it was wes-work-planning's charge forecast). One forecast per
+        (site_id, path_id); a receipt replaces the buckets as a whole. 201 with version 1 for a
+        first receipt; 200 with version + 1 when the buckets changed; 200 with the stored
+        forecast, its version and received_at unchanged, when the buckets equal the stored ones
+        (same order): nothing is written and no event is raised. A receipt that changed something
+        raises WorkloadForecastReceived (integration and analytics topics, asyncapi.yaml) in the
+        same transaction. The PUT is naturally idempotent and takes no Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceiveWorkloadForecastRequest"
+      responses:
+        "200":
+          description: The buckets replaced the stored ones (version + 1), or equal them (nothing changed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkloadForecastResponse"
+        "201":
+          description: A first receipt; the forecast is stored at version 1.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkloadForecastResponse"
+        "400":
+          description: Malformed JSON (a fractional quantity included) or a cpt that is not RFC 3339 (malformed-json, malformed-cpt).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: The stored version moved twice while the receipt was applied (version-conflict); retry it.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            No bucket (no-forecast-buckets), a bucket without cpt (missing-cpt) or quantity
+            (missing-bucket-quantity), or a negative quantity (negative-bucket-quantity).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: getWorkloadForecast
+      summary: Read the workload forecast of a process path at a site
+      tags: [workload-forecasts]
+      description: The stored forecast of (site_id, path_id), buckets in receipt order.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      responses:
+        "200":
+          description: The stored forecast.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkloadForecastResponse"
+        "404":
+          description: No forecast was received for (site_id, path_id) (workload-forecast-not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /labour-plans/{site_id}/{shift_id}/{path_id}:
+    put:
+      operationId: commitLabourPlan
+      summary: Commit the labour plan of a process path for a shift at a site
+      tags: [labour-plans]
+      description: >
+        Stores the heads a process path needs for one shift at one site, at a planned rate for a
+        number of hours (docs/adr/0023 decision 2; it was wes-work-planning's path plan).
+        planned_heads must not exceed installed_stations, hours and the rate must be positive and
+        rate x heads x hours finite. When planned_heads is omitted it is DERIVED:
+        ceil(forecast units with a cpt in [shift_start, shift_start + hours) / (rate x hours)),
+        which needs shift_start and a stored workload forecast for (site_id, path_id) with at
+        least one bucket in the shift; otherwise 422 missing-planned-heads (zero buckets in the
+        shift is no data, never zero heads). heads_source says which happened. When the facility
+        tally knows at least one but fewer stations of the activity named like the path (the path
+        id upper-cased) than installed_stations, the plan is still stored with the number as sent and the answer
+        carries a warning. 201 with version 1 for a first commit; 200 with version + 1 for a
+        revision; 200 with the stored plan and version unchanged when the plan equals the stored
+        one (no event). A change raises LabourPlanCommitted (integration and analytics topics,
+        asyncapi.yaml) in the same transaction. The PUT is naturally idempotent and takes no
+        Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/ShiftIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommitLabourPlanRequest"
+      responses:
+        "200":
+          description: The plan was revised (version + 1), or equals the stored one (nothing changed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanResponse"
+        "201":
+          description: A first commit; the plan is stored at version 1.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanResponse"
+        "400":
+          description: Malformed JSON (a fractional head or station count included) or a shift_start that is not RFC 3339 (malformed-json, malformed-shift-start).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: The stored version moved twice while the plan was committed (version-conflict); retry it.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: >
+            planned_heads above installed_stations (heads-exceed-stations), omitted heads that cannot
+            be derived (missing-planned-heads), a head or station count below 0 or above 2147483647
+            (invalid-count), installed_stations omitted (missing-installed-stations), a rate or hours
+            not above zero (non-positive-rate, non-positive-hours), or rate x heads x hours not finite
+            (throughput-not-finite).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: getLabourPlan
+      summary: Read the labour plan of a process path for a shift at a site
+      tags: [labour-plans]
+      description: The stored plan of (site_id, shift_id, path_id), with the station warning computed against the facility tally at read time.
+      parameters:
+        - $ref: "#/components/parameters/SiteIDPath"
+        - $ref: "#/components/parameters/ShiftIDPath"
+        - $ref: "#/components/parameters/PathIDPath"
+      responses:
+        "200":
+          description: The stored plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanResponse"
+        "404":
+          description: No plan was committed for (site_id, shift_id, path_id) (labour-plan-not-found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /labour-plans:
+    get:
+      operationId: listLabourPlans
+      summary: List the labour plans of a shift at a site
+      tags: [labour-plans]
+      description: >
+        The plans of one (site_id, shift_id), ordered by path id, one keyset page at a time (limit +
+        cursor; follow nextCursor until it is absent). Both filters are required and are repeated on
+        every page request.
+      parameters:
+        - name: site_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: SIM1
+        - name: shift_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: 2026-11-19-early
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of plans (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabourPlanPage"
+        "400":
+          description: site_id or shift_id missing (missing-site-id, missing-shift-id), or invalid-limit, invalid-cursor, unknown-query-parameter.
           content:
             application/problem+json:
               schema:
@@ -1102,6 +1487,33 @@ components:
       description: Opaque keyset cursor from the previous page's nextCursor. Repeat the filters on every page request.
       schema:
         type: string
+    SiteIDPath:
+      name: site_id
+      in: path
+      required: true
+      description: Canonical facility-layout site code (ADR 0012).
+      schema:
+        type: string
+      example: SIM1
+    ShiftIDPath:
+      name: shift_id
+      in: path
+      required: true
+      description: The shift the labour plan is for (the planner's shift identifier, also carried by workforce-management's shift plan).
+      schema:
+        type: string
+      example: 2026-11-19-early
+    PathIDPath:
+      name: path_id
+      in: path
+      required: true
+      description: >-
+        The process path code: case-insensitive; stored and published in upper case (trimmed), so
+        "pick" and "PICK" name the same forecast and labour plan. Upper-cased, it also names the
+        facility-tally activity whose stations the labour plan's warning compares with.
+      schema:
+        type: string
+      example: PICK
     ReportFrom:
       name: from
       in: query
@@ -1566,7 +1978,7 @@ components:
           example: ["PICK", "REBIN", "PACK"]
     ProcessPathResponse:
       type: object
-      required: [id, name, steps]
+      required: [id, name, steps, source]
       properties:
         id:
           type: string
@@ -1576,9 +1988,21 @@ components:
           type: array
           items:
             type: string
+        source:
+          $ref: "#/components/schemas/ProcessPathSource"
+    ProcessPathSource:
+      type: string
+      enum: [flow, local]
+      readOnly: true
+      description: >
+        Additive, read-only (docs/adr/0025). Where the path came from: `flow` is
+        a process flow consumed from process-path-management (it wins over a
+        local path of the same id), `local` a path declared with
+        POST /process-paths.
+      example: flow
     ProcessPathPage:
       type: object
-      description: One keyset page of registered paths, ordered by id.
+      description: One keyset page of paths (process flows and locally declared paths), ordered by id.
       required: [items]
       properties:
         items:
@@ -1602,8 +2026,10 @@ components:
           description: Opaque cursor for the next page; absent on the last page.
     ProcessPathCapacityResponse:
       type: object
-      required: [normalized_rate, normalized_unit, bottleneck_step, step_breakdown, warnings]
+      required: [source, normalized_rate, normalized_unit, bottleneck_step, step_breakdown, warnings]
       properties:
+        source:
+          $ref: "#/components/schemas/ProcessPathSource"
         normalized_rate:
           type: number
           format: double
@@ -1699,9 +2125,118 @@ components:
           format: double
           description: WorkloadProfile factor (PACKAGE per ORDER); needed only if a step is measured in PACKAGE.
           example: 1
+        tasks_per_order:
+          type: object
+          description: >
+            OPTIONAL, additive (docs/adr/0022). Tasks per ORDER for a process
+            type, keyed by process type. A step's labour requirement is its
+            tasks x the labor-performance standard seconds of its task type,
+            where tasks = assigned_demand x this factor; a PICK step uses the
+            released order lines instead when the demand came from the order
+            read model (demand_source "orders"). A step without a factor is
+            reported known false with reason no-task-factor, never guessed.
+            Every value must be positive (422 non-positive-tasks-per-order).
+            It never changes path_capacity, the shortage or the bottleneck.
+          additionalProperties:
+            type: number
+            format: double
+            minimum: 0
+            exclusiveMinimum: true
+          example:
+            PICK: 3
+            PACK: 1
+        demand_source:
+          type: string
+          enum: [request, orders, forecast]
+          description: >
+            OPTIONAL (docs/adr/0024). Where assigned_demand comes from.
+            Omitted: "request" when assigned_demand is given, "orders" when it
+            is omitted (the pre-ADR-0024 behaviour). "forecast": the units of
+            the workload forecast of (site_id, forecast_path_id) whose bucket
+            cpt is in [window_start, window_end) (start in, end out), divided
+            by units_per_order and rounded UP to orders. units_per_order is
+            then REQUIRED (422 missing-units-per-order); no bucket in the
+            window is 422 missing-assigned-demand, never zero demand.
+            "orders" and "forecast" derive assigned_demand and refuse a stated
+            one, "request" requires it (422 demand-source-conflict /
+            missing-assigned-demand); any other value is 422
+            unknown-demand-source.
+          example: forecast
+        forecast_path_id:
+          type: string
+          description: >
+            OPTIONAL, with demand_source "forecast" only (422
+            demand-source-conflict otherwise). The process path whose workload
+            forecast is read at site_id -- the path the volume enters (e.g. the
+            wes path PICK), which need not be path_id. Defaults to path_id.
+            Read in its canonical form (trimmed, upper case).
+          example: PICK
+        scenario:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: >
+            OPTIONAL what-if label (docs/adr/0024), 1 to 64 characters, stored
+            and returned. Several DRAFT plans of one (site_id, path_id, window)
+            are scenarios (see GET /capacity-plans/comparisons). An empty or
+            longer label is 422 invalid-scenario.
+          example: second pack line open
+    LabourRequirement:
+      type: object
+      description: >
+        Additive (docs/adr/0022). The labour one step of the plan's path
+        requires: tasks x the engineered standard seconds of the step's task
+        type (labor-performance's standard in force for the plan's site at
+        the window start; a step's process type names its task type).
+        Computed when the plan was created and stored with it: a later
+        revision of a standard never rewrites it. Informational: the ORDER
+        shortage, the bottleneck and every published event do not depend on
+        it. When known is false the figures are 0 and reason says why.
+      required: [process_type, standard_seconds, standard_site_scoped, tasks, required_labour_hours, required_average_heads, known]
+      properties:
+        process_type:
+          type: string
+          example: PACK
+        standard_seconds:
+          type: number
+          format: double
+          description: expected_seconds of the standard in force; 0 when there is none.
+          example: 90
+        standard_site_scoped:
+          type: boolean
+          description: True when that standard is scoped to the plan's site rather than every site.
+          example: false
+        tasks:
+          type: number
+          format: double
+          description: Tasks the step's demand is (released lines for PICK with demand_source orders, else assigned_demand x tasks_per_order[step]).
+          example: 12000
+        required_labour_hours:
+          type: number
+          format: double
+          description: tasks x standard_seconds / 3600.
+          example: 300
+        required_average_heads:
+          type: number
+          format: double
+          description: required_labour_hours over the plan window length, in people.
+          example: 37.5
+        known:
+          type: boolean
+          example: true
+        reason:
+          type: string
+          enum: [no-labor-standard, no-task-factor]
+          description: >
+            Present only when known is false. no-labor-standard: no
+            labor-performance standard of the step's task type is in force for
+            the plan's site and window (or the step is not a task type it
+            measures, e.g. REBIN). no-task-factor: a standard exists but the
+            step's tasks cannot be counted (no tasks_per_order factor).
+          example: no-task-factor
     CapacityPlanResponse:
       type: object
-      required: [id, warehouse_id, site_id, location, window_start, window_end, path_id, assigned_demand, demand_source, status, path_capacity, bottleneck_step, capacity_over_window, shortage, created_at, bottleneck_constraint, warnings, inbound_appointments, inbound_labour_minutes, inbound_average_heads, inbound_standard_missing]
+      required: [id, warehouse_id, site_id, location, window_start, window_end, path_id, assigned_demand, demand_source, status, path_capacity, bottleneck_step, capacity_over_window, shortage, created_at, bottleneck_constraint, warnings, inbound_appointments, inbound_labour_minutes, inbound_average_heads, inbound_standard_missing, labour_requirement]
       properties:
         id:
           type: string
@@ -1735,16 +2270,35 @@ components:
           example: 12000
         demand_source:
           type: string
-          enum: [request, orders]
+          enum: [request, orders, forecast]
           description: >
             Additive (docs/adr/0004). "request": assigned_demand was stated by
             the caller (also every plan created before demand ingestion);
             "orders": it was omitted and defaulted from the order-management
-            read model.
+            read model; "forecast": it was derived from the workload forecast
+            of forecast_path_id (docs/adr/0024).
           example: request
+        forecast_path_id:
+          type: string
+          description: >
+            Additive (docs/adr/0024). The canonical path code of the workload
+            forecast the demand was read from; present only when
+            demand_source is "forecast".
+          example: PICK
+        scenario:
+          type: string
+          description: >
+            Additive (docs/adr/0024). The plan's what-if label; absent when it
+            carries none.
+          example: second pack line open
         status:
           type: string
-          enum: [DRAFT, PUBLISHED]
+          enum: [DRAFT, PUBLISHED, SUPERSEDED]
+          description: >
+            SUPERSEDED (additive, docs/adr/0024 decision 3) is terminal: a newer
+            plan of the same site_id, location, path_id and window was
+            published (superseded_by). Clients that switch on status must
+            accept it.
         path_capacity:
           type: number
           format: double
@@ -1769,7 +2323,14 @@ components:
         published_at:
           type: string
           format: date-time
-          description: Present only once PUBLISHED.
+          description: Present only once PUBLISHED (kept when SUPERSEDED).
+        superseded_by:
+          type: string
+          description: >
+            Additive (docs/adr/0024 decision 3). The id of the plan whose
+            publication superseded this one; present only when status is
+            SUPERSEDED.
+          example: 9d1f0c2a-7b3e-4f5a-8c6d-2e4b1a0f9c87
         bottleneck_constraint:
           type: string
           description: >
@@ -1803,6 +2364,87 @@ components:
           type: boolean
           description: True when appointments exist but no inbound standard is declared for the plan's (location, path_id); they contribute no labour demand.
           example: false
+        labour_requirement:
+          type: array
+          description: >
+            Additive (docs/adr/0022). The labour each step of the plan's path
+            requires, in path order (never null; [] for plans stored before
+            migration 0013).
+          items:
+            $ref: "#/components/schemas/LabourRequirement"
+    PlanComparisonResponse:
+      type: object
+      description: The plans of one site and window side by side (docs/adr/0024), in the order of ids.
+      required: [site_id, window_start, window_end, items]
+      properties:
+        site_id:
+          type: string
+          example: SIM1
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        items:
+          type: array
+          minItems: 2
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/ComparedPlan"
+    ComparedPlan:
+      type: object
+      description: One plan of a comparison, exactly as stored (nothing is recomputed).
+      required: [plan_id, status, path_id, assigned_demand, demand_source, path_capacity, capacity_over_window, shortage, bottleneck_step, bottleneck_constraint, labour_requirement]
+      properties:
+        plan_id:
+          type: string
+          example: 0b7a4c1e-5d52-4f0e-9a39-6c1f2f3a8b10
+        scenario:
+          type: string
+          description: The plan's what-if label; absent when it carries none.
+          example: second pack line open
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED, SUPERSEDED]
+          description: The plan's status as stored (SUPERSEDED, docs/adr/0024 decision 3, is additive).
+        path_id:
+          type: string
+          description: The ProcessPath the plan evaluates (scenarios may evaluate different paths).
+          example: pick-rebin-pack
+        assigned_demand:
+          type: number
+          format: double
+          description: Orders the plan was evaluated against.
+          example: 12000
+        demand_source:
+          type: string
+          enum: [request, orders, forecast]
+          example: forecast
+        path_capacity:
+          type: number
+          format: double
+          description: ORDER per HOUR.
+          example: 1000
+        capacity_over_window:
+          type: number
+          format: double
+          example: 8000
+        shortage:
+          type: number
+          format: double
+          example: 4000
+        bottleneck_step:
+          type: string
+          example: REBIN
+        bottleneck_constraint:
+          type: string
+          example: STATION
+        labour_requirement:
+          type: array
+          description: The ADR 0022 labour requirement per path step, as stored (never null).
+          items:
+            $ref: "#/components/schemas/LabourRequirement"
     DeclareInboundLabourStandardRequest:
       type: object
       required: [minutes_per_appointment]
@@ -1906,7 +2548,7 @@ components:
           description: Appointments exist but no standard is declared for (location, path_id).
         source:
           type: string
-          enum: [inbound-receiving]
+          enum: [dock-scheduling]
         as_of:
           type: string
           format: date-time
@@ -2013,3 +2655,165 @@ components:
         advisory:
           type: boolean
           description: Always true. The variance never changes the planned capacity or republishes a plan.
+    ForecastBucket:
+      type: object
+      required: [cpt, quantity]
+      properties:
+        cpt:
+          type: string
+          format: date-time
+          description: The critical pull time the units are due at (RFC 3339; answered in UTC).
+          example: "2026-11-19T10:00:00Z"
+        quantity:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Whole units due at the cpt.
+          example: 120
+    ReceiveWorkloadForecastRequest:
+      type: object
+      required: [buckets]
+      properties:
+        buckets:
+          type: array
+          minItems: 1
+          description: Every bucket of the forecast; they replace the stored ones as a whole.
+          items:
+            $ref: "#/components/schemas/ForecastBucket"
+    WorkloadForecastResponse:
+      type: object
+      required: [site_id, path_id, buckets, total_quantity, received_at, version]
+      properties:
+        site_id:
+          type: string
+          example: SIM1
+        path_id:
+          type: string
+          description: The process path code in its canonical form (trimmed, upper case), whatever case the request used.
+          example: PICK
+        buckets:
+          type: array
+          description: The stored buckets, in receipt order.
+          items:
+            $ref: "#/components/schemas/ForecastBucket"
+        total_quantity:
+          type: integer
+          format: int64
+          description: The sum of every bucket's quantity.
+          example: 200
+        received_at:
+          type: string
+          format: date-time
+          description: When the current buckets were received; an identical receipt keeps it.
+          example: "2026-11-19T05:00:00Z"
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 1 for a first receipt, + 1 per receipt that changed the buckets.
+          example: 1
+    CommitLabourPlanRequest:
+      type: object
+      required: [rate_units_per_hour, hours, installed_stations]
+      properties:
+        planned_heads:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: >
+            The heads the path needs for the shift, at most installed_stations. Omitted: derived
+            from the stored workload forecast, which needs shift_start (else 422
+            missing-planned-heads).
+          example: 10
+        rate_units_per_hour:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Planned units per head per hour.
+          example: 10
+        hours:
+          type: number
+          format: double
+          exclusiveMinimum: true
+          minimum: 0
+          description: Length of the shift in hours; the shift window is [shift_start, shift_start + hours).
+          example: 8
+        installed_stations:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: The stations the path has for the shift. Stored as sent; the facility tally only adds a warning.
+          example: 12
+        shift_start:
+          type: string
+          format: date-time
+          description: Optional start of the shift (RFC 3339). Needed to derive omitted heads.
+          example: "2026-11-19T06:00:00Z"
+    LabourPlanResponse:
+      type: object
+      required: [site_id, shift_id, path_id, planned_heads, rate_units_per_hour, hours, installed_stations, heads_source, version, warnings]
+      properties:
+        site_id:
+          type: string
+          example: SIM1
+        shift_id:
+          type: string
+          example: 2026-11-19-early
+        path_id:
+          type: string
+          description: The process path code in its canonical form (trimmed, upper case), whatever case the request used.
+          example: PICK
+        planned_heads:
+          type: integer
+          minimum: 0
+          example: 10
+        rate_units_per_hour:
+          type: number
+          format: double
+          example: 10
+        hours:
+          type: number
+          format: double
+          example: 8
+        installed_stations:
+          type: integer
+          minimum: 0
+          example: 12
+        shift_start:
+          type: string
+          format: date-time
+          description: Absent when the plan was committed without one.
+          example: "2026-11-19T06:00:00Z"
+        heads_source:
+          type: string
+          enum: [request, forecast]
+          description: request when planned_heads was sent; forecast when it was derived from the workload forecast.
+          example: forecast
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 1 for a first commit, + 1 per commit that changed the plan.
+          example: 1
+        warnings:
+          type: array
+          description: >
+            Advisory, computed against the facility tally on every read (never stored, never null):
+            a warning when the tally knows at least one but fewer stations of the activity named
+            like the path than installed_stations (zero tallied stations is no tally data: no
+            warning). The number is reported as sent, never replaced.
+          items:
+            type: string
+    LabourPlanPage:
+      type: object
+      description: One keyset page of labour plans of a (site, shift), ordered by path id.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabourPlanResponse"
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.

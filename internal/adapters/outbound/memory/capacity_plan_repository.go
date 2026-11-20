@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
-
+	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
+	"github.com/claudioed/warehouse-planning/internal/domain/pagecursor"
 )
 
 // CapacityPlanRepo is an in-memory, mutex-guarded
@@ -39,23 +39,63 @@ func stateOf(p *capacityplan.CapacityPlan) capacityplan.RehydrateParams {
 		Status:             p.Status(),
 		CreatedAt:          p.CreatedAt(),
 		PublishedAt:        p.PublishedAt(),
+		SupersededBy:       p.SupersededBy(),
 
-		DemandSource: p.DemandSource(),
+		DemandSource:   p.DemandSource(),
+		ForecastPathID: p.ForecastPathID(),
+		Scenario:       p.Scenario(),
 
 		BottleneckConstraint: p.BottleneckConstraint(),
 		Warnings:             p.Warnings(),
 		Inbound:              p.Inbound(),
+		LabourRequirement:    p.LabourRequirement(),
 	}
 }
 
 // Save upserts plan's state under its id. Like the Postgres adapter it
 // stores state, never the pending domain events, and returns fresh copies
-// from FindByID.
+// from FindByID. Like Postgres's partial unique index (migration 0017) it
+// refuses a second PUBLISHED plan of one SupersedeKey with
+// ports.ErrVersionConflict, storing nothing.
 func (r *CapacityPlanRepo) Save(_ context.Context, plan *capacityplan.CapacityPlan) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if plan.Status() == capacityplan.StatusPublished && r.publishedLocked(plan.SupersedeKey(), plan.ID()) != nil {
+		return ports.ErrVersionConflict
+	}
 	r.store[plan.ID()] = stateOf(plan)
 	return nil
+}
+
+// FindPublished returns a copy of the PUBLISHED plan of key other than
+// excludeID (the newest by published_at, then id), or (nil, nil).
+func (r *CapacityPlanRepo) FindPublished(_ context.Context, key capacityplan.SupersedeKey, excludeID string) (*capacityplan.CapacityPlan, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.publishedLocked(key, excludeID), nil
+}
+
+// publishedLocked is FindPublished with r.mu held.
+func (r *CapacityPlanRepo) publishedLocked(key capacityplan.SupersedeKey, excludeID string) *capacityplan.CapacityPlan {
+	var newest *capacityplan.CapacityPlan
+	for id, state := range r.store {
+		if id == excludeID || state.Status != capacityplan.StatusPublished {
+			continue
+		}
+		plan := capacityplan.Rehydrate(state)
+		if key.Matches(plan) && (newest == nil || publishedAfter(plan, newest)) {
+			newest = plan
+		}
+	}
+	return newest
+}
+
+// publishedAfter orders plans newest first: published_at, then id.
+func publishedAfter(a, b *capacityplan.CapacityPlan) bool {
+	if !a.PublishedAt().Equal(b.PublishedAt()) {
+		return a.PublishedAt().After(b.PublishedAt())
+	}
+	return a.ID() > b.ID()
 }
 
 // FindByID returns a copy of the stored plan, or (nil, nil).
@@ -69,15 +109,15 @@ func (r *CapacityPlanRepo) FindByID(_ context.Context, id string) (*capacityplan
 	return capacityplan.Rehydrate(state), nil
 }
 
-// ListRecent returns up to limit plans, newest first (created_at, then id,
-// both descending), optionally restricted to one location. Like FindByID it
-// returns fresh copies.
-func (r *CapacityPlanRepo) ListRecent(_ context.Context, location string, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
+// ListRecent returns up to limit plans matching filter, newest first
+// (created_at, then id, both descending). Like FindByID it returns fresh
+// copies.
+func (r *CapacityPlanRepo) ListRecent(_ context.Context, filter capacityplan.ListFilter, after *pagecursor.Cursor, limit int) ([]*capacityplan.CapacityPlan, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	matching := make([]capacityplan.RehydrateParams, 0, len(r.store))
 	for _, state := range r.store {
-		if location == "" || state.Location == location {
+		if filter.Matches(capacityplan.Rehydrate(state)) {
 			matching = append(matching, state)
 		}
 	}

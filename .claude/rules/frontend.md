@@ -48,7 +48,7 @@ any other bounded context, and nothing in `internal/` knows `web/` exists.
   `uikit` (`docker build --build-context uikit=../../warehouse-ui-kit ...`).
 - **Use only `@warehouse/ui-kit`** components and tokens (StatusPill, Card,
   DataTable, KpiStat...). Do not add to the kit from here. A status the kit does
-  not know (`DRAFT`, `PUBLISHED`, `Bottleneck`) is rendered with StatusPill's
+  not know (`DRAFT`, `PUBLISHED`, `SUPERSEDED`, `Bottleneck`) is rendered with StatusPill's
   `tone` override rather than a hand-rolled colour.
 - **No Dependabot `npm` entry for `/web`**: it depends on `file:../../warehouse-ui-kit`
   (outside the repo), which Dependabot cannot fetch, so the job would fail weekly
@@ -82,5 +82,5 @@ data**, never as 0; every `warnings` string of a path capacity is shown;
 `assigned_demand` is omitted from `POST /capacity-plans` when the field is empty
 (an explicit `0` is sent as `0`) and the returned `demand_source` is displayed;
 `422 missing-assigned-demand` gets guidance text plus the problem's title/detail;
-`409 capacity-plan-already-published` is treated as "already published" and the
-list is refreshed. Window pickers are labelled and read as **UTC**.
+`409 capacity-plan-already-published` and `409 capacity-plan-superseded` are treated as
+"already published" and the list is refreshed. Window pickers are labelled and read as **UTC**.

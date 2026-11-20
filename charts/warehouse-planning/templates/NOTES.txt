@@ -24,7 +24,11 @@ ProcessCapacity events are relayed from the transactional outbox onto
 warehouse.warehouse-planning.events (CapacityPlan events also onto
 warehouse.warehouse-planning.analytics) via {{ .Values.kafka.brokers }}.
 
-The three consumers are ON (always):
-  labor capacity   group {{ .Values.config.laborCapacityConsumerGroup }}, topic warehouse.workforce.events
-  storage capacity group {{ .Values.config.storageCapacityConsumerGroup }}, topic warehouse.facility.events
-  order demand     group {{ .Values.demand.consumerGroup }}, topic warehouse.order-management.events (site {{ .Values.demand.siteId }})
+The seven consumers are ON (always):
+  labor capacity    group {{ .Values.config.laborCapacityConsumerGroup }}, topic warehouse.workforce.events
+  storage capacity  group {{ .Values.config.storageCapacityConsumerGroup }}, topic warehouse.facility.events
+  order demand      group {{ .Values.demand.consumerGroup }}, topic warehouse.order-management.events (site {{ .Values.demand.siteId }})
+  dock appointments group {{ .Values.dockAppointments.consumerGroup }}, topic warehouse.dock-scheduling.events
+  observed capacity group {{ .Values.observed.consumerGroup }}, topic warehouse.fulfillment.events
+  labour standards  group {{ .Values.laborStandard.consumerGroup }}, topic warehouse.labor-performance.events
+  process flows     group {{ .Values.processFlow.consumerGroup }}, topic warehouse.process-path-management.events

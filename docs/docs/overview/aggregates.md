@@ -6,9 +6,10 @@ sidebar_position: 2
 
 # Aggregates
 
-Two aggregates carry the model. Domain code lives in
-`internal/domain/processcapacity` and `internal/domain/capacityplan` and does
-no I/O.
+Four aggregates carry the model: two on the capacity side
+(`internal/domain/processcapacity`, `internal/domain/capacityplan`) and, since
+ADR 0023, two on the requirement side (`internal/domain/workloadforecast`,
+`internal/domain/labourplan`). Domain code does no I/O.
 
 ## ProcessCapacity
 
@@ -54,6 +55,7 @@ window to the path capacity available to serve it.
 | `DemandSource` | `request` (stated by the caller) or `orders` (defaulted from the expected-demand read model, ADR 0004); informational, no published event carries it |
 | `Status` | `DRAFT` or `PUBLISHED` |
 | `BottleneckConstraint`, `Warnings` | informational composition outcome (for example `STATION`); no integration event carries them, and only the analytics copy of `CapacityPlanPublished` carries the constraint (`binding_constraint`, ADR 0005) |
+| `LabourRequirement` | per step of the path (ADR 0022): `standard_seconds` from the labor-performance copy in force at the window start, `tasks`, `required_labour_hours = tasks x standard_seconds / 3600`, `required_average_heads` over the window, `known` and a `reason` (`no-labor-standard`, `no-task-factor`) when unknown; computed at creation, stored, on no event |
 
 Behaviour:
 
@@ -68,6 +70,53 @@ Behaviour:
 
 Event order for a plan with a shortage: Created (at creation), then Published,
 ShortageDetected, BottleneckDetected (at publish).
+
+## WorkloadForecast
+
+Package `internal/domain/workloadforecast` (ADR 0023 decision 1; it was
+wes-work-planning's charge forecast).
+
+- **Identity**: `(site_id, path_id)`; `site_id` is a canonical facility-layout
+  site code.
+- **Content**: CPT buckets `{cpt, quantity}`, quantity a non-negative whole
+  number of units; at least one bucket. A receipt replaces the buckets as a
+  whole.
+- **Versioning**: version 1 on the first receipt, + 1 per receipt that changed
+  the buckets. Equal buckets in the same order change nothing: no event, same
+  version, same `received_at`.
+- **Event**: `WorkloadForecastReceived` (`site_id`, `path_id`,
+  `total_quantity`, `bucket_count`, `received_at`, `version`).
+- **Query**: `QuantityDueIn(from, to)` sums the buckets whose `cpt` is in
+  `[from, to)` and reports how many there were; zero buckets is no data.
+
+## LabourPlan
+
+Package `internal/domain/labourplan` (ADR 0023 decisions 2 and 3; it was
+wes-work-planning's path plan).
+
+| Field | Notes |
+| --- | --- |
+| `site_id`, `shift_id`, `path_id` | the identity; `site_id` and `shift_id` matched exactly as sent, `path_id` trimmed and upper-cased |
+| `planned_heads` | the requirement; `0..2147483647` and never above `installed_stations` |
+| `rate_units_per_hour`, `hours` | above zero; `rate x heads x hours` must be finite |
+| `installed_stations` | caller-supplied, stored as sent |
+| `shift_start` | optional; needed to derive heads |
+| `heads_source` | `request` (sent) or `forecast` (derived: `ceil(units due in [shift_start, shift_start + hours) / (rate x hours))`) |
+| `version` | 1, then + 1 per commit that changed the plan |
+
+Behaviour:
+
+- `New` and `Revise` record `LabourPlanCommitted` (every field above); a spec
+  equal to the stored one changes nothing.
+- The station warning is not part of the aggregate: the use case computes it
+  against the facility tally on every read, and only when the tally knows at
+  least one but fewer stations of the activity named like the path.
+- The **drift** lives in the same package but is not plan state:
+  `CompareHeads(planned, committed)` gives `committed - planned`;
+  `ShouldRaise(last, hasLast)` is true when it is non-zero and differs from the
+  last drift recorded for the key. The heads workforce-management committed
+  (`Commitment`) are a read model, not an aggregate; neither drift trigger
+  changes the plan or the commitment.
 
 ## Not aggregates
 
@@ -85,6 +134,13 @@ ShortageDetected, BottleneckDetected (at publish).
   last writer wins on the CloudEvents `time` (`Order.Supersedes`), counted in a
   window `[start, end)` by its promise cutoff (`Order.CountsIn`). Zero orders is
   *no data*, never zero demand (`Summary.HasData`).
+- **Labour standards** (`internal/domain/laborstandard`, ADR 0022) are a local
+  copy of labor-performance's facts (`labor_standards`, one row per
+  `standard_id`); `Resolve` picks the one in force for a site, task type and
+  window start at read time.
+- **Committed heads** (`labourplan.Commitment`, `labour_plan_commitments`) are a
+  read model of workforce-management's `ShiftPlanCommitted`, plus the last
+  drift recorded for the key.
 
-The [Aggregate Design Canvas](/docs/ddd/aggregate-design-canvas) covers both
+The [Aggregate Design Canvas](/docs/ddd/aggregate-design-canvas) covers all four
 aggregates in the ddd-crew format.

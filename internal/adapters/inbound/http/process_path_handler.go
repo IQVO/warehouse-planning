@@ -40,8 +40,9 @@ func (s *Server) handleRegisterProcessPath(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, toProcessPathResponse(path))
 }
 
-// handleListProcessPaths backs GET /process-paths: the registered
-// ProcessPaths ordered by id, one keyset page at a time ({items,nextCursor}).
+// handleListProcessPaths backs GET /process-paths: the locally declared paths
+// and the ACTIVE process flows (a flow wins over a local path of the same id)
+// ordered by id, one keyset page at a time ({items,nextCursor}).
 // 200 with an empty items list when none follows (never an error). The route
 // exists only when the ListProcessPaths use case is wired.
 func (s *Server) handleListProcessPaths(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +70,21 @@ func toProcessPathResponse(path processpath.ProcessPath) processPathResponse {
 	for _, step := range steps {
 		out = append(out, string(step))
 	}
-	return processPathResponse{ID: path.ID(), Name: path.Name(), Steps: out}
+	return processPathResponse{ID: path.ID(), Name: path.Name(), Steps: out, Source: string(path.Source())}
+}
+
+// handleGetProcessPath backs GET /process-paths/{id}: the ProcessPath the id
+// resolves to, an ACTIVE process flow first and else the locally declared path
+// (docs/adr/0025), with its read-only source. A flow with no local path is a
+// 200; an id neither source knows is the 404 process-path-not-found problem.
+// The route exists only when the GetProcessPath use case is wired.
+func (s *Server) handleGetProcessPath(w http.ResponseWriter, r *http.Request) {
+	path, err := s.GetProcessPath.Handle(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProcessPathResponse(path))
 }
 
 // handleGetProcessPathCapacity backs
@@ -126,6 +141,7 @@ func (s *Server) handleGetProcessPathCapacity(w http.ResponseWriter, r *http.Req
 		})
 	}
 	writeJSON(w, http.StatusOK, processPathCapacityResponse{
+		Source:         string(result.Source),
 		NormalizedRate: result.NormalizedRate.Quantity(),
 		NormalizedUnit: string(result.NormalizedRate.Unit()),
 		BottleneckStep: string(result.BottleneckStep),

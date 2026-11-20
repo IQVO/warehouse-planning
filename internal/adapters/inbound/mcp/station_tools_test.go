@@ -122,6 +122,9 @@ func TestStationComposition_FixtureC_ThroughMCP(t *testing.T) {
 	if c["bottleneck_step"] != "REBIN" || c["normalized_rate"] != 1000.0 {
 		t.Fatalf("no standard: %v, want REBIN 1000", c)
 	}
+	if c["source"] != "local" {
+		t.Fatalf("source = %v, want local (a path declared with register_process_path, docs/adr/0025)", c["source"])
+	}
 	assertBreakdown(t, c, []stepWant{{"PICK", 3200, "LABOR"}, {"REBIN", 1000, "LABOR"}, {"PACK", 2500, "LABOR"}})
 	if warnings, _ := c["warnings"].([]any); len(warnings) != 1 || warnings[0] == "" {
 		t.Fatalf("no standard: warnings = %v, want exactly one", c["warnings"])

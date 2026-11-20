@@ -49,6 +49,18 @@ unchanged):
 - `GET /process-paths`                     -> `ListProcessPaths`
 - `GET /capacity-plans?location=&limit=`   -> `ListCapacityPlans`
 
+Requirement side (docs/adr/0023; REST only, **no MCP tool and no A2A skill**, decision 7):
+
+- `PUT /workload-forecasts/{site_id}/{path_id}`            -> `ReceiveWorkloadForecast` (201 new, 200 replaced or unchanged; no Idempotency-Key)
+- `GET /workload-forecasts/{site_id}/{path_id}`            -> `GetWorkloadForecast`
+- `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`       -> `CommitLabourPlan` (omitted planned_heads derived from the stored forecast in [shift_start, shift_start + hours), else 422 missing-planned-heads)
+- `GET /labour-plans/{site_id}/{shift_id}/{path_id}`       -> `GetLabourPlan`
+- `GET /labour-plans?site_id=&shift_id=&limit=&cursor=`    -> `ListLabourPlans` (both filters required)
+
+A version conflict on save is retried once, then answered `409 version-conflict`. The station
+warning (a tally that knows at least one but fewer stations than `installed_stations`; zero is
+no data) is computed on every read and never stored.
+
 ## Conventions
 
 - Error shape: RFC 7807 `application/problem+json`, matching the rest of
@@ -223,6 +235,8 @@ Errors (`application/problem+json`):
 - `404 process-path-not-found` (create), `404 capacity-plan-not-found`
   (publish, get).
 - `409 capacity-plan-already-published` (publish twice; nothing is queued).
+- `409 capacity-plan-superseded` (publish a SUPERSEDED plan; nothing is queued).
+- `409 version-conflict` (a concurrent publish of the same site, location, path and window won twice).
 - `422 missing-step-capacity`, `non-positive-conversion-factor`,
   `missing-conversion-factor`, `unsupported-normalization-unit` (as Phase 2),
   plus `negative-assigned-demand`, `missing-assigned-demand` (field absent AND
@@ -252,15 +266,19 @@ The most recently created plans, newest first (`created_at` descending, ties by
 `id` descending), each item exactly the `GET /capacity-plans/{id}` shape:
 
 ```json
-{ "location": "SIM1", "capacity_plans": [ { "id": "...", "status": "DRAFT", "...": "..." } ] }
+{ "items": [ { "id": "...", "status": "DRAFT", "...": "..." } ], "nextCursor": "..." }
 ```
 
-- `location` (optional): restrict to one location; omitted = every location and
-  the body then carries no `location` field.
-- `limit` (optional): default **20**, capped at **100** (a larger value is
-  served as 100). Not a positive integer (`0`, `-1`, `abc`, `1.5`) is
-  `400 malformed-limit` (`application/problem+json`).
-- `200` with `"capacity_plans": []` when nothing matches (never `null`).
+- `location` (optional): restrict to one location (repeat it on every page
+  request); omitted = every location.
+- `limit` (optional): default **100**, max **500**. Anything that is not a
+  single integer from 1 to 500 (`0`, `501`, `-1`, `abc`, `1.5`, a repeated
+  `limit`) is `400 invalid-limit`; it is never clamped. `cursor` is the opaque
+  `nextCursor` of the previous page (`400 invalid-cursor` when it is not);
+  `nextCursor` is absent on the last page. A parameter the collection does not
+  declare is `400 unknown-query-parameter` (all `application/problem+json`;
+  `internal/adapters/inbound/http/pagination.go`, `http/page/page.go`).
+- `200` with `"items": []` when nothing matches (never `null`).
 - Read through `ports.CapacityPlanLister.ListRecent` (memory + Postgres repos;
   `CapacityPlanRepository` itself is not widened, test fakes embed it). It never
   locks a row. No dedicated index: the table is small and `(location,
@@ -333,8 +351,11 @@ is half-open `[window_start, window_end)`.
 - `as_of`: `time` of the newest order event the site's model reflects (null when
   none). `200` with `orders: 0` and `as_of: null` when nothing is known: that is
   *no data*, and `POST /capacity-plans` never turns it into a zero-demand plan.
-- Every consumed order is attributed to the ONE configured site
-  (`DEMAND_SITE_ID`); any other `location` reads 0. Cancellations are not netted.
+- A consumed order is attributed to its event's `site_id`, or to the fallback
+  site `DEMAND_SITE_ID` when it carries none (ADR 0021). Cancellations are not netted.
 - `400 missing-location` / `malformed-window-start` / `malformed-window-end` /
   `invalid-capacity-window`. The route exists only when the demand read model is
   wired (always in `cmd/api`); it reads the table even when the consumer is off.
+
+- A static sub-resource read under a collection (e.g. `GET /capacity-plans/comparisons`) is registered beside `/{id}`; chi matches the static segment first, so the word is never read as an id. A handler test pins that it never reaches `GET /{id}`.
+- A read that answers from stored aggregates only (comparisons) must not recompute: it returns the figures as stored, so it is reproducible, and carries `x-pagination-exempt: view` when it returns a bounded set (2..5 items).

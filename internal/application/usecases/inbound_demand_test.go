@@ -20,10 +20,12 @@ const (
 	inboundPath = "pick-rebin-pack"
 )
 
-func bookedAppt(t *testing.T, id, location string, start time.Time, asns int, asOf time.Time) inbound.Appointment {
+func bookedAppt(t *testing.T, id, location string, start time.Time, asns int, version int64) inbound.Appointment {
 	t.Helper()
 	a, err := inbound.NewBooked(inbound.BookedParams{
-		AppointmentID: id, Location: location, WindowStart: start, WindowEnd: start.Add(2 * time.Hour), ASNCount: asns, AsOf: asOf,
+		AppointmentID: id, Location: location, Direction: inbound.DirectionInbound,
+		WindowStart: start, WindowEnd: start.Add(2 * time.Hour), ASNCount: asns, Version: version,
+		AsOf: inboundAsOf.Add(time.Duration(version) * time.Minute),
 	})
 	if err != nil {
 		t.Fatalf("NewBooked(%s): %v", id, err)
@@ -31,9 +33,9 @@ func bookedAppt(t *testing.T, id, location string, start time.Time, asns int, as
 	return a
 }
 
-func cancelledAppt(t *testing.T, id, location string, asOf time.Time) inbound.Appointment {
+func cancelledAppt(t *testing.T, id, location string, version int64) inbound.Appointment {
 	t.Helper()
-	a, err := inbound.NewCancelled(id, location, asOf)
+	a, err := inbound.NewCancelled(id, location, version, inboundAsOf.Add(time.Duration(version)*time.Minute))
 	if err != nil {
 		t.Fatalf("NewCancelled(%s): %v", id, err)
 	}
@@ -77,13 +79,13 @@ func newInboundRecordFixture(appts interface {
 func TestRecordInboundAppointment_AppliesThenIgnoresAReplayOfTheSameEventID(t *testing.T) {
 	f := newInboundRecordFixture(nil)
 	ctx := context.Background()
-	first := bookedAppt(t, "appt-1", "SIM1", planWindowStart, 2, inboundAsOf)
+	first := bookedAppt(t, "appt-1", "SIM1", planWindowStart, 2, 1)
 	if got, err := f.record.Handle(ctx, "c", "evt-1", first); err != nil || got != OutcomeApplied {
 		t.Fatalf("first = %v, %v; want applied", got, err)
 	}
 	// Same id, a different (later) payload: a consumer that does not claim on
 	// the id would apply it.
-	different := bookedAppt(t, "appt-1", "SIM1", planWindowEnd, 9, inboundAsOf.Add(time.Hour))
+	different := bookedAppt(t, "appt-1", "SIM1", planWindowEnd, 9, 2)
 	if got, err := f.record.Handle(ctx, "c", "evt-1", different); err != nil || got != OutcomeDuplicate {
 		t.Fatalf("replay = %v, %v; want duplicate", got, err)
 	}
@@ -95,15 +97,20 @@ func TestRecordInboundAppointment_AppliesThenIgnoresAReplayOfTheSameEventID(t *t
 func TestRecordInboundAppointment_CancelledBeforeBookedWins(t *testing.T) {
 	f := newInboundRecordFixture(nil)
 	ctx := context.Background()
-	cancel := cancelledAppt(t, "appt-1", "SIM1", inboundAsOf.Add(time.Minute))
-	book := bookedAppt(t, "appt-1", "SIM1", planWindowStart.Add(time.Hour), 1, inboundAsOf)
+	cancel := cancelledAppt(t, "appt-1", "SIM1", 2)
+	book := bookedAppt(t, "appt-1", "SIM1", planWindowStart.Add(time.Hour), 1, 1)
 
 	if got, err := f.record.Handle(ctx, "c", "evt-cancel", cancel); err != nil || got != OutcomeApplied {
 		t.Fatalf("cancel first = %v, %v", got, err)
 	}
+	// The late Booked completes the facts the row lacks (direction, ASNs) but
+	// carries an older version than the cancel: the state does not change.
 	got, err := f.record.Handle(ctx, "c", "evt-book", book)
-	if err != nil || got != OutcomeStale {
-		t.Fatalf("booked after the cancel = %v, %v; want stale", got, err)
+	if err != nil || got != OutcomeApplied {
+		t.Fatalf("booked after the cancel = %v, %v; want applied (facts only)", got, err)
+	}
+	if again, err := f.record.Handle(ctx, "c", "evt-book-2", book); err != nil || again != OutcomeStale {
+		t.Fatalf("the same booked version under another event id = %v, %v; want stale", again, err)
 	}
 	if stored, _ := f.repo.Get("appt-1"); stored.Status() != inbound.StatusCancelled {
 		t.Fatalf("status = %s, want CANCELLED", stored.Status())
@@ -129,7 +136,7 @@ func (f failingAppointments) Demand(context.Context, string, time.Time, time.Tim
 func TestRecordInboundAppointment_TransientFailureRollsBackTheClaim(t *testing.T) {
 	boom := errors.New("transient database failure")
 	f := newInboundRecordFixture(failingAppointments{err: boom})
-	_, err := f.record.Handle(context.Background(), "c", "evt-1", bookedAppt(t, "appt-1", "SIM1", planWindowStart, 1, inboundAsOf))
+	_, err := f.record.Handle(context.Background(), "c", "evt-1", bookedAppt(t, "appt-1", "SIM1", planWindowStart, 1, 1))
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the infrastructure error", err)
 	}
@@ -185,7 +192,7 @@ func newInboundFixture() *inboundFixture {
 
 func (f *inboundFixture) book(t *testing.T, id string, start time.Time, asns int) {
 	t.Helper()
-	if _, err := f.appts.Apply(context.Background(), bookedAppt(t, id, inboundSite, start, asns, inboundAsOf)); err != nil {
+	if _, err := f.appts.Apply(context.Background(), bookedAppt(t, id, inboundSite, start, asns, 1)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -256,11 +263,11 @@ func TestGetInboundDemand_NoAppointmentsIsNotAMissingStandard(t *testing.T) {
 func TestGetInboundDemand_OtherSiteAndCancelledDoNotCount(t *testing.T) {
 	f := newInboundFixture()
 	ctx := context.Background()
-	if _, err := f.appts.Apply(ctx, bookedAppt(t, "other", "ELSEWHERE", planWindowStart, 1, inboundAsOf)); err != nil {
+	if _, err := f.appts.Apply(ctx, bookedAppt(t, "other", "ELSEWHERE", planWindowStart, 1, 1)); err != nil {
 		t.Fatal(err)
 	}
 	f.book(t, "gone", planWindowStart, 1)
-	if _, err := f.appts.Apply(ctx, cancelledAppt(t, "gone", inboundSite, inboundAsOf.Add(time.Minute))); err != nil {
+	if _, err := f.appts.Apply(ctx, cancelledAppt(t, "gone", inboundSite, 2)); err != nil {
 		t.Fatal(err)
 	}
 	declare(t, f.standards, inboundSite, inboundPath, 30, 0)

@@ -47,7 +47,7 @@ keys (as `POST`/`GET /process-capacities`); `get_process_path_capacity` and
 `create_capacity_plan` resolve each step by window COVERAGE (a registered
 window applies when it covers the requested one; docs/adr/0003). Failures are MCP tool errors (`isError: true`) whose text is
 `<slug>: <message>`, using the REST problem slugs (`capacity-plan-not-found`,
-`capacity-plan-already-published`, `process-path-not-found`,
+`capacity-plan-already-published`, `capacity-plan-superseded`, `version-conflict`, `process-path-not-found`,
 `missing-step-capacity`, `negative-assigned-demand`, ...). Unexpected
 infrastructure errors are logged and reported as a generic `internal-error`.
 
@@ -58,7 +58,7 @@ infrastructure errors are logged and reported as a generic `internal-error`.
 | `register_process_path` | write | `RegisterProcessPath` | `id`, `name`, `steps` (ordered, non-empty) | `id`, `name`, `steps` |
 | `get_process_path_capacity` | read | `GetProcessPathCapacity` | `id`, `location`, `window_start`, `window_end`, optional `units_per_order`, `packages_per_order` | `normalized_rate` (ORDER/hour), `normalized_unit` (`ORDER`), `bottleneck_step`, `step_breakdown[]` (`step`, `normalized_rate` ORDER/hour, `binding_constraint`), `warnings[]` (never null) |
 | `create_capacity_plan` | write | `CreateCapacityPlan` | `warehouse_id`, `location`, `window_start`, `window_end`, `path_id`, optional `assigned_demand` (orders; when given it always wins, `0` included; when omitted it defaults to the orders `get_expected_demand` reports for the location and window, else `missing-assigned-demand` -- never silently 0; docs/adr/0004), optional `units_per_order`, `packages_per_order` | the plan (below), `status: DRAFT`, `demand_source` (`request` \| `orders`) |
-| `publish_capacity_plan` | write | `PublishCapacityPlan` | `id` | the plan, `status: PUBLISHED`, `published_at`; second call -> `capacity-plan-already-published` |
+| `publish_capacity_plan` | write | `PublishCapacityPlan` | `id` | the plan, `status: PUBLISHED`, `published_at`; supersedes the PUBLISHED plan of the same site/location/path/window; second call -> `capacity-plan-already-published`; a SUPERSEDED plan -> `capacity-plan-superseded`; a twice-lost race -> `version-conflict` |
 | `get_capacity_plan` | read | `CapacityPlanRepository` port (no use case, as REST) | `id` | the plan |
 | `declare_station_standard` | write (idempotent: same key replaces) | `DeclareStationStandard` | `location` (site code, e.g. `SIM1`), `process_type`, `quantity` (> 0, per ONE station), `unit` (UNIT, PACKAGE, ORDER), `period_seconds` (> 0) | `location`, `process_type`, `quantity`, `unit`, `period_seconds`, `created` |
 | `list_station_standards` | read | `StationStandardRepository` port (no use case, as REST) | optional `location` | `location` (when filtered), `standards[]` (same fields) |

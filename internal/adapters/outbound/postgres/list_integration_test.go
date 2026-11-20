@@ -80,7 +80,7 @@ func TestCapacityPlanRepo_ListRecentNewestFirstFilteredLimitedAndFaithful(t *tes
 	ctx := context.Background()
 	repo := postgres.NewCapacityPlanRepo(pool)
 
-	got, err := repo.ListRecent(ctx, "", nil, 10)
+	got, err := repo.ListRecent(ctx, capacityplan.ListFilter{}, nil, 10)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("ListRecent on empty = %#v, %v; want empty non-nil slice", got, err)
 	}
@@ -99,19 +99,19 @@ func TestCapacityPlanRepo_ListRecentNewestFirstFilteredLimitedAndFaithful(t *tes
 		}
 		return fmt.Sprint(out)
 	}
-	all, _ := repo.ListRecent(ctx, "", nil, 10)
+	all, _ := repo.ListRecent(ctx, capacityplan.ListFilter{}, nil, 10)
 	if ids(all) != "[p-tie-b p-tie-a p-middle p-other p-oldest]" {
 		t.Errorf("all = %s, want newest first with id-descending ties", ids(all))
 	}
-	sim1, _ := repo.ListRecent(ctx, "SIM1", nil, 10)
+	sim1, _ := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, nil, 10)
 	if ids(sim1) != "[p-tie-b p-tie-a p-middle p-oldest]" {
 		t.Errorf("SIM1 = %s", ids(sim1))
 	}
-	limited, _ := repo.ListRecent(ctx, "SIM1", nil, 2)
+	limited, _ := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, nil, 2)
 	if ids(limited) != "[p-tie-b p-tie-a]" {
 		t.Errorf("limit 2 = %s", ids(limited))
 	}
-	none, err := repo.ListRecent(ctx, "NOWHERE", nil, 10)
+	none, err := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "NOWHERE"}, nil, 10)
 	if err != nil || none == nil || len(none) != 0 {
 		t.Errorf("unknown location = %#v, %v; want empty non-nil slice", none, err)
 	}
@@ -146,7 +146,7 @@ func TestCapacityPlanRepo_ListRecentWalksEveryPageOnce(t *testing.T) {
 	seen := map[string]bool{}
 	var after *pagecursor.Cursor
 	for pages := 0; pages < 10; pages++ {
-		rows, err := repo.ListRecent(ctx, "SIM1", after, 2)
+		rows, err := repo.ListRecent(ctx, capacityplan.ListFilter{Location: "SIM1"}, after, 2)
 		if err != nil {
 			t.Fatal(err)
 		}

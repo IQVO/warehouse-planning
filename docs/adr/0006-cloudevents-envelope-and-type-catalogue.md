@@ -17,13 +17,15 @@ the two must agree.
 1. CloudEvents 1.0 structured mode is the only envelope. There is no flat or dual mode and no envelope toggle.
 2. `type` is `com.warehouse.wes.warehouse-planning.<entity>.<EventName>`, built by `cloudevents.Type(entity, ev.EventName())`
    in `internal/adapters/outbound/kafka/encoder.go`. The entity segment is the raising aggregate, lowercase:
-   `capacityplan` or `processcapacity`.
-3. `subject` is the aggregate id (`ev.AggregateID()`): the capacity plan id, or a ProcessCapacity's canonical identity
-   `<processType>/<location>/<windowStart>/<windowEnd>`.
+   `capacityplan`, `processcapacity`, `workloadforecast` or `labourplan` (the last two: ADR 0023).
+3. `subject` is the aggregate id (`ev.AggregateID()`): the capacity plan id, a ProcessCapacity's canonical identity
+   `<processType>/<location>/<windowStart>/<windowEnd>`, a WorkloadForecast's `<site_id>/<path_id>`, or a
+   LabourPlan's `<site_id>/<shift_id>/<path_id>`.
 4. Each CapacityPlan event is published twice: as an integration event on `warehouse.warehouse-planning.events` and as
    an analytics record on `warehouse.warehouse-planning.analytics`. Both go through the transactional outbox.
    ProcessCapacity events (constraint registrations) are integration-stream only: the analytics stream is plan facts
-   only (ADR 0005), and the analytics encoder refuses one rather than silently dropping it.
+   only (ADR 0005), and the analytics encoder refuses one rather than silently dropping it. The WorkloadForecast and
+   LabourPlan events (ADR 0023) are published twice like the CapacityPlan ones, with the same payload on both topics.
 
 ### This service's types
 
@@ -33,12 +35,20 @@ the two must agree.
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | capacity plan id |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | capacity plan id |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | capacity plan id |
+| `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanSuperseded` | the superseded (older) capacity plan id (ADR 0024) |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityRegistered` | `<processType>/<location>/<windowStart>/<windowEnd>` |
 | `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.processcapacity.ProcessCapacityChanged` | `<processType>/<location>/<windowStart>/<windowEnd>` |
+| `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.workloadforecast.WorkloadForecastReceived` | `<site_id>/<path_id>` |
+| `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted` | `<site_id>/<shift_id>/<path_id>` |
+| `warehouse.warehouse-planning.events` | `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanDriftDetected` | `<site_id>/<shift_id>/<path_id>` |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanCreated` | capacity plan id |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanPublished` | capacity plan id |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityShortageDetected` | capacity plan id |
 | `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.BottleneckDetected` | capacity plan id |
+| `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.capacityplan.CapacityPlanSuperseded` | the superseded (older) capacity plan id (ADR 0024) |
+| `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.workloadforecast.WorkloadForecastReceived` | `<site_id>/<path_id>` |
+| `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted` | `<site_id>/<shift_id>/<path_id>` |
+| `warehouse.warehouse-planning.analytics` | `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanDriftDetected` | `<site_id>/<shift_id>/<path_id>` |
 
 ## Consequences
 

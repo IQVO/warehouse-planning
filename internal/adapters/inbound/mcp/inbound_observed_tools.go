@@ -12,7 +12,7 @@ import (
 // --- declare_inbound_labour_standard (write) ----------------------------------
 
 type declareInboundLabourStandardInput struct {
-	Location              string  `json:"location" jsonschema:"the site code the standard applies to, e.g. SIM1; dock appointments carry no site, so every appointment is attributed to the one configured site"`
+	Location              string  `json:"location" jsonschema:"the site code the standard applies to, e.g. SIM1; dock appointments are attributed to the site_id of their events, which is this site code"`
 	PathID                string  `json:"path_id" jsonschema:"the process path the standard prices, e.g. receive; the same id a capacity plan for that path uses"`
 	MinutesPerAppointment float64 `json:"minutes_per_appointment" jsonschema:"fixed labour minutes of ONE dock appointment; must be positive"`
 	MinutesPerASN         float64 `json:"minutes_per_asn,omitempty" jsonschema:"OPTIONAL extra labour minutes per ASN the appointment covers (the booked event carries no units, pallets or lines); omit or 0 to use only minutes_per_appointment; must not be negative"`
@@ -91,7 +91,7 @@ func (d Deps) getInboundDemand(ctx context.Context, in getInboundDemandInput) (i
 		AverageHeads:     res.AverageHeads,
 		StandardDeclared: res.StandardDeclared,
 		StandardMissing:  res.StandardMissing,
-		Source:           "inbound-receiving",
+		Source:           "dock-scheduling",
 	}
 	if !res.Demand.AsOf.IsZero() {
 		asOf := res.Demand.AsOf.UTC().Format(time.RFC3339)
@@ -187,10 +187,10 @@ func (d Deps) registerInboundObservedTools(server *mcp.Server, idempotent func(b
 	if d.GetInboundDemand != nil {
 		addTool(server, &mcp.Tool{
 			Name: "get_inbound_demand",
-			Description: "Read the inbound demand of a site over a window from the local read model fed by inbound-receiving's DockAppointmentBooked / DockAppointmentCancelled events: " +
-				"appointments = BOOKED dock appointments whose door window STARTS in [window_start, window_end) (start inclusive, end exclusive; a cancelled one never counts, whatever the arrival order), asns = ASNs they cover, " +
+			Description: "Read the inbound demand of a site over a window from the local read model fed by dock-scheduling's DockAppointmentBooked / Rescheduled / Cancelled / NoShow events: " +
+				"appointments = BOOKED INBOUND dock appointments whose door window STARTS in [window_start, window_end) (start inclusive, end exclusive; a rescheduled one counts at its new window; a cancelled or no-show one never counts, whatever the arrival order), asns = ASNs they cover, " +
 				"labour_minutes = what the standard declared for path_id attributes to them (0 and standard_missing true when none is declared), average_heads = labour_minutes over the window length, and as_of = the time of the newest dock-appointment event the site's model reflects (null when none). " +
-				"Appointments carry no site, so all are attributed to the one configured site. Read-only.",
+				"Each appointment is attributed to the site_id of its events, so location is that site code. Read-only.",
 			Annotations: readOnly,
 		}, d.getInboundDemand)
 	}

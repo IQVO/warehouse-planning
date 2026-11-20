@@ -46,7 +46,6 @@ three regulation categories: **maintainability**, **architecture fitness**,
 | `helm-lint` | maintainability | computational | PR (targeting main) | yes | seconds |
 | `trivy-scan` | maintainability | computational | PR (targeting main) | yes (CRITICAL/HIGH w/ fix) | minutes |
 | `CodeQL` | maintainability | computational | PR, schedule | yes (conversation-resolution) | minutes |
-| `Scorecard` | maintainability | computational | schedule | no | minutes |
 | `drift` (deadcode, `go mod tidy -diff`, knip, coverage-quality) | maintainability | computational | weekly schedule | **no — advisory** | minutes |
 | `/code-review`, `/architecture-review`, `/domain-review` | architecture fitness / behaviour | **inferential** | invoked by hand (local-only, per user decision 2026-09-13) | no | LLM cost per invocation |
 
@@ -140,6 +139,12 @@ bounded-context segment of its CloudEvents `type`) — generates
 manual content (the `.claude/rules/*.md` skeletons, `.gremlins.yaml`'s
 measured thresholds). See `scripts/new-service.sh`'s own header comment for
 the full instantiation checklist.
+
+## Incident protocol
+
+Every failure that was not caught before CI ends with: the fix, a sensor or guide that would have caught it, that
+sensor rolled out to the whole fleet, and a row in [INCIDENTS.md](INCIDENTS.md) (the canonical fleet log, identical in
+every repo). A row with no guard is an open gap and says so. Sensor output is a prompt: it must state WHAT, WHY and FIX.
 
 ## Versioning
 

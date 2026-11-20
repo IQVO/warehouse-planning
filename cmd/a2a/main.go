@@ -208,6 +208,8 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrations
 
 		inboundAppointments: postgres.NewInboundAppointmentRepo(pool),
 		inboundStandards:    postgres.NewInboundStandardRepo(pool),
+		laborStandards:      postgres.NewLaborStandardRepo(pool),
+		processFlows:        postgres.NewProcessFlowRepo(pool),
 	})
 	if err != nil {
 		pool.Close()
@@ -232,13 +234,23 @@ type repositories struct {
 	// ADR 0017.
 	inboundAppointments ports.InboundAppointmentRepository
 	inboundStandards    ports.InboundStandardRepository
+
+	// ADR 0022: the labour standards copy cmd/api's consumer writes; read
+	// only here (cmd/a2a never starts a consumer).
+	laborStandards ports.LaborStandardRepository
+
+	// processFlows is the local copy of process-path-management's process flows
+	// (ADR 0025): read-only here, the consumer runs in cmd/api only. A flow
+	// resolves a path id before the locally declared path.
+	processFlows ports.ProcessFlowRepository
 }
 
 // newDeps assembles the A2A dependencies (the SAME use cases the REST and MCP
 // adapters use) over r.
 func newDeps(r repositories) (inbounda2a.Deps, error) {
 	pathCapacity := &usecases.GetProcessPathCapacity{
-		ProcessPaths: r.processPaths, ProcessCapacities: r.processCapacities, StationStandards: r.standards, Tally: r.tally,
+		ProcessPaths:      &usecases.FlowFirstPathFinder{Flows: r.processFlows, Local: r.processPaths},
+		ProcessCapacities: r.processCapacities, StationStandards: r.standards, Tally: r.tally,
 	}
 	expectedDemand := &usecases.GetExpectedDemand{Demand: r.demand}
 	inboundDemand := &usecases.GetInboundDemand{Appointments: r.inboundAppointments, Standards: r.inboundStandards}
@@ -252,6 +264,7 @@ func newDeps(r repositories) (inbounda2a.Deps, error) {
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: r.plans, Outbox: r.outbox, Encoder: encoder, UnitOfWork: r.uow,
 			Demand: expectedDemand, Inbound: inboundDemand, Metrics: planMetrics,
+			LaborStandards: r.laborStandards,
 		},
 	}, nil
 }
