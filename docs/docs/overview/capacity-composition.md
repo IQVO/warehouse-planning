@@ -11,6 +11,14 @@ How the capacity of a process-path step is resolved. This page summarises
 [ADR 0003](/docs/adr/0003-window-coverage-semantics); the ADRs are the
 authority.
 
+## Which path is resolved (ADR 0025)
+
+A `path_id` resolves to an ACTIVE process flow first (its steps are the flow's
+stages' `process_type` values in order, kept in the event-fed `process_flows`
+copy), else to the locally declared `ProcessPath` (`POST /process-paths`).
+A RETIRED flow does not resolve. Every path read says which one it used:
+`source: flow` or `source: local`.
+
 ## Window coverage
 
 A window `C` **covers** a planning window `W` when `C.start <= W.start` and

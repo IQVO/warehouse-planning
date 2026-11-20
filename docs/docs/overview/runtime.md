@@ -121,14 +121,15 @@ non-zero when the relay or a consumer stops on its own, so the pod restarts.
   boot error too ([ADR 0020](/docs/adr/0020-inbound-demand-from-dock-scheduling)).
 
 Dead-lettering ([ADR 0007](/docs/adr/0007-outbox-and-resilient-consumers) §3,
-`internal/adapters/inbound/kafka/deadletter.go`): the six domain consumers
+`internal/adapters/inbound/kafka/deadletter.go`): the seven domain consumers
 retry a transient failure on the same message up to 5 times, then publish it to
 `<topic>.dlq` (`warehouse.workforce.events.dlq`,
 `warehouse.facility.events.dlq`, `warehouse.order-management.events.dlq`,
 `warehouse.dock-scheduling.events.dlq`, `warehouse.fulfillment.events.dlq`,
-`warehouse.labor-performance.events.dlq`) with
+`warehouse.labor-performance.events.dlq`,
+`warehouse.process-path-management.events.dlq`) with
 `x-dlq-*` headers and commit past it. The two ADR 0017 consumers (dock
-appointments, task completions) and the labour-standard consumer (ADR 0022) also dead-letter a *deterministic* failure (not
+appointments, task completions), the labour-standard consumer (ADR 0022) and the process-flow consumer (ADR 0025) also dead-letter a *deterministic* failure (not
 CloudEvents 1.0, malformed or unusable payload) at once instead of skipping it. The DLQ publish itself is retried until it
 succeeds, so nothing is silently dropped. The analytics projector is different
 by design ([ADR 0005](/docs/adr/0005-analytics-read-side)): a transient failure

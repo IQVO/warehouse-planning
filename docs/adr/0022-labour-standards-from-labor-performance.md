@@ -12,7 +12,9 @@ requirement side of capacity planning (ADR 0022 to ADR 0025). Amends hard rule 5
 and the "no relationship" row for `labor-performance` on the context map page
 (`docs/docs/ddd/context-map.md`). Producer side: labor-performance ADR 0038, which adds
 the two standard events to its integration topic and an optional site scope. Additive for
-every consumer of this context: no published type, payload or existing response field
+every consumer of this context: no published type, payload or existence changes.
+
+Implemented (2026-11-18): PRs #140 and #141 (migration `0013`).ing response field
 changes.
 
 ## Context

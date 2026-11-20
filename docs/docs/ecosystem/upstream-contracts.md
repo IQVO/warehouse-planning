@@ -162,6 +162,20 @@ The event carries no labour: the minutes per appointment (and per ASN) are an op
 
 Observed throughput is in tasks, not orders. It is read only by the advisory `GET /capacity-plans/{id}/variance` (and MCP `get_capacity_plan_variance`), which needs a caller-supplied `tasks_per_order` and never changes a plan or a planned capacity.
 
+## Upstream: process-path-management
+
+[ADR 0025](/docs/adr/0025-process-flows-from-process-path-management) stage 1 (producer side: process-path-management ADR 0042, the `ProcessFlow` aggregate: an ordered list of `path_id` + `process_type` stages). Always on; `PROCESS_FLOW_CONSUMER_GROUP` is required (chart `processFlow.consumerGroup`, warehouse-infra pin `warehouse-planning-process-flows`).
+
+| | |
+|---|---|
+| Topic | `warehouse.process-path-management.events` (key and subject = `flow_id`) |
+| Types | `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined` / `ProcessFlowRevised` / `ProcessFlowRetired` — each the FULL state: `flow_id`, `name`, `stages` (`[{path_id, process_type}]` in order), `status` ACTIVE\|RETIRED, `version` |
+| Copy | `process_flows` (migration 0018): one row per flow id, stages and version |
+| Apply rule | only when `version` is greater than the stored one (equal or lower = no-op, so the producer's startup republish and reordering are harmless); claim and apply in ONE unit of work |
+| Poison | unknown `process_type`, no stages, bad `status` or `version` -> DLQ `warehouse.process-path-management.events.dlq`, never retried, counted `rejected` (`warehouse_planning.process_flows.messages{outcome=...}`) |
+| Effect on reads | path capacity resolves an ACTIVE flow with the id first (`source: flow`), else the locally declared path (`source: local`); a RETIRED flow does not resolve |
+| Ignored | every other type on the topic (`ProcessPath*`, `CPTScheduleChanged`) |
+
 ## Upstream: labor-performance
 
 [ADR 0022](/docs/adr/0022-labour-standards-from-labor-performance) (producer side: labor-performance ADR 0038, which put both types on its integration topic). Always on; `LABOR_STANDARD_CONSUMER_GROUP` is required.
@@ -258,11 +272,10 @@ ADR 0043 decision 4); the difference comes back as `LabourPlanDriftDetected`.
 
 ## Absent edges
 
-- **process-path-management: deliberately not consumed.** Its `ProcessPath`
-  carries `path_id`, `required_capabilities` and eligibility metadata but no
-  ordered physical step sequence, so there is nothing structural to sync. This
-  context owns its own `ProcessPath`, declared via `POST /process-paths`; the
-  two share the `path_id` string only as a loose cross-reference.
+- **process-path-management: consumed since ADR 0025** (see above). Until
+  stage 2, both sources coexist: an ACTIVE flow wins over a locally declared
+  `ProcessPath` of the same id, and every path read says which source it used
+  (`source: flow|local`); `POST /process-paths` keeps working.
 - **inventory-storage and the other contexts:** no edge in either
   direction. This context never reads stock. Of `dock-scheduling` only the four appointment types are consumed, and of `fulfillment-execution` only `TaskCompleted`.
 - **wes-work-planning: no runtime edge.** It handed its charge forecast and
