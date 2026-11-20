@@ -63,7 +63,7 @@ func TestPostgresIdempotency(t *testing.T) {
 // same 201 (the loser replays the winner's committed answer).
 func TestPostgresIdempotency_ConcurrentSameKeyOneEffect(t *testing.T) {
 	srv := newPostgresRouter(t)
-	body := `{"id":"idem-c","name":"C","steps":["PICK"]}`
+	body := `{"process_type":"PICK","location":"SIM1","window_start":"2026-01-01T00:00:00Z","window_end":"2026-01-02T00:00:00Z","constraint_type":"LABOR","quantity":120,"unit":"UNIT/HOUR","period_seconds":3600}`
 	var wg sync.WaitGroup
 	results := make([]string, 8)
 	statuses := make([]int, 8)
