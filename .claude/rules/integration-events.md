@@ -218,9 +218,19 @@ deterministic failure to `warehouse.labor-performance.events.dlq`, ignores every
 on the topic and never reads labor-performance's analytics topic. `cmd/mcp` and `cmd/a2a`
 read the copy and never start the consumer.
 
-Until ADR 0025 is implemented, `process-path-management` is NOT consumed — its `ProcessPath`
-carries `path_id`/`required_capabilities`/`eligibility`, never an ordered
-step sequence, so there is nothing structural to sync.
+| type (process flows, ADR 0025) | topic | producer | fields used |
+| --- | --- | --- | --- |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined` | `warehouse.process-path-management.events` | process-path-management (its ADR 0042) | the FULL flow: `flow_id`, `name`, `stages` (`[{path_id, process_type}]` in order), `status` ACTIVE\|RETIRED, `version` -> one row in `process_flows` |
+| `...processflow.ProcessFlowRevised` / `...ProcessFlowRetired` | same | same | same fields; the status field is the truth, not the type |
+
+`ProcessFlowConsumer` (group `PROCESS_FLOW_CONSUMER_GROUP`, required; processed-event consumer
+`process-flow-consumer`) claims and applies in ONE unit of work, and only when `version` is greater than
+the stored one (equal or lower is a no-op, so replay and reordering are harmless). It dead-letters a
+deterministic failure (unknown `process_type`, no stages, bad status or version) to
+`warehouse.process-path-management.events.dlq`, counts `warehouse_planning.process_flows.messages`
+(`applied|stale|duplicate|rejected`), and ignores every other type on the topic (`ProcessPath*`,
+`CPTScheduleChanged`). `cmd/mcp` and `cmd/a2a` read the copy and never start the consumer. A flow wins
+over a locally declared `ProcessPath` of the same id; reads carry `source: flow|local`.
 
 ### Keying decisions
 
