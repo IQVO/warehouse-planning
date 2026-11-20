@@ -50,7 +50,7 @@ func TestPostgresIdempotency(t *testing.T) {
 	if s4 != http.StatusBadRequest || !strings.Contains(b4, "/idempotency-key-required") {
 		t.Fatalf("missing: %d %s", s4, b4)
 	}
-	bad := `{"id":"idem-3","name":"Bad","steps":[]}`
+	bad := `{"process_type":"PICK","location":"SIM1","window_start":"2026-01-01T00:00:00Z","window_end":"2026-01-02T00:00:00Z","constraint_type":"LABOR","quantity":-5,"unit":"UNIT/HOUR","period_seconds":3600}`
 	c1, _, cb1 := pgKeyedPost(t, srv, "pg-k-bad", bad)
 	c2, ch2, cb2 := pgKeyedPost(t, srv, "pg-k-bad", bad)
 	if c1 != http.StatusUnprocessableEntity || c2 != c1 || cb1 != cb2 || ch2.Get("Idempotency-Replayed") != "true" {

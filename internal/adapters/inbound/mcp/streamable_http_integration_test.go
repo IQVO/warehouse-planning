@@ -261,7 +261,6 @@ func TestMCPStreamableHTTP_ListToolsExposesTheContract(t *testing.T) {
 	want := map[string]bool{ // name -> read-only
 		"register_process_capacity_constraint": false,
 		"get_effective_process_capacity":       true,
-		"register_process_path":                false,
 		"get_process_path_capacity":            true,
 		"create_capacity_plan":                 false,
 		"publish_capacity_plan":                false,

@@ -735,10 +735,9 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 func phaseNUL(t *testing.T, s *service, w *world) {
 	t.Helper()
 	before := w.db.count(`SELECT count(*) FROM process_paths`)
-	// The route answers 410 for any body since ADR 0025 stage 2 (nothing is
-	// decoded), so a NUL in the body never reaches the DB guard here; the
-	// query-path legs below still cover it.
-	assertProblem(t, s.call(http.MethodPost, "/process-paths", `{"id":"p-nul","name":"a\u0000b","steps":["PICK"]}`, http.StatusGone), "process-path-moved")
+	// The fleet request guard rejects a NUL body before any route (and before
+	// the retired 410 handler) runs; nothing is written either way.
+	assertProblem(t, s.call(http.MethodPost, "/process-paths", `{"id":"p-nul","name":"a\u0000b","steps":["PICK"]}`, http.StatusBadRequest), "malformed-request-body")
 	assertProblem(t, s.call(http.MethodGet, "/capacity-plans/pl%00an", "", http.StatusNotFound), "resource-not-found")
 	assertProblem(t, s.call(http.MethodGet, "/storage-capacity?location=WH%001", "", http.StatusBadRequest), "malformed-request-query")
 	if after := w.db.count(`SELECT count(*) FROM process_paths`); after != before {
