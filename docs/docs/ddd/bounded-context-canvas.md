@@ -178,7 +178,7 @@ Consequences; ADR 0023).
 | Operator / remote | Get effective process capacity | Query | REST `GET /process-capacities`; MCP `get_effective_process_capacity` | OHS |
 | Operator / remote | Register process path | Command | REST `POST /process-paths`; MCP `register_process_path` (until ADR 0025 stage 2 retires it) | OHS |
 | `process-path-management` | Record process flow | Command (event-fed) | Kafka `ProcessFlowDefined/Revised/Retired` on `warehouse.process-path-management.events` -> the `process_flows` copy, applied only when its `version` is greater (ADR 0025) | ACL |
-| `warehouse-console` remote | List process paths | Query | REST `GET /process-paths` (each item `source: flow|local`) and `GET /process-paths/{id}` | OHS |
+| `warehouse-console` remote | List process paths | Query | REST `GET /process-paths` (each item `source: flow\|local`) and `GET /process-paths/{id}` | OHS |
 | Operator / remote / `warehouse-ops-agent` | Get process path capacity | Query | REST `GET /process-paths/{id}/capacity`; MCP `get_process_path_capacity` | OHS (the agent is a Customer of the MCP tool) |
 | Operator / remote | Create capacity plan | Command | REST `POST /capacity-plans`; MCP `create_capacity_plan` | OHS |
 | Operator / remote | Publish capacity plan | Command | REST `POST /capacity-plans/{id}/publications`; MCP `publish_capacity_plan` | OHS |
