@@ -22,7 +22,8 @@ It does **not** own execution (`fulfillment-execution`, `wes-work-planning`),
 not the warehouse map (`facility-layout` — consumed), not labour supply
 (`workforce-management` — it commits the heads; consumed), not the engineered
 labour standards (`labor-performance` — a local copy is consumed), not the
-process-flow topology (`process-path-management`), not inventory. It never
+process-flow topology (`process-path-management` — a local copy of its flows
+is consumed, ADR 0025), not inventory. It never
 reads stock and has no solver.
 It is an **Open Host Service** with a **Published Language**: its REST API,
 its 14 MCP tools and its events on `warehouse.warehouse-planning.events`;

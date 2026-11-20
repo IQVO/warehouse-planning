@@ -78,10 +78,10 @@ re-derived here. The relationship column is this context's edge, from
 | `facility-layout` | Generic | `wms` | Upstream: `LocationSlotRegistered` / `LocationSlotDecommissioned` on `warehouse.facility.events` maintain the storage and station tally |
 | `order-management` | Generic/Supporting | `wes` | Both: upstream for demand (`OrderAllocated`, `OrderPartiallyAllocated`, consumer off unless `DEMAND_CONSUMER_GROUP` is set); downstream consumer of the capacity-plan events |
 | `warehouse-ops-agent` | Supporting | `wes` | Downstream: reads this context through four read-only MCP tools |
-| `process-path-management` | Generic | `wes` | No edge: its catalogue is deliberately not consumed; the two share the `path_id` string only as a loose cross-reference |
+| `process-path-management` | Generic | `wes` | Upstream: `ProcessFlowDefined` / `ProcessFlowRevised` / `ProcessFlowRetired` on `warehouse.process-path-management.events` maintain the local `process_flows` copy (`ProcessFlowConsumer`, [ADR 0025](/docs/adr/0025-process-flows-from-process-path-management) stage 1); a flow shadows a locally declared `ProcessPath` of the same id (`source: flow`) |
 | `inventory-storage` | Core | `wms` | No edge: named only to contrast stock with capacity |
 
 The pattern is typical for a Core context: it depends on Supporting and Generic
-upstreams for raw facts (labor plans, location slots, orders) and adds the
+upstreams for raw facts (labor plans, location slots, orders, process flows) and adds the
 differentiating composition on top. See the
 [Context map](/docs/ddd/context-map) for the integration patterns per edge.
