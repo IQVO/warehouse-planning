@@ -32,6 +32,12 @@
       "ref": "develop"
     },
     {
+      "local": "internal/adapters/inbound/kafka/testdata/process-path-management.asyncapi.yaml",
+      "repo": "IQVO/process-path-management",
+      "path": "apis/asyncapi.yaml",
+      "ref": "develop"
+    },
+    {
       "local": "internal/adapters/inbound/kafka/testdata/workforce-management.asyncapi.yaml",
       "repo": "IQVO/workforce-management",
       "path": "apis/asyncapi.yaml",

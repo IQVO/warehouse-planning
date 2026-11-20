@@ -102,6 +102,9 @@ type world struct {
 	// features_labour_test.go.
 	ls labourState
 
+	// pf holds the ADR 0025 state (the process flows copy); see
+	// features_flow_test.go.
+	pf flowState
 	// doc holds the documentation-derived steps' state; see
 	// steps_doc_rules_test.go.
 	doc docRulesState
@@ -136,6 +139,7 @@ func (w *world) start() {
 	w.w2 = newWave2State(repo, outboxRepo, encoder, uow)
 	w.io = newInboundObservedState()
 	w.ls = newLabourState()
+	w.pf = newFlowState()
 	w.doc = newDocRulesState()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{
@@ -716,6 +720,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	registerWave2Steps(sc, w)
 	registerInboundObservedSteps(sc, w)
 	registerLabourSteps(sc, w)
+	registerFlowSteps(sc, w)
 	registerRequirementSteps(sc, w)
 	registerScenarioSteps(sc, w)
 	registerSupersedeSteps(sc, w)
