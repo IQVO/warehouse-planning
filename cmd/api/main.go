@@ -21,6 +21,7 @@
 //	INBOUND_DEMAND_CONSUMER_GROUP    RETIRED (ADR 0017's inbound-receiving source): setting it is a boot error
 //	OBSERVED_CAPACITY_CONSUMER_GROUP stable group id of the task-completion consumer (REQUIRED, ADR 0017)
 //	LABOR_STANDARD_CONSUMER_GROUP    stable group id of the labour-standard consumer on labor-performance's topic (REQUIRED, ADR 0022)
+//	PROCESS_FLOW_CONSUMER_GROUP      stable group id of the process flow consumer on process-path-management's topic (REQUIRED, ADR 0025)
 //	DEMAND_SITE_ID                   fallback site for orders without a site_id, and the site of every task completion (REQUIRED; ADR 0021)
 //	OTEL_EXPORTER_OTLP_ENDPOINT      OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY             wait after flipping /readyz before closing (default 5s)
@@ -260,6 +261,10 @@ type adapters struct {
 	// and read by plan creation.
 	laborStandards ports.LaborStandardRepository
 
+	// processFlows is the local copy of process-path-management's process
+	// flows (ADR 0025), written by the process flow consumer and read by the
+	// path capacity and the path reads (flows first).
+	processFlows ports.ProcessFlowRepository
 	// pathLister and planLister are the list-read sides of processPaths and
 	// capacityPlans (the same repositories), behind GET /process-paths and
 	// GET /capacity-plans.
@@ -329,6 +334,7 @@ func buildAdapters(ctx context.Context, databaseURL, migrationsPath string, logg
 		inboundStandards:    postgres.NewInboundStandardRepo(pool),
 		observedCapacity:    postgres.NewObservedCapacityRepo(pool),
 		laborStandards:      postgres.NewLaborStandardRepo(pool),
+		processFlows:        postgres.NewProcessFlowRepo(pool),
 		pathLister:          pathRepo,
 		planLister:          planRepo,
 		workloadForecasts:   postgres.NewWorkloadForecastRepo(pool),

@@ -14,6 +14,7 @@ import (
 	inboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/inbound/kafka"
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	outboxrelay "github.com/claudioed/warehouse-planning/internal/adapters/outbound/outbox"
+	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
@@ -30,6 +31,7 @@ const (
 	envDockGroup           = "DOCK_APPOINTMENT_CONSUMER_GROUP"
 	envObservedGroup       = "OBSERVED_CAPACITY_CONSUMER_GROUP"
 	envLaborStandardGroup  = "LABOR_STANDARD_CONSUMER_GROUP"
+	envProcessFlowGroup    = "PROCESS_FLOW_CONSUMER_GROUP"
 	envDemandSiteID        = "DEMAND_SITE_ID"
 	envOutboxRelayInterval = "OUTBOX_RELAY_INTERVAL"
 	envOutboxMaxAttempts   = "OUTBOX_MAX_ATTEMPTS"
@@ -62,10 +64,10 @@ type runtimeEnv struct {
 	demandSiteID string
 }
 
-// consumerGroupEnvs are the six Kafka consumers of cmd/api, each with the
+// consumerGroupEnvs are the seven Kafka consumers of cmd/api, each with the
 // env var that carries its STABLE group id (never a literal, never a default:
 // a default would let a locally run process join the live group).
-var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp, envDockGroup, envObservedGroup, envLaborStandardGroup}
+var consumerGroupEnvs = []string{envLaborGroup, envStorageGroup, envDemandConsumerGrp, envDockGroup, envObservedGroup, envLaborStandardGroup, envProcessFlowGroup}
 
 // loadRuntime validates the environment before anything is opened or bound:
 // DATABASE_URL, KAFKA_BROKERS, every consumer group and DEMAND_SITE_ID are
@@ -155,7 +157,7 @@ type consumerSpec struct {
 	build                 func(brokers []string, group string) runner
 }
 
-// consumerSpecs lists the six consumers; they are always on. encoder is the
+// consumerSpecs lists the seven consumers; they are always on. encoder is the
 // fan-out encoder the labor consumer's labour plan drift outboxes with.
 func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProcessCapacityConstraint, encoder ports.EventEncoder, logger *slog.Logger) []consumerSpec {
 	return []consumerSpec{
@@ -193,7 +195,25 @@ func consumerSpecs(ad adapters, rt runtimeEnv, register *usecases.RegisterProces
 			record := &usecases.RecordLaborStandard{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Standards: ad.laborStandards}
 			return inboundkafka.NewLaborStandardConsumer(brokers, group, record, logger)
 		}},
+		// ADR 0025: process-path-management's process flows, into the local
+		// copy the path capacity resolves a path id from (flows first).
+		{"process-flows", inboundkafka.ProcessPathManagementTopic, envProcessFlowGroup, func(brokers []string, group string) runner {
+			record := &usecases.RecordProcessFlow{UoW: ad.uow, ProcessedEvents: ad.processedEvents, Flows: ad.processFlows}
+			return inboundkafka.NewProcessFlowConsumer(brokers, group, record, newProcessFlowMetrics(logger), logger)
+		}},
 	}
+}
+
+// newProcessFlowMetrics builds the process flow message counter; a failure to
+// register it runs the consumer un-instrumented (a nil port is a no-op), never
+// refuses to boot.
+func newProcessFlowMetrics(logger *slog.Logger) ports.ProcessFlowMetrics {
+	metrics, err := telemetry.NewProcessFlowMetrics()
+	if err != nil {
+		logger.Warn("process flow metrics not registered; the consumer runs without its counter", "error", err)
+		return nil
+	}
+	return metrics
 }
 
 // startConsumers starts every consumer; they are always on. The readers dial

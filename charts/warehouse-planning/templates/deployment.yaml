@@ -119,6 +119,10 @@ spec:
             # integration topic): always on, group from laborStandard.
             - name: LABOR_STANDARD_CONSUMER_GROUP
               value: {{ .Values.laborStandard.consumerGroup | quote }}
+            # Process flow consumer (docs/adr/0025, process-path-management's
+            # integration topic): always on, group from processFlow.
+            - name: PROCESS_FLOW_CONSUMER_GROUP
+              value: {{ .Values.processFlow.consumerGroup | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

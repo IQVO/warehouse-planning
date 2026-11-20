@@ -1,5 +1,3 @@
-# Verbatim copy of warehouse-infra origin/develop:helm-values/warehouse-planning.yaml.
-# Refresh it from there when infra changes; tests/render_test.sh renders it.
 # warehouse-planning -- capacity planning bounded context (ProcessPathCapacity,
 # CapacityPlan + shortage detection). OLTP REST on :8080 plus, in the SAME
 # process, a transactional-outbox relay and two Kafka consumers:
@@ -76,6 +74,11 @@ dockAppointments:
 # before the chart needs it; an unknown values key is ignored by the current chart.
 laborStandard:
   consumerGroup: "warehouse-planning-labor-standards"
+# Required by warehouse-planning's chart from its ADR 0025 on: the process-flow consumer's STABLE group id
+# (warehouse.process-path-management.events: ProcessFlowDefined/Revised/Retired; PROCESS_FLOW_CONSUMER_GROUP).
+# Landed before the chart needs it; an unknown values key is ignored by the current chart.
+processFlow:
+  consumerGroup: "warehouse-planning-process-flows"
 
 # Analytics read side (ADR 0005). The projector's consumer group is a FIXED, stable id (fleet charter naming
 # `<ctx>-analytics`): a restarted pod resumes from its committed offsets, and a
