@@ -13,16 +13,18 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
 
-func newTestServer() (*httptest.Server, *memory.ProcessCapacityRepo, *memory.ProcessPathRepo) {
+func newTestServer() (*httptest.Server, *memory.ProcessCapacityRepo, *memory.ProcessFlowRepo) {
 	repo := memory.NewProcessCapacityRepo()
-	pathRepo := memory.NewProcessPathRepo()
+	flows := memory.NewProcessFlowRepo()
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: repo},
 		ProcessCapacities:                 repo,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
-		GetProcessPathCapacity:            &usecases.GetProcessPathCapacity{ProcessPaths: pathRepo, ProcessCapacities: repo, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()},
+		GetProcessPathCapacity: &usecases.GetProcessPathCapacity{
+			ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: repo,
+			StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo(),
+		},
 	}
-	return httptest.NewServer(inboundhttp.NewRouter(s)), repo, pathRepo
+	return httptest.NewServer(inboundhttp.NewRouter(s)), repo, flows
 }
 
 // doRequest issues req and returns the status code, headers and fully

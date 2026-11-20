@@ -16,7 +16,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // Window coverage against a REAL Postgres (docs/adr/0003): FindCovering's
@@ -187,15 +187,17 @@ type liveStack struct {
 func newLiveStack(t *testing.T) *liveStack {
 	t.Helper()
 	pool := newMigratedPool(t)
-	pcs, paths := postgres.NewProcessCapacityRepo(pool), memory.NewProcessPathRepo()
+	pcs, flows := postgres.NewProcessCapacityRepo(pool), memory.NewProcessFlowRepo()
 	getCap := &usecases.GetProcessPathCapacity{
-		ProcessPaths: paths, ProcessCapacities: pcs,
+		ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs,
 		StationStandards: postgres.NewStationStandardRepo(pool), Tally: postgres.NewStorageTallyRepo(pool),
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(context.Background(), usecases.RegisterProcessPathCommand{
-		ID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Steps: []processpath.ProcessType{"PICK", "REBIN", "PACK"},
-	}); err != nil {
-		t.Fatalf("register path: %v", err)
+	sf, ferr := processflow.New(processflow.Params{FlowID: "pick-rebin-pack", Name: "Pick-Rebin-Pack", Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}, {PathID: "REBIN", ProcessType: processflow.Rebin}, {PathID: "PACK", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow: %v", ferr)
+	}
+	if _, err := flows.Record(context.Background(), sf); err != nil {
+		t.Fatalf("seed flow: %v", err)
 	}
 	return &liveStack{
 		pool: pool, pcs: pcs, register: &usecases.RegisterProcessCapacityConstraint{Repo: pcs}, getCap: getCap,

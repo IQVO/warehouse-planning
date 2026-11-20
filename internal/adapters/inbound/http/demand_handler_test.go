@@ -19,23 +19,22 @@ import (
 type demandServer struct {
 	*httptest.Server
 	orders *memory.OrderDemandRepo
-	paths  *memory.ProcessPathRepo
+	flows  *memory.ProcessFlowRepo
 }
 
 // newDemandServer wires the whole REST surface over in-memory adapters,
 // demand read model included (the way cmd/api does).
 func newDemandServer(t *testing.T) *demandServer {
 	t.Helper()
-	pcs, paths, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
+	pcs, flows, plans, ob := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo(), memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	orders := memory.NewOrderDemandRepo()
 	uow := memory.NewUnitOfWork(pcs, plans, ob)
 	enc := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: memory.NewStationStandardRepo(), Tally: memory.NewStorageTallyRepo()}
 	expected := &usecases.GetExpectedDemand{Demand: orders}
 	s := &inboundhttp.Server{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcs},
 		ProcessCapacities:                 pcs,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: plans, Outbox: ob, Encoder: enc, UnitOfWork: uow, Demand: expected,
@@ -46,7 +45,7 @@ func newDemandServer(t *testing.T) *demandServer {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return &demandServer{Server: srv, orders: orders, paths: paths}
+	return &demandServer{Server: srv, orders: orders, flows: flows}
 }
 
 var (
@@ -159,7 +158,7 @@ func TestGetDemand_RouteDoesNotExistWithoutTheDemandReadModel(t *testing.T) {
 
 func seedDemandPlanFixture(t *testing.T, srv *demandServer) {
 	t.Helper()
-	seedPlanFixture(t, srv.Server, srv.paths)
+	seedPlanFixture(t, srv.Server, srv.flows)
 }
 
 func seedOrdersInPlanWindow(t *testing.T, srv *demandServer, n int) {

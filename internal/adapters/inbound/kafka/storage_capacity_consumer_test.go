@@ -13,7 +13,7 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/tally"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 var (
@@ -183,7 +183,7 @@ func TestStorageCapacityConsumer_StationTallyFeedsPathCapacityByComposition(t *t
 	}
 
 	window, start, end := processcapacityWindow(t)
-	pcs, paths, standards := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewStationStandardRepo()
+	pcs, flows, standards := memory.NewProcessCapacityRepo(), memory.NewProcessFlowRepo(), memory.NewStationStandardRepo()
 	pack := processcapacity.NewProcessCapacity("PACK", "SIM1", window)
 	rate, err := processcapacity.NewCapacityRate(2500, processcapacity.UnitPackage, time.Hour)
 	if err != nil {
@@ -195,9 +195,11 @@ func TestStorageCapacityConsumer_StationTallyFeedsPathCapacityByComposition(t *t
 	if err := pcs.Save(ctx, pack); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(ctx, usecases.RegisterProcessPathCommand{
-		ID: "pack-only", Name: "Pack only", Steps: []processpath.ProcessType{"PACK"},
-	}); err != nil {
+	packFlow, err := processflow.New(processflow.Params{FlowID: "pack-only", Name: "Pack only", Stages: []processflow.Stage{{PathID: "pack-only", ProcessType: processflow.Pack}}, Status: processflow.StatusActive, Version: 1, UpdatedAt: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flows.Record(ctx, packFlow); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := (&usecases.DeclareStationStandard{Repo: standards}).Handle(ctx, usecases.DeclareStationStandardCommand{
@@ -207,7 +209,7 @@ func TestStorageCapacityConsumer_StationTallyFeedsPathCapacityByComposition(t *t
 	}
 
 	one := 1.0
-	got, err := (&usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pcs, StationStandards: standards, Tally: h.tally}).
+	got, err := (&usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pcs, StationStandards: standards, Tally: h.tally}).
 		Handle(ctx, usecases.GetProcessPathCapacityCommand{
 			ProcessPathID: "pack-only", Location: "SIM1", WindowStart: start, WindowEnd: end, PackagesPerOrder: &one,
 		})

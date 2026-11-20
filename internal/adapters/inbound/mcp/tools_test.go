@@ -66,7 +66,7 @@ func registerAndCheckPath(t *testing.T, h *harness, want featureExpectation) {
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("REBIN", "FC01", 2500, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PACK", "FC01", 1800, "PACKAGE"))
 
-	h.seedPath(t, h.paths, "tote-path", []string{"PICK", "REBIN", "PACK"})
+	h.seedPath(t, h.flows, "tote-path", []string{"PICK", "REBIN", "PACK"})
 
 	pathCap := h.ok(t, "get_process_path_capacity", map[string]any{
 		"id": "tote-path", "location": "FC01", "window_start": winStart, "window_end": winEnd,
@@ -179,7 +179,7 @@ func TestGetEffectiveProcessCapacity(t *testing.T) {
 func TestErrorsSurfaceAsToolErrors(t *testing.T) {
 	h := newHarness(t)
 	h.seedSection43(t, "FC01", "tote-path")
-	h.seedPath(t, h.paths, "pick-only", []string{"PICK"})
+	h.seedPath(t, h.flows, "pick-only", []string{"PICK"})
 
 	win := func(extra map[string]any) map[string]any {
 		m := map[string]any{"process_type": "PICK", "location": "FC01", "window_start": winStart, "window_end": winEnd}

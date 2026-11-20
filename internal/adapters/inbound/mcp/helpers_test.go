@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -12,7 +13,7 @@ import (
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 const (
@@ -29,7 +30,7 @@ type harness struct {
 	// tally is the facility-layout tally behind the deps, so tests can seed
 	// storage positions / stations the way the facility consumer would.
 	tally *memory.StorageTallyRepo
-	paths *memory.ProcessPathRepo
+	flows *memory.ProcessFlowRepo
 }
 
 func newDeps() (inboundmcp.Deps, *memory.OutboxRepo) {
@@ -37,15 +38,15 @@ func newDeps() (inboundmcp.Deps, *memory.OutboxRepo) {
 	return deps, outboxRepo
 }
 
-func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo, *memory.ProcessPathRepo) {
+func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo, *memory.ProcessFlowRepo) {
 	standards, tallyRepo := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
 	inboundStandards := memory.NewInboundStandardRepo()
 	pc := memory.NewProcessCapacityRepo()
-	paths := memory.NewProcessPathRepo()
+	flows := memory.NewProcessFlowRepo()
 	plans, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	uow := memory.NewUnitOfWork(pc, plans, outboxRepo)
 	encoder := outboundkafka.NewEncoder()
-	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: paths, ProcessCapacities: pc, StationStandards: standards, Tally: tallyRepo}
+	pathCapacity := &usecases.GetProcessPathCapacity{ProcessPaths: &usecases.FlowPathFinder{Flows: flows}, ProcessCapacities: pc, StationStandards: standards, Tally: tallyRepo}
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pc},
 		ProcessCapacities:                 pc,
@@ -62,18 +63,22 @@ func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo, 
 		DeclareInboundLabourStandard: &usecases.DeclareInboundLabourStandard{Repo: inboundStandards},
 		GetInboundDemand:             &usecases.GetInboundDemand{Appointments: memory.NewInboundAppointmentRepo(), Standards: inboundStandards},
 		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: plans, Observed: memory.NewObservedCapacityRepo()},
-	}, outboxRepo, tallyRepo, paths
+	}, outboxRepo, tallyRepo, flows
 }
 
-// seedPath declares a local ProcessPath directly through the use case: the
-// register_process_path MCP tool retired with ADR 0025 stage 2.
-func (h *harness) seedPath(t *testing.T, paths *memory.ProcessPathRepo, id string, steps []string) {
+// seedPath records the ACTIVE flow a path id resolves to (ADR 0025 stage 3:
+// flows are the only source); each stage's path is its own process type.
+func (h *harness) seedPath(t *testing.T, flows *memory.ProcessFlowRepo, id string, steps []string) {
 	t.Helper()
-	typed := make([]processpath.ProcessType, 0, len(steps))
+	stages := make([]processflow.Stage, 0, len(steps))
 	for _, s := range steps {
-		typed = append(typed, processpath.ProcessType(s))
+		stages = append(stages, processflow.Stage{PathID: s, ProcessType: processflow.ProcessType(s)})
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: id, Steps: typed}); err != nil {
+	f, err := processflow.New(processflow.Params{FlowID: id, Name: id, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flows.Record(context.Background(), f); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -98,8 +103,8 @@ func connectSession(t *testing.T, deps inboundmcp.Deps) *sdk.ClientSession {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	deps, outboxRepo, tallyRepo, paths := newStack()
-	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo, paths: paths}
+	deps, outboxRepo, tallyRepo, flows := newStack()
+	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo, flows: flows}
 }
 
 // call invokes a tool and fails the test on a TRANSPORT/protocol error;
@@ -163,7 +168,7 @@ func (h *harness) seedSection43(t *testing.T, location, pathID string) {
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PICK", location, 4000, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("REBIN", location, 2500, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PACK", location, 1800, "PACKAGE"))
-	h.seedPath(t, h.paths, pathID, []string{"PICK", "REBIN", "PACK"})
+	h.seedPath(t, h.flows, pathID, []string{"PICK", "REBIN", "PACK"})
 }
 
 func planArgs(location, pathID string, demand float64) map[string]any {

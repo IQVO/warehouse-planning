@@ -43,9 +43,9 @@ Feature: Process flows from process-path-management
   Scenario: An unknown flow is absent
     Then the local copy holds no flow "never-published"
 
-  # docs/adr/0025 decisions 2 and 3: the path capacity and the path reads
-  # resolve a path id from an ACTIVE flow first; a local path without a flow
-  # keeps working; every read says which one it used.
+  # docs/adr/0025 decisions 2 and 3, stage 3: the path capacity and the path
+  # reads resolve a path id from its ACTIVE flow; the local declaration is
+  # gone, so every read carries source flow.
 
   Scenario: A flow with no local path is read by id and listed with source flow
     Given process-path-management published ProcessFlowDefined "single-unit" named "Single unit" at version 1 with stages PICK, PACK
@@ -55,32 +55,22 @@ Feature: Process flows from process-path-management
     When I list the process paths
     Then the listed process paths are "single-unit:flow"
 
-  Scenario: A locally declared path is read with source local
-    When I register a process path "tote-path" named "Tote path" with steps PICK, REBIN, PACK
-    And I ask for process path "tote-path"
-    Then the response status is 200
-    And the process path comes from a local source with steps PICK, REBIN, PACK
-
   Scenario: An id neither source knows is a 404
     When I ask for process path "nowhere-path"
     Then the response status is 404
 
-  Scenario: A flow wins over a local path with the same id, and the list interleaves both by id
-    Given process-path-management published ProcessFlowDefined "pick-rebin-pack" named "Pick-Rebin-Pack" at version 1 with stages PICK, PACK
+  Scenario: The list shows the ACTIVE flows ordered by id, RETIRED never
+    Given process-path-management published ProcessFlowDefined "aa-flow" named "AA flow" at version 1 with stages PICK
     And process-path-management published ProcessFlowDefined "zz-flow" named "ZZ flow" at version 1 with stages SLAM
-    When I register a process path "pick-rebin-pack" named "Local Pick-Rebin-Pack" with steps PICK, REBIN, PACK
-    And I register a process path "aa-local" named "AA local" with steps PICK
-    And I ask for process path "pick-rebin-pack"
-    Then the process path comes from a flow source with steps PICK, PACK
+    And process-path-management published ProcessFlowRetired "mm-flow" named "MM flow" at version 2 with stages PACK
     When I list the process paths
-    Then the listed process paths are "aa-local:local, pick-rebin-pack:flow, zz-flow:flow"
+    Then the listed process paths are "aa-flow:flow, zz-flow:flow"
 
-  Scenario: A retired flow stops resolving and the local path of that id is used again
+  Scenario: A retired flow stops resolving and the id is a 404
     Given process-path-management published ProcessFlowDefined "pick-rebin-pack" named "Pick-Rebin-Pack" at version 1 with stages PICK, PACK
-    And I register a process path "pick-rebin-pack" named "Local Pick-Rebin-Pack" with steps PICK, REBIN, PACK
     When process-path-management published ProcessFlowRetired "pick-rebin-pack" named "Pick-Rebin-Pack" at version 2 with stages PICK, PACK
     And I ask for process path "pick-rebin-pack"
-    Then the process path comes from a local source with steps PICK, REBIN, PACK
+    Then the response status is 404
 
   Scenario: A retired flow with no local path is a 404
     Given process-path-management published ProcessFlowRetired "old-flow" named "Old flow" at version 3 with stages PICK, PACK
@@ -108,9 +98,3 @@ Feature: Process flows from process-path-management
     And I look up the capacity of process path "single-unit" at "PATH-ZONE-A" for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z" with units_per_order 2.5 and packages_per_order 1
     Then the process path capacity response reports 1000 ORDER per HOUR bound by REBIN
 
-  Scenario: A local path keeps working and its capacity says source local
-    Given I register a LABOR constraint of 4000 UNIT per HOUR for PICK at PATH-ZONE-A for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z"
-    And I register a process path "local-pick" named "Local pick" with steps PICK
-    When I look up the capacity of process path "local-pick" at "PATH-ZONE-A" for the window "2026-10-05T08:00:00Z" to "2026-10-05T09:00:00Z" with units_per_order 2.5 and packages_per_order 1
-    Then the response status is 200
-    And the process path capacity response states source "local"

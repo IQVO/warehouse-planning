@@ -24,8 +24,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/warehouse-planning/internal/application/usecases"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
+	"github.com/claudioed/warehouse-planning/internal/domain/processflow"
 )
 
 // The end-to-end proof that the shipped binary is really wired: the test boots
@@ -484,12 +483,16 @@ func (w *world) seedLocalPath(t *testing.T, id, name string, steps ...string) {
 		t.Fatalf("seed pool: %v", err)
 	}
 	defer pool.Close()
-	typed := make([]processpath.ProcessType, 0, len(steps))
+	stages := make([]processflow.Stage, 0, len(steps))
 	for _, s := range steps {
-		typed = append(typed, processpath.ProcessType(s))
+		stages = append(stages, processflow.Stage{PathID: s, ProcessType: processflow.ProcessType(s)})
 	}
-	if _, err := (&usecases.RegisterProcessPath{Repo: postgres.NewProcessPathRepo(pool)}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: name, Steps: typed}); err != nil {
-		t.Fatalf("seed path %s: %v", id, err)
+	flow, ferr := processflow.New(processflow.Params{FlowID: id, Name: name, Stages: stages, Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC()})
+	if ferr != nil {
+		t.Fatalf("seed flow %s: %v", id, ferr)
+	}
+	if _, err := postgres.NewProcessFlowRepo(pool).Record(context.Background(), flow); err != nil {
+		t.Fatalf("seed flow %s: %v", id, err)
 	}
 }
 
@@ -734,14 +737,14 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 // never a Postgres 22021 -> 500, and nothing is written.
 func phaseNUL(t *testing.T, s *service, w *world) {
 	t.Helper()
-	before := w.db.count(`SELECT count(*) FROM process_paths`)
+	before := w.db.count(`SELECT count(*) FROM process_flows`)
 	// The fleet request guard rejects a NUL body before any route (and before
 	// the retired 410 handler) runs; nothing is written either way.
 	assertProblem(t, s.call(http.MethodPost, "/process-paths", `{"id":"p-nul","name":"a\u0000b","steps":["PICK"]}`, http.StatusBadRequest), "malformed-request-body")
 	assertProblem(t, s.call(http.MethodGet, "/capacity-plans/pl%00an", "", http.StatusNotFound), "resource-not-found")
 	assertProblem(t, s.call(http.MethodGet, "/storage-capacity?location=WH%001", "", http.StatusBadRequest), "malformed-request-query")
-	if after := w.db.count(`SELECT count(*) FROM process_paths`); after != before {
-		t.Fatalf("process_paths %d -> %d: a NUL request wrote a row", before, after)
+	if after := w.db.count(`SELECT count(*) FROM process_flows`); after != before {
+		t.Fatalf("process_flows %d -> %d: a NUL request wrote a row", before, after)
 	}
 }
 

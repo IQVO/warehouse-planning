@@ -12,56 +12,9 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/ports"
 	"github.com/claudioed/warehouse-planning/internal/domain/capacityplan"
 	"github.com/claudioed/warehouse-planning/internal/domain/processcapacity"
-	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
-var (
-	_ ports.ProcessPathLister  = (*memory.ProcessPathRepo)(nil)
-	_ ports.CapacityPlanLister = (*memory.CapacityPlanRepo)(nil)
-)
-
-func listPath(t *testing.T, id string, steps ...processpath.ProcessType) processpath.ProcessPath {
-	t.Helper()
-	p, err := processpath.NewProcessPath(id, "name of "+id, steps)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
-func TestProcessPathRepo_ListOrderedByIDAndNonNilWhenEmpty(t *testing.T) {
-	ctx := context.Background()
-	repo := memory.NewProcessPathRepo()
-
-	got, err := repo.ListPage(ctx, nil, 100)
-	if err != nil || got == nil || len(got) != 0 {
-		t.Fatalf("List on empty = %#v, %v; want empty non-nil slice, nil", got, err)
-	}
-
-	for _, p := range []processpath.ProcessPath{
-		listPath(t, "pick-pack", "PICK", "PACK"),
-		listPath(t, "a-first", "PICK"),
-		listPath(t, "pick-rebin-pack", "PICK", "REBIN", "PACK"),
-	} {
-		if err := repo.Save(ctx, p); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err = repo.ListPage(ctx, nil, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ids []string
-	for _, p := range got {
-		ids = append(ids, p.ID())
-	}
-	if fmt.Sprint(ids) != "[a-first pick-pack pick-rebin-pack]" {
-		t.Fatalf("ids = %v, want ordered by id", ids)
-	}
-	if steps := got[2].Steps(); fmt.Sprint(steps) != "[PICK REBIN PACK]" {
-		t.Errorf("steps order lost: %v", steps)
-	}
-}
+var _ ports.CapacityPlanLister = (*memory.CapacityPlanRepo)(nil)
 
 func listPlan(t *testing.T, id, location string, createdAt time.Time) *capacityplan.CapacityPlan {
 	t.Helper()
@@ -153,34 +106,6 @@ func TestCapacityPlanRepo_ListRecentTiesBrokenByIDDescendingAndReturnsCopies(t *
 	stored, _ := repo.FindByID(ctx, "plan-c")
 	if stored.Status() != capacityplan.StatusDraft {
 		t.Errorf("stored status = %s after mutating a listed copy, want DRAFT", stored.Status())
-	}
-}
-
-func TestProcessPathRepo_ListPageWalksEveryPageOnce(t *testing.T) {
-	ctx := context.Background()
-	repo := memory.NewProcessPathRepo()
-	for i := 0; i < 7; i++ {
-		if err := repo.Save(ctx, listPath(t, fmt.Sprintf("path-%02d", i), "PICK")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var seen []string
-	var after *pagecursor.Cursor
-	for {
-		rows, err := repo.ListPage(ctx, after, 3)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(rows) == 0 {
-			break
-		}
-		for _, p := range rows {
-			seen = append(seen, p.ID())
-		}
-		after = &pagecursor.Cursor{Sort: rows[len(rows)-1].ID(), ID: rows[len(rows)-1].ID()}
-	}
-	if len(seen) != 7 || seen[0] != "path-00" || seen[6] != "path-06" {
-		t.Fatalf("walk = %v", seen)
 	}
 }
 
