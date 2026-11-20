@@ -42,7 +42,7 @@ func newForecastPlanServer(t *testing.T) (*httptest.Server, *memory.WorkloadFore
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	seedPlanFixture(t, srv)
+	seedPlanFixture(t, srv, paths)
 	return srv, forecasts
 }
 

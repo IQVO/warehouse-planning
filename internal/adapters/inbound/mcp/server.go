@@ -32,7 +32,7 @@ func NewServer(deps Deps) *mcp.Server {
 		&mcp.ServerOptions{
 			Instructions: "Warehouse capacity planning: register process capacity constraints " +
 				"(register_process_capacity_constraint) and read the effective rate " +
-				"(get_effective_process_capacity); declare a process path (register_process_path) and read " +
+				"(get_effective_process_capacity); read " +
 				"its end-to-end ORDER/HOUR capacity and bottleneck step (get_process_path_capacity); evaluate " +
 				"assigned demand against it with create_capacity_plan (DRAFT), then publish_capacity_plan " +
 				"(once only) and read it back with get_capacity_plan. Read the orders order-management expects at a site " +

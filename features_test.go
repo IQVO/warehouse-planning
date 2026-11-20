@@ -27,6 +27,7 @@ import (
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 // TestFeatures runs every Gherkin feature under features/ against a
@@ -58,6 +59,10 @@ func TestFeatures(t *testing.T) {
 // repository, plus whatever the last HTTP call returned.
 type world struct {
 	server *httptest.Server
+	// paths is the local ProcessPath repo behind the server: ADR 0025 stage 2
+	// retired POST /process-paths (always 410), so the Given steps seed the
+	// local declaration directly through the use case.
+	paths *memory.ProcessPathRepo
 
 	status int
 	body   []byte
@@ -115,6 +120,7 @@ type world struct {
 func (w *world) start() {
 	repo := memory.NewProcessCapacityRepo()
 	pathRepo := memory.NewProcessPathRepo()
+	w.paths = pathRepo
 	planRepo, outboxRepo := memory.NewCapacityPlanRepo(), memory.NewOutboxRepo()
 	standards, tallyRepo, processed := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo(), memory.NewProcessedEventRepo()
 	uow := memory.NewUnitOfWork(repo, planRepo, outboxRepo)
@@ -284,15 +290,12 @@ func (w *world) iLookUpTheEffectiveCapacity(ctx context.Context, processType, lo
 // comma-separated step list as it appears in the Gherkin step text.
 func (w *world) iRegisterAProcessPath(ctx context.Context, id, name, stepsRaw string) error {
 	rawSteps := strings.Split(stepsRaw, ",")
-	steps := make([]string, 0, len(rawSteps))
+	steps := make([]processpath.ProcessType, 0, len(rawSteps))
 	for _, s := range rawSteps {
-		steps = append(steps, strings.TrimSpace(s))
+		steps = append(steps, processpath.ProcessType(strings.TrimSpace(s)))
 	}
-	return w.record(ctx, http.MethodPost, "/process-paths", map[string]any{
-		"id":    id,
-		"name":  name,
-		"steps": steps,
-	})
+	_, err := (&usecases.RegisterProcessPath{Repo: w.paths}).Handle(ctx, usecases.RegisterProcessPathCommand{ID: id, Name: name, Steps: steps})
+	return err
 }
 
 func (w *world) iLookUpTheProcessPathCapacity(ctx context.Context, pathID, location, windowStart, windowEnd string, unitsPerOrder, packagesPerOrder float64) error {

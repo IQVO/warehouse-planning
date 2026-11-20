@@ -12,6 +12,7 @@ import (
 	outboundkafka "github.com/claudioed/warehouse-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/warehouse-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
+	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
 const (
@@ -28,14 +29,15 @@ type harness struct {
 	// tally is the facility-layout tally behind the deps, so tests can seed
 	// storage positions / stations the way the facility consumer would.
 	tally *memory.StorageTallyRepo
+	paths *memory.ProcessPathRepo
 }
 
 func newDeps() (inboundmcp.Deps, *memory.OutboxRepo) {
-	deps, outboxRepo, _ := newStack()
+	deps, outboxRepo, _, _ := newStack()
 	return deps, outboxRepo
 }
 
-func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo) {
+func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo, *memory.ProcessPathRepo) {
 	standards, tallyRepo := memory.NewStationStandardRepo(), memory.NewStorageTallyRepo()
 	inboundStandards := memory.NewInboundStandardRepo()
 	pc := memory.NewProcessCapacityRepo()
@@ -47,7 +49,6 @@ func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo) 
 	return inboundmcp.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pc},
 		ProcessCapacities:                 pc,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: paths},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan:                &usecases.CreateCapacityPlan{PathCapacity: pathCapacity, Plans: plans, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
 		PublishCapacityPlan:               &usecases.PublishCapacityPlan{Plans: plans, Outbox: outboxRepo, Encoder: encoder, UnitOfWork: uow},
@@ -61,7 +62,20 @@ func newStack() (inboundmcp.Deps, *memory.OutboxRepo, *memory.StorageTallyRepo) 
 		DeclareInboundLabourStandard: &usecases.DeclareInboundLabourStandard{Repo: inboundStandards},
 		GetInboundDemand:             &usecases.GetInboundDemand{Appointments: memory.NewInboundAppointmentRepo(), Standards: inboundStandards},
 		GetCapacityPlanVariance:      &usecases.GetCapacityPlanVariance{Plans: plans, Observed: memory.NewObservedCapacityRepo()},
-	}, outboxRepo, tallyRepo
+	}, outboxRepo, tallyRepo, paths
+}
+
+// seedPath declares a local ProcessPath directly through the use case: the
+// register_process_path MCP tool retired with ADR 0025 stage 2.
+func (h *harness) seedPath(t *testing.T, paths *memory.ProcessPathRepo, id string, steps []string) {
+	t.Helper()
+	typed := make([]processpath.ProcessType, 0, len(steps))
+	for _, s := range steps {
+		typed = append(typed, processpath.ProcessType(s))
+	}
+	if _, err := (&usecases.RegisterProcessPath{Repo: paths}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: id, Steps: typed}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func connectSession(t *testing.T, deps inboundmcp.Deps) *sdk.ClientSession {
@@ -84,8 +98,8 @@ func connectSession(t *testing.T, deps inboundmcp.Deps) *sdk.ClientSession {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	deps, outboxRepo, tallyRepo := newStack()
-	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo}
+	deps, outboxRepo, tallyRepo, paths := newStack()
+	return &harness{session: connectSession(t, deps), outbox: outboxRepo, deps: deps, tally: tallyRepo, paths: paths}
 }
 
 // call invokes a tool and fails the test on a TRANSPORT/protocol error;
@@ -149,7 +163,7 @@ func (h *harness) seedSection43(t *testing.T, location, pathID string) {
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PICK", location, 4000, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("REBIN", location, 2500, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PACK", location, 1800, "PACKAGE"))
-	h.ok(t, "register_process_path", map[string]any{"id": pathID, "name": "Tote path", "steps": []string{"PICK", "REBIN", "PACK"}})
+	h.seedPath(t, h.paths, pathID, []string{"PICK", "REBIN", "PACK"})
 }
 
 func planArgs(location, pathID string, demand float64) map[string]any {

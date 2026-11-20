@@ -17,7 +17,7 @@ import (
 
 // newFlowPathServer wires the path reads the way cmd/api does (docs/adr/0025):
 // the flow-first finder and lister over a local repo and a flows copy.
-func newFlowPathServer(t *testing.T) (*httptest.Server, *memory.ProcessFlowRepo) {
+func newFlowPathServer(t *testing.T) (*httptest.Server, *memory.ProcessFlowRepo, *memory.ProcessPathRepo) {
 	t.Helper()
 	capRepo, pathRepo, flows := memory.NewProcessCapacityRepo(), memory.NewProcessPathRepo(), memory.NewProcessFlowRepo()
 	finder := &usecases.FlowFirstPathFinder{Flows: flows, Local: pathRepo}
@@ -33,7 +33,7 @@ func newFlowPathServer(t *testing.T) (*httptest.Server, *memory.ProcessFlowRepo)
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return srv, flows
+	return srv, flows, pathRepo
 }
 
 func putFlow(t *testing.T, flows *memory.ProcessFlowRepo, id string, version int64, status processflow.Status, types ...processflow.ProcessType) {
@@ -70,16 +70,10 @@ func decodePath(t *testing.T, body []byte) pathView {
 	return p
 }
 
-func seedFlowAndLocalPaths(t *testing.T, srv *httptest.Server, flows *memory.ProcessFlowRepo) {
+func seedFlowAndLocalPaths(t *testing.T, srv *httptest.Server, flows *memory.ProcessFlowRepo, paths *memory.ProcessPathRepo) {
 	t.Helper()
-	status, _, body := registerProcessPath(t, srv, "local-only", "Local only", []string{"PICK"})
-	if status != http.StatusCreated {
-		t.Fatalf("register: %d %s", status, body)
-	}
-	if p := decodePath(t, body); p.Source != "local" {
-		t.Fatalf("POST body source = %q, want local", p.Source)
-	}
-	registerProcessPath(t, srv, "both", "Local both", []string{"PICK", "PACK"})
+	seedLocalPath(t, paths, "local-only", "Local only", []string{"PICK"})
+	seedLocalPath(t, paths, "both", "Local both", []string{"PICK", "PACK"})
 	putFlow(t, flows, "both", 1, processflow.StatusActive, processflow.Pick, processflow.Rebin, processflow.Pack)
 	putFlow(t, flows, "flow-only", 1, processflow.StatusActive, processflow.Dispatch)
 	putFlow(t, flows, "gone", 2, processflow.StatusRetired, processflow.Pick)
@@ -116,8 +110,8 @@ func requireListedPaths(t *testing.T, srv *httptest.Server, want []string) {
 }
 
 func TestHandler_ProcessPaths_SourceOnEveryRead(t *testing.T) {
-	srv, flows := newFlowPathServer(t)
-	seedFlowAndLocalPaths(t, srv, flows)
+	srv, flows, pathRepo := newFlowPathServer(t)
+	seedFlowAndLocalPaths(t, srv, flows, pathRepo)
 
 	// By id: a flow wins, a flow with no local path is a 200, local keeps working.
 	requirePathByID(t, srv, "both", pathView{ID: "both", Name: "Flow both", Steps: []string{"PICK", "REBIN", "PACK"}, Source: "flow"})
@@ -134,9 +128,9 @@ func TestHandler_ProcessPaths_SourceOnEveryRead(t *testing.T) {
 }
 
 func TestHandler_ProcessPathCapacity_ReportsTheSourceOfThePath(t *testing.T) {
-	srv, flows := newFlowPathServer(t)
+	srv, flows, pathRepo := newFlowPathServer(t)
 	registerPickRebinPackCapacities(t, srv, "PATH-ZONE-A")
-	registerProcessPath(t, srv, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
+	seedLocalPath(t, pathRepo, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
 	units, packages := 2.5, 1.0
 	source := func() string {
 		status, _, body := getProcessPathCapacity(t, srv, "pick-rebin-pack", "PATH-ZONE-A", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z", &units, &packages)
@@ -167,7 +161,7 @@ func TestHandler_ProcessPathCapacity_ReportsTheSourceOfThePath(t *testing.T) {
 // A Server built without the GetProcessPath use case behaves exactly as before:
 // the by-id route is not registered.
 func TestHandler_GetProcessPathRouteIsAbsentWithoutTheUseCase(t *testing.T) {
-	srv, _ := newTestServer()
+	srv, _, _ := newTestServer()
 	defer srv.Close()
 	if status, _, _ := getPath(t, srv, "/process-paths/anything"); status != http.StatusNotFound && status != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want the router's 404/405", status)

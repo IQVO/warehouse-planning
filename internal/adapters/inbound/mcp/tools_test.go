@@ -66,13 +66,7 @@ func registerAndCheckPath(t *testing.T, h *harness, want featureExpectation) {
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("REBIN", "FC01", 2500, "UNIT"))
 	h.ok(t, "register_process_capacity_constraint", constraintArgs("PACK", "FC01", 1800, "PACKAGE"))
 
-	path := h.ok(t, "register_process_path", map[string]any{"id": "tote-path", "name": "Tote path", "steps": []string{"PICK", "REBIN", "PACK"}})
-	if path["source"] != "local" {
-		t.Fatalf("register_process_path source = %v, want local", path["source"])
-	}
-	if path["id"] != "tote-path" || !reflect.DeepEqual(path["steps"], []any{"PICK", "REBIN", "PACK"}) {
-		t.Fatalf("path = %v", path)
-	}
+	h.seedPath(t, h.paths, "tote-path", []string{"PICK", "REBIN", "PACK"})
 
 	pathCap := h.ok(t, "get_process_path_capacity", map[string]any{
 		"id": "tote-path", "location": "FC01", "window_start": winStart, "window_end": winEnd,
@@ -185,7 +179,7 @@ func TestGetEffectiveProcessCapacity(t *testing.T) {
 func TestErrorsSurfaceAsToolErrors(t *testing.T) {
 	h := newHarness(t)
 	h.seedSection43(t, "FC01", "tote-path")
-	h.ok(t, "register_process_path", map[string]any{"id": "pick-only", "name": "Pick only", "steps": []string{"PICK"}})
+	h.seedPath(t, h.paths, "pick-only", []string{"PICK"})
 
 	win := func(extra map[string]any) map[string]any {
 		m := map[string]any{"process_type": "PICK", "location": "FC01", "window_start": winStart, "window_end": winEnd}
@@ -223,7 +217,6 @@ func TestErrorsSurfaceAsToolErrors(t *testing.T) {
 		{"negative quantity", "register_process_capacity_constraint", constraintArgs("PICK", "FC01", -1, "UNIT"), "negative-quantity"},
 		{"unit mismatch", "register_process_capacity_constraint", constraintArgs("PICK", "FC01", 1, "PACKAGE"), "unit-mismatch"},
 		{"nothing registered", "get_effective_process_capacity", win(map[string]any{"location": "NOWHERE"}), "process-capacity-not-found"},
-		{"empty steps", "register_process_path", map[string]any{"id": "x", "name": "x", "steps": []string{}}, "empty-process-path-steps"},
 		{"unknown path capacity", "get_process_path_capacity", pathWin("nowhere-path"), "process-path-not-found"},
 		{"missing step capacity", "get_process_path_capacity", func() map[string]any {
 			m := pathWin("tote-path")

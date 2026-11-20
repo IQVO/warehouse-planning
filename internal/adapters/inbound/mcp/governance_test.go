@@ -32,7 +32,6 @@ func callParams(name string, args map[string]any) *sdk.CallToolParams {
 var wantTools = map[string]bool{ // name -> read-only
 	"register_process_capacity_constraint": false,
 	"get_effective_process_capacity":       true,
-	"register_process_path":                false,
 	"get_process_path_capacity":            true,
 	"create_capacity_plan":                 false,
 	"publish_capacity_plan":                false,
@@ -51,9 +50,10 @@ var wantTools = map[string]bool{ // name -> read-only
 // get_storage_capacity, so it became 10; demand ingestion (ADR 0004) adds
 // get_expected_demand, so it became 11; inbound labour demand and observed
 // capacity (ADR 0017) add declare_inbound_labour_standard, get_inbound_demand
-// and get_capacity_plan_variance, so it is now 14. Raising it is a deliberate,
+// and get_capacity_plan_variance, so it was 14; ADR 0025 stage 2 retired
+// register_process_path, so it is now 13. Raising it is a deliberate,
 // reviewed act: TestToolSurface still pins the exact curated set.
-const maxTools = 14
+const maxTools = 13
 
 // The MCP governance charter's mechanical gate: the advertised tool set is
 // exactly the curated one, within the tool budget, snake_case verb_noun,

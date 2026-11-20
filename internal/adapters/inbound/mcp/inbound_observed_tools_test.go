@@ -26,7 +26,7 @@ func toolNames(t *testing.T, session *sdk.ClientSession) map[string]bool {
 }
 
 func inboundObservedDeps() (inboundmcp.Deps, *memory.InboundAppointmentRepo) {
-	deps, _, _ := newStack()
+	deps, _, _, _ := newStack()
 	appointments, standards := memory.NewInboundAppointmentRepo(), memory.NewInboundStandardRepo()
 	deps.DeclareInboundLabourStandard = &usecases.DeclareInboundLabourStandard{Repo: standards}
 	deps.GetInboundDemand = &usecases.GetInboundDemand{Appointments: appointments, Standards: standards}
@@ -42,7 +42,7 @@ func TestInboundObservedTools_ListedOnlyWhenWired(t *testing.T) {
 			t.Errorf("tool %s not advertised when wired", want)
 		}
 	}
-	bare, _, _ := newStack()
+	bare, _, _, _ := newStack()
 	bare.DeclareInboundLabourStandard, bare.GetInboundDemand, bare.GetCapacityPlanVariance = nil, nil, nil
 	unwired := toolNames(t, connectSession(t, bare))
 	for _, name := range []string{"declare_inbound_labour_standard", "get_inbound_demand", "get_capacity_plan_variance"} {

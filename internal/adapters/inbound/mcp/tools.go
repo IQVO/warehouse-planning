@@ -21,7 +21,6 @@ type Deps struct {
 	// is no GetEffectiveProcessCapacity use case.
 	ProcessCapacities ports.ProcessCapacityRepository
 
-	RegisterProcessPath    *usecases.RegisterProcessPath
 	GetProcessPathCapacity *usecases.GetProcessPathCapacity
 
 	CreateCapacityPlan  *usecases.CreateCapacityPlan
@@ -68,8 +67,6 @@ func parseWindow(start, end string) (time.Time, time.Time, error) {
 // --- register_process_capacity_constraint (write) -----------------------------
 
 // --- get_effective_process_capacity (read) ------------------------------------
-
-// --- register_process_path (write) --------------------------------------------
 
 // --- get_process_path_capacity (read) -----------------------------------------
 
@@ -123,13 +120,6 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"Read-only; fails with process-capacity-not-found if nothing is registered for exactly that process/location/window.",
 		Annotations: readOnly,
 	}, d.getEffectiveProcessCapacity)
-
-	addTool(server, &mcp.Tool{
-		Name: "register_process_path",
-		Description: "Declare a process path: an id, a name and an ordered, non-empty list of step process types (e.g. PICK, REBIN, PACK). " +
-			"Writes the ProcessPath read model; re-registering an existing id replaces its name and steps.",
-		Annotations: idempotent(true),
-	}, d.registerProcessPath)
 
 	addTool(server, &mcp.Tool{
 		Name: "get_process_path_capacity",

@@ -139,8 +139,22 @@ func itMigratedDB(t *testing.T) string {
 // mcp.Handler — served over Streamable HTTP, plus the private database URL
 // so tests can assert on what actually persisted.
 type itHarness struct {
-	session *sdkmcp.ClientSession
-	dbURL   string
+	session  *sdkmcp.ClientSession
+	dbURL    string
+	pathRepo ports.ProcessPathRepository
+}
+
+// seedITPath declares a local path directly: the register_process_path tool
+// retired with ADR 0025 stage 2.
+func (h *itHarness) seedITPath(t *testing.T, id string, steps []string) {
+	t.Helper()
+	typed := make([]processpath.ProcessType, 0, len(steps))
+	for _, s := range steps {
+		typed = append(t, processpath.ProcessType(s))
+	}
+	if _, err := (&usecases.RegisterProcessPath{Repo: h.pathRepo}).Handle(context.Background(), usecases.RegisterProcessPathCommand{ID: id, Name: id, Steps: typed}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // newITHarness wires the real stack exactly like cmd/mcp's buildDeps does
@@ -169,7 +183,6 @@ func newITHarness(t *testing.T) *itHarness {
 	deps := mcpadapter.Deps{
 		RegisterProcessCapacityConstraint: &usecases.RegisterProcessCapacityConstraint{Repo: pcRepo},
 		ProcessCapacities:                 pcRepo,
-		RegisterProcessPath:               &usecases.RegisterProcessPath{Repo: pathRepo},
 		GetProcessPathCapacity:            pathCapacity,
 		CreateCapacityPlan: &usecases.CreateCapacityPlan{
 			PathCapacity: pathCapacity, Plans: planRepo, Outbox: ob,
@@ -196,7 +209,7 @@ func newITHarness(t *testing.T) *itHarness {
 		t.Fatalf("mcp connect: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return &itHarness{session: session, dbURL: dbURL}
+	return &itHarness{session: session, dbURL: dbURL, pathRepo: pathRepo}
 }
 
 // itCall invokes a tool and fails the test on a TRANSPORT/protocol error;
@@ -300,9 +313,7 @@ func TestMCPStreamableHTTP_CallToolRoundTripThroughPostgres(t *testing.T) {
 	}
 
 	// The path and the shortage plan.
-	h.itOK(t, "register_process_path", map[string]any{
-		"id": "it-mcp-path", "name": "It MCP path", "steps": []string{"PICK"},
-	})
+	h.seedITPath(t, "it-mcp-path", []string{"PICK"})
 	plan := h.itOK(t, "create_capacity_plan", map[string]any{
 		"warehouse_id": "WH-1", "site_id": "SIM1", "location": "IT-MCP-LOC",
 		"window_start": start, "window_end": end, "path_id": "it-mcp-path",
@@ -377,11 +388,6 @@ func TestMCPStreamableHTTP_RejectionsAreToolErrors(t *testing.T) {
 	})
 	if !res.IsError || !strings.Contains(itToolText(res), "process-capacity-not-found") {
 		t.Fatalf("unknown identity = isError %v, text %q", res.IsError, itToolText(res))
-	}
-
-	res = h.itCall(t, "register_process_path", map[string]any{"id": "empty", "name": "Empty", "steps": []string{}})
-	if !res.IsError || !strings.Contains(itToolText(res), "empty-process-path-steps") {
-		t.Fatalf("empty steps = isError %v, text %q", res.IsError, itToolText(res))
 	}
 
 	res = h.itCall(t, "get_capacity_plan", map[string]any{"id": "no-such-plan"})

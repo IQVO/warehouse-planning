@@ -20,6 +20,7 @@ import (
 type stationServer struct {
 	*httptest.Server
 	tally *memory.StorageTallyRepo
+	paths *memory.ProcessPathRepo
 }
 
 // newStationServer wires the whole REST surface, station capacity included,
@@ -45,7 +46,7 @@ func newStationServer(t *testing.T) *stationServer {
 		GetStorageCapacity:                &usecases.GetStorageCapacity{Tally: tallyRepo},
 	}))
 	t.Cleanup(srv.Close)
-	return &stationServer{Server: srv, tally: tallyRepo}
+	return &stationServer{Server: srv, tally: tallyRepo, paths: paths}
 }
 
 func (s *stationServer) seed(t *testing.T, zone, tallyType, key string, n int) {
@@ -216,7 +217,7 @@ func (s *stationServer) seedFixtureB(t *testing.T) {
 	}{{"PICK", 8000, "UNIT"}, {"REBIN", 2500, "UNIT"}, {"PACK", 2500, "PACKAGE"}} {
 		s.setLabor(t, reg.process, reg.qty, reg.unit)
 	}
-	registerProcessPath(t, s.Server, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
+	seedLocalPath(t, s.paths, "pick-rebin-pack", "Pick-Rebin-Pack", []string{"PICK", "REBIN", "PACK"})
 	s.seed(t, "SIM1-OPS-WC", tally.TypeStation, "PACK", 10)
 }
 

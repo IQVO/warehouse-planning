@@ -19,6 +19,7 @@ import (
 type demandServer struct {
 	*httptest.Server
 	orders *memory.OrderDemandRepo
+	paths  *memory.ProcessPathRepo
 }
 
 // newDemandServer wires the whole REST surface over in-memory adapters,
@@ -45,7 +46,7 @@ func newDemandServer(t *testing.T) *demandServer {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return &demandServer{Server: srv, orders: orders}
+	return &demandServer{Server: srv, orders: orders, paths: paths}
 }
 
 var (
@@ -147,7 +148,7 @@ func TestGetDemand_Rejections(t *testing.T) {
 }
 
 func TestGetDemand_RouteDoesNotExistWithoutTheDemandReadModel(t *testing.T) {
-	srv, _ := newTestServer() // a Server built without GetExpectedDemand
+	srv, _, _ := newTestServer() // a Server built without GetExpectedDemand
 	defer srv.Close()
 	if status, _, _ := getPath(t, srv, demandQuery("SIM1", "2026-10-05T08:00:00Z", "2026-10-05T16:00:00Z")); status != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 when the read model is not wired", status)
@@ -158,7 +159,7 @@ func TestGetDemand_RouteDoesNotExistWithoutTheDemandReadModel(t *testing.T) {
 
 func seedDemandPlanFixture(t *testing.T, srv *demandServer) {
 	t.Helper()
-	seedPlanFixture(t, srv.Server)
+	seedPlanFixture(t, srv.Server, srv.paths)
 }
 
 func seedOrdersInPlanWindow(t *testing.T, srv *demandServer, n int) {
