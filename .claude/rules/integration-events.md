@@ -230,9 +230,10 @@ deterministic failure (unknown `process_type`, no stages, bad status or version)
 (`applied|stale|duplicate|rejected`), and ignores every other type on the topic (`ProcessPath*`,
 `CPTScheduleChanged`). `cmd/mcp` and `cmd/a2a` read the copy and never start the consumer. A flow wins
 and the ONLY source (stage 3 dropped the local table and declaration code); every read carries
-`source: flow` (a RETIRED or unknown flow is a 404). Since ADR 0025 stage 2, `POST /process-paths`
-answers `410 process-path-moved` (the declaration moved to process-path-management's
-`PUT /process-flows/{flowId}`) and the `register_process_path` MCP tool is gone.
+`source: flow` (a RETIRED or unknown flow is a 404). The local `POST /process-paths` route is
+REMOVED (one release of `410 process-path-moved` shipped in v2.0.4; POST now answers 405) and the
+`register_process_path` MCP tool is gone: declare flows on process-path-management's
+`PUT /process-flows/{flowId}`.
 
 ### Keying decisions
 

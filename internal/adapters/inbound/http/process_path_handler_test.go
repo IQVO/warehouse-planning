@@ -146,41 +146,26 @@ func TestHandler_ProcessPathCapacity_UnprocessableWhenAStepHasNoCapacity(t *test
 	}
 }
 
-// TestHandler_ProcessPath_RegisterIs410 pins ADR 0025 stage 2: the local
-// declaration retired, so POST /process-paths answers 410 process-path-moved
-// for ANY body (nothing decoded, recorded or published), naming
-// process-path-management's PUT /process-flows/{flowId}.
-func TestHandler_ProcessPath_RegisterIs410(t *testing.T) {
+// TestHandler_ProcessPath_RegisterRouteIsGone pins the tombstone's removal:
+// after one release of 410 (v2.0.4), the route no longer exists. This server
+// wires no /process-paths method at all, so POST answers 404 (a server with
+// the GET list wired answers 405).
+func TestHandler_ProcessPath_RegisterRouteIsGone(t *testing.T) {
 	srv, _, _ := newTestServer()
 	defer srv.Close()
 
-	for _, body := range []string{`{"id":"x","name":"X","steps":["PICK"]}`, `not json`, ``} {
-		req, err := http.NewRequest(http.MethodPost, srv.URL+"/process-paths", strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Idempotency-Key", "retire-"+body)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusGone {
-			t.Fatalf("body %q: expected 410, got %d: %s", body, resp.StatusCode, string(b))
-		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
-			t.Fatalf("expected application/problem+json, got %q", ct)
-		}
-		var problem struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(b, &problem); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.HasSuffix(problem.Type, "/process-path-moved") {
-			t.Fatalf("expected process-path-moved, got %s", problem.Type)
-		}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/process-paths", strings.NewReader(`{"id":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("POST /process-paths = %d: %s, want 404 (route removed)", resp.StatusCode, string(b))
 	}
 }

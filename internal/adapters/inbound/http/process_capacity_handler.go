@@ -150,7 +150,6 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/readyz", s.handleReadyz)
 	r.Post("/process-capacities", s.idempotent(s.handleRegisterProcessCapacityConstraint))
 	r.Get("/process-capacities", s.handleGetEffectiveProcessCapacity)
-	r.Post("/process-paths", s.idempotent(s.handleRegisterProcessPath))
 	r.Get("/process-paths/{id}/capacity", s.handleGetProcessPathCapacity)
 	if s.GetProcessPath != nil {
 		r.Get("/process-paths/{id}", s.handleGetProcessPath)

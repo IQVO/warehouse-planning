@@ -304,10 +304,10 @@ func TestHandler_ListRoutesAbsentWhenUseCasesNotWired(t *testing.T) {
 			t.Errorf("GET %s answered 200 with the list use case unwired", path)
 		}
 	}
-	// POST /process-paths retired with ADR 0025 stage 2: it answers 410
-	// process-path-moved whether or not the (now unused) declaration use
-	// case is wired; POST /capacity-plans is untouched.
-	if status, _, body := postJSON(t, srv.Server, "/process-paths", map[string]any{"id": "x", "name": "x", "steps": []string{"PICK"}}); status != http.StatusGone {
+	// The POST /process-paths tombstone was removed after one release of
+	// 410: this server wires no /process-paths method at all (the list use
+	// case is unwired), so POST answers 404 (405 where the GET is wired).
+	if status, _, body := postJSON(t, srv.Server, "/process-paths", map[string]any{"id": "x", "name": "x", "steps": []string{"PICK"}}); status != http.StatusNotFound {
 		t.Errorf("POST /process-paths = %d: %s", status, body)
 	}
 }

@@ -44,12 +44,6 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
-          id: "api-reference/rest/register-process-path",
-          label: "Retired (ADR-0025 stage 2): the local process-path declaration moved to process-path-management",
-          className: "menu__list-item--deprecated api-method post",
-        },
-        {
-          type: "doc",
           id: "api-reference/rest/get-process-path",
           label: "Get the ProcessPath an id resolves to",
           className: "api-method get",
