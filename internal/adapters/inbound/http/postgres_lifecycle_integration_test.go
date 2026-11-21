@@ -371,9 +371,7 @@ func TestHTTP_Postgres_ValidationRejectionsUseProblemSlugs(t *testing.T) {
 		status int
 		slug   string
 	}{
-		{"retired declaration (any body)", func() (int, []byte) {
-			return itPost(t, srv, "/process-paths", map[string]any{"id": "x", "name": "X", "steps": []string{}})
-		}, http.StatusGone, "process-path-moved"},
+
 		{"invalid window", func() (int, []byte) {
 			return itPost(t, srv, "/process-capacities", map[string]any{
 				"process_type": "PICK", "location": "L", "window_start": "2026-10-05T16:00:00Z",

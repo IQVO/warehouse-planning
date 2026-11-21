@@ -12,19 +12,6 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/processpath"
 )
 
-// handleRegisterProcessPath backs POST /process-paths: ADR 0025 stage 2. The
-// local declaration retired; the route answers 410 process-path-moved for ANY
-// body, naming process-path-management's PUT /process-flows/{flowId}. Nothing
-// is decoded, recorded or published (the Idempotency-Key check still runs
-// first, as on every POST). GET /process-paths stays -- the console remote
-// lists paths with it; stage 3 drops the local table and declaration code.
-func (s *Server) handleRegisterProcessPath(w http.ResponseWriter, r *http.Request) {
-	writeProblem(w, http.StatusGone, problemInfo{
-		slug:  "process-path-moved",
-		title: "Process-path declaration moved to process-path-management",
-	}, "the local process-path declaration retired (ADR-0025 stage 2): declare the flow on process-path-management as PUT /process-flows/{flowId}; this context consumes ProcessFlowDefined/Revised/Retired", r.URL.Path)
-}
-
 // handleListProcessPaths backs GET /process-paths: the locally declared paths
 // and the ACTIVE process flows (a flow wins over a local path of the same id)
 // ordered by id, one keyset page at a time ({items,nextCursor}).
