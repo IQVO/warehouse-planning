@@ -10,10 +10,10 @@ spec:
   type: {{ .Values.mcp.service.type }}
   ports:
     - port: {{ .Values.mcp.service.port }}
-      targetPort: http
+      targetPort: {{ ternary "mcp" "http" (eq (include "warehouse-planning.agentsColocated" .) "true") }}
       protocol: TCP
       name: http
   selector:
     {{- include "warehouse-planning.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: mcp
+    app.kubernetes.io/component: {{ ternary "agents" "mcp" (eq (include "warehouse-planning.agentsColocated" .) "true") }}
 {{- end }}
