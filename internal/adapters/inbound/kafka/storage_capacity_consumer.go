@@ -154,7 +154,7 @@ func (c *StorageCapacityConsumer) Close() error {
 func (c *StorageCapacityConsumer) HandleMessage(ctx context.Context, value []byte) error {
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		c.Logger.WarnContext(ctx, "skipping non-CloudEvents facility message", "error", err)
+		c.Logger.WarnContext(ctx, "skipping non-CloudEvents facility message", "error", sanitizeErr(err))
 		return nil
 	}
 
@@ -184,7 +184,7 @@ func (c *StorageCapacityConsumer) claim(ctx context.Context, e eventDecoder, eve
 		return false, fmt.Errorf("claim processed event: %w", err)
 	}
 	if !claimed {
-		c.Logger.InfoContext(ctx, "skipping already-processed "+eventName+" event", "event_id", e.ID())
+		c.Logger.InfoContext(ctx, "skipping already-processed "+eventName+" event", "event_id", sanitizeLog(e.ID()))
 	}
 	return !claimed, nil
 }
@@ -218,7 +218,7 @@ func (c *StorageCapacityConsumer) handleRegistered(ctx context.Context, e eventD
 			// under a NEW event id). Safe under redelivery: claim and tally
 			// are one transaction, so an attempt that failed rolled its
 			// tally registration back too and its retry registers for real.
-			c.Logger.InfoContext(ctx, "skipping already-registered locationCode", "location_code", reg.locationCode)
+			c.Logger.InfoContext(ctx, "skipping already-registered locationCode", "location_code", sanitizeLog(reg.locationCode))
 		}
 		return nil
 	})
@@ -229,11 +229,11 @@ func (c *StorageCapacityConsumer) handleRegistered(ctx context.Context, e eventD
 func (c *StorageCapacityConsumer) parseRegistered(ctx context.Context, e eventDecoder) (slotRegistration, bool) {
 	var data locationSlotRegisteredData
 	if err := e.DataAs(&data); err != nil {
-		c.Logger.WarnContext(ctx, "skipping malformed LocationSlotRegistered payload", "error", err, "event_id", e.ID())
+		c.Logger.WarnContext(ctx, "skipping malformed LocationSlotRegistered payload", "error", sanitizeErr(err), "event_id", sanitizeLog(e.ID()))
 		return slotRegistration{}, false
 	}
 	if data.LocationCode == "" || data.ZoneID == "" {
-		c.Logger.WarnContext(ctx, "skipping LocationSlotRegistered with missing locationCode/zoneId", "event_id", e.ID())
+		c.Logger.WarnContext(ctx, "skipping LocationSlotRegistered with missing locationCode/zoneId", "event_id", sanitizeLog(e.ID()))
 		return slotRegistration{}, false
 	}
 
@@ -247,7 +247,7 @@ func (c *StorageCapacityConsumer) parseRegistered(ctx context.Context, e eventDe
 	case roleStorage:
 		// One tally bucket, keyed by locationType.
 		if data.LocationType == "" {
-			c.Logger.WarnContext(ctx, "skipping Storage LocationSlotRegistered with empty locationType", "event_id", e.ID())
+			c.Logger.WarnContext(ctx, "skipping Storage LocationSlotRegistered with empty locationType", "event_id", sanitizeLog(e.ID()))
 			return slotRegistration{}, false
 		}
 		reg.tallyType = tally.TypeLocation
@@ -255,7 +255,7 @@ func (c *StorageCapacityConsumer) parseRegistered(ctx context.Context, e eventDe
 	case roleWorkCenter:
 		// One tally bucket per activity, all keyed by zoneID.
 		if len(data.Activities) == 0 {
-			c.Logger.WarnContext(ctx, "skipping WorkCenter LocationSlotRegistered with no activities", "event_id", e.ID())
+			c.Logger.WarnContext(ctx, "skipping WorkCenter LocationSlotRegistered with no activities", "event_id", sanitizeLog(e.ID()))
 			return slotRegistration{}, false
 		}
 		reg.tallyType = tally.TypeStation
@@ -263,7 +263,7 @@ func (c *StorageCapacityConsumer) parseRegistered(ctx context.Context, e eventDe
 			reg.tallyKeys = append(reg.tallyKeys, strings.ToUpper(a))
 		}
 	default:
-		c.Logger.WarnContext(ctx, "skipping LocationSlotRegistered with unrecognized role", "role", role, "event_id", e.ID())
+		c.Logger.WarnContext(ctx, "skipping LocationSlotRegistered with unrecognized role", "role", sanitizeLog(role), "event_id", sanitizeLog(e.ID()))
 		return slotRegistration{}, false
 	}
 	return reg, true
@@ -272,11 +272,11 @@ func (c *StorageCapacityConsumer) parseRegistered(ctx context.Context, e eventDe
 func (c *StorageCapacityConsumer) handleDecommissioned(ctx context.Context, e eventDecoder) error {
 	var data locationSlotDecommissionedData
 	if err := e.DataAs(&data); err != nil {
-		c.Logger.WarnContext(ctx, "skipping malformed LocationSlotDecommissioned payload", "error", err, "event_id", e.ID())
+		c.Logger.WarnContext(ctx, "skipping malformed LocationSlotDecommissioned payload", "error", sanitizeErr(err), "event_id", sanitizeLog(e.ID()))
 		return nil
 	}
 	if data.LocationCode == "" {
-		c.Logger.WarnContext(ctx, "skipping LocationSlotDecommissioned with empty locationCode", "event_id", e.ID())
+		c.Logger.WarnContext(ctx, "skipping LocationSlotDecommissioned with empty locationCode", "event_id", sanitizeLog(e.ID()))
 		return nil
 	}
 
@@ -291,7 +291,7 @@ func (c *StorageCapacityConsumer) handleDecommissioned(ctx context.Context, e ev
 		if !found {
 			// Never crash, never go negative: a decommission for a slot
 			// this consumer never saw registered is logged and skipped.
-			c.Logger.WarnContext(ctx, "decommission received for an untracked slot", "location_code", data.LocationCode, "event_id", e.ID())
+			c.Logger.WarnContext(ctx, "decommission received for an untracked slot", "location_code", sanitizeLog(data.LocationCode), "event_id", sanitizeLog(e.ID()))
 		}
 		return nil
 	})

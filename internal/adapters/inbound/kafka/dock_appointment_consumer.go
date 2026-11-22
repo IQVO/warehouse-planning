@@ -202,9 +202,9 @@ func (c *DockAppointmentConsumer) HandleMessage(ctx context.Context, value []byt
 	}
 	switch outcome {
 	case usecases.OutcomeDuplicate:
-		c.Logger.InfoContext(ctx, "skipping already-processed dock-scheduling event", "event_id", e.ID())
+		c.Logger.InfoContext(ctx, "skipping already-processed dock-scheduling event", "event_id", sanitizeLog(e.ID()))
 	case usecases.OutcomeStale:
-		c.Logger.InfoContext(ctx, "dock-scheduling event is not newer than the stored appointment; model unchanged", "event_id", e.ID(), "appointment_id", appt.ID(), "version", appt.Version())
+		c.Logger.InfoContext(ctx, "dock-scheduling event is not newer than the stored appointment; model unchanged", "event_id", sanitizeLog(e.ID()), "appointment_id", sanitizeLog(appt.ID()), "version", appt.Version())
 	}
 	return nil
 }

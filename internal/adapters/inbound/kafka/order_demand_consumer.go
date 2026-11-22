@@ -148,7 +148,7 @@ func (c *OrderDemandConsumer) Run(ctx context.Context) error {
 func (c *OrderDemandConsumer) HandleMessage(ctx context.Context, value []byte) error {
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		c.Logger.WarnContext(ctx, "skipping non-CloudEvents order message", "error", err)
+		c.Logger.WarnContext(ctx, "skipping non-CloudEvents order message", "error", sanitizeErr(err))
 		return nil
 	}
 	if e.Type() != typeOrderAllocated && e.Type() != typeOrderPartiallyAllocated {
@@ -157,11 +157,11 @@ func (c *OrderDemandConsumer) HandleMessage(ctx context.Context, value []byte) e
 
 	var data orderAllocationData
 	if err := e.DataAs(&data); err != nil {
-		c.Logger.WarnContext(ctx, "skipping malformed order allocation payload", "error", err, "event_id", e.ID(), "type", e.Type())
+		c.Logger.WarnContext(ctx, "skipping malformed order allocation payload", "error", sanitizeErr(err), "event_id", sanitizeLog(e.ID()), "type", sanitizeLog(e.Type()))
 		return nil
 	}
 	if data.OrderID != e.Subject() {
-		c.Logger.WarnContext(ctx, "skipping order allocation whose subject is not its order id", "event_id", e.ID(), "subject", e.Subject(), "order_id", data.OrderID)
+		c.Logger.WarnContext(ctx, "skipping order allocation whose subject is not its order id", "event_id", sanitizeLog(e.ID()), "subject", sanitizeLog(e.Subject()), "order_id", sanitizeLog(data.OrderID))
 		return nil
 	}
 	order, err := demand.NewOrder(demand.OrderParams{
@@ -172,7 +172,7 @@ func (c *OrderDemandConsumer) HandleMessage(ctx context.Context, value []byte) e
 		AsOf:          e.Time(),
 	})
 	if err != nil {
-		c.Logger.WarnContext(ctx, "skipping order allocation that failed validation", "error", err, "event_id", e.ID(), "type", e.Type())
+		c.Logger.WarnContext(ctx, "skipping order allocation that failed validation", "error", sanitizeErr(err), "event_id", sanitizeLog(e.ID()), "type", sanitizeLog(e.Type()))
 		return nil
 	}
 
@@ -182,9 +182,9 @@ func (c *OrderDemandConsumer) HandleMessage(ctx context.Context, value []byte) e
 	}
 	switch outcome {
 	case usecases.OutcomeDuplicate:
-		c.Logger.InfoContext(ctx, "skipping already-processed order event", "event_id", e.ID())
+		c.Logger.InfoContext(ctx, "skipping already-processed order event", "event_id", sanitizeLog(e.ID()))
 	case usecases.OutcomeStale:
-		c.Logger.InfoContext(ctx, "order event is older than the stored order; model unchanged", "event_id", e.ID(), "order_id", data.OrderID)
+		c.Logger.InfoContext(ctx, "order event is older than the stored order; model unchanged", "event_id", sanitizeLog(e.ID()), "order_id", sanitizeLog(data.OrderID))
 	}
 	return nil
 }
