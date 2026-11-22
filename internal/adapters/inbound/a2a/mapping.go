@@ -109,7 +109,7 @@ func problemFromUseCase(err error) *problem {
 		}
 		return newProblem(entry.status, entry.slug, entry.title, detail)
 	}
-	slog.Error("a2a skill failed with an unexpected error", "error", err)
+	slog.Error("a2a skill failed with an unexpected error", "error", logReplacer.Replace(err.Error()))
 	return newProblem(http.StatusInternalServerError, "internal-error", "An unexpected internal error occurred",
 		"the skill failed; see server logs (trace id in the response metadata)")
 }
