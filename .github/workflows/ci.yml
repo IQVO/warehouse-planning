@@ -397,6 +397,7 @@ jobs:
           pip install --require-hashes -r .github/requirements/chart-tests.txt
           python3 charts/warehouse-planning/tests/test_service_selectors.py
           python3 charts/warehouse-planning/tests/test_kong_config.py
+          python3 charts/warehouse-planning/tests/test_agents_colocation.py
 
   # ============================================================
   # CLASSIFICATION: LINTERS & STATIC ANALYSIS (architecture fitness)

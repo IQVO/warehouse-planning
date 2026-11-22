@@ -20,8 +20,9 @@ went with it. `GET /process-paths` stays. Stage 3 implemented (2026-11-20): migr
 `process_paths` table and the declaration code is gone — flows are the only path source
 (`FlowPathFinder`/`FlowPathLister`); a RETIRED or unknown flow is a 404. The `source`
 field stays published (always `flow`) for readers written against stage 1. The 410
-tombstone route stays one more release, then a later change removes it and its
-spectral override.
+tombstone route shipped once (v2.0.4) and is now REMOVED with its spectral override:
+POST /process-paths is no longer a route (405), and the flows on process-path-management
+are the only declaration path there ever is.
 
 ## Context
 

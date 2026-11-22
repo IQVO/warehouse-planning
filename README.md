@@ -342,7 +342,7 @@ Write side:
 | Method | Path | Purpose | Success |
 |---|---|---|---|
 | `POST` | `/process-capacities` | RegisterProcessCapacityConstraint | `201` + `Location` |
-| `POST` | `/process-paths` | retired (ADR 0025 stage 2): `410 process-path-moved`, naming process-path-management's `PUT /process-flows/{flowId}` | `410` |
+| ~~`POST` `/process-paths`~~ | removed (one release of `410 process-path-moved` shipped in v2.0.4; the route is gone — POST answers 405) | — |
 | `POST` | `/capacity-plans` | CreateCapacityPlan (DRAFT; shortage + bottleneck) | `201` + `Location` |
 | `POST` | `/capacity-plans/{id}/publications` | PublishCapacityPlan | `200` |
 | `PUT` | `/station-standards/{location}/{process_type}` | DeclareStationStandard | `200` |
