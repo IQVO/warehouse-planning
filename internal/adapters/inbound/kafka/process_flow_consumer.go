@@ -156,7 +156,7 @@ func (c *ProcessFlowConsumer) HandleMessage(ctx context.Context, value []byte) e
 	flow, err := flowFrom(e.Time(), e.DataAs)
 	if err != nil {
 		c.count(ctx, ports.ProcessFlowRejected)
-		c.Logger.WarnContext(ctx, "rejected process-path-management flow event", "event_id", e.ID(), "type", e.Type(), "error", err)
+		c.Logger.WarnContext(ctx, "rejected process-path-management flow event", "event_id", sanitizeLog(e.ID()), "type", sanitizeLog(e.Type()), "error", sanitizeErr(err))
 		return poisonError(fmt.Sprintf("%s %s", e.Type(), e.ID()), err)
 	}
 
@@ -167,11 +167,11 @@ func (c *ProcessFlowConsumer) HandleMessage(ctx context.Context, value []byte) e
 	c.count(ctx, string(outcome))
 	switch outcome {
 	case usecases.OutcomeDuplicate:
-		c.Logger.InfoContext(ctx, "skipping already-processed process-path-management event", "event_id", e.ID())
+		c.Logger.InfoContext(ctx, "skipping already-processed process-path-management event", "event_id", sanitizeLog(e.ID()))
 	case usecases.OutcomeStale:
-		c.Logger.InfoContext(ctx, "process flow version already in the copy; unchanged", "event_id", e.ID(), "flow_id", flow.ID(), "version", flow.Version())
+		c.Logger.InfoContext(ctx, "process flow version already in the copy; unchanged", "event_id", sanitizeLog(e.ID()), "flow_id", sanitizeLog(flow.ID()), "version", flow.Version())
 	case usecases.OutcomeApplied:
-		c.Logger.InfoContext(ctx, "process flow applied", "event_id", e.ID(), "flow_id", flow.ID(), "version", flow.Version(), "status", string(flow.Status()))
+		c.Logger.InfoContext(ctx, "process flow applied", "event_id", sanitizeLog(e.ID()), "flow_id", sanitizeLog(flow.ID()), "version", flow.Version(), "status", sanitizeLog(string(flow.Status())))
 	}
 	return nil
 }

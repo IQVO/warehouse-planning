@@ -163,7 +163,7 @@ func (c *LaborCapacityConsumer) Run(ctx context.Context) error {
 func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte) error {
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		c.Logger.WarnContext(ctx, "skipping non-CloudEvents labor message", "error", err)
+		c.Logger.WarnContext(ctx, "skipping non-CloudEvents labor message", "error", sanitizeErr(err))
 		return nil
 	}
 	if e.Type() != typeShiftPlanCommitted {
@@ -172,12 +172,12 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 
 	var data shiftPlanCommittedData
 	if err := e.DataAs(&data); err != nil {
-		c.Logger.WarnContext(ctx, "skipping malformed ShiftPlanCommitted payload", "error", err, "event_id", e.ID())
+		c.Logger.WarnContext(ctx, "skipping malformed ShiftPlanCommitted payload", "error", sanitizeErr(err), "event_id", sanitizeLog(e.ID()))
 		return nil
 	}
 	site := data.site()
 	if site == "" || data.PathID == "" {
-		c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted with missing site_code/building_id or path_id", "event_id", e.ID())
+		c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted with missing site_code/building_id or path_id", "event_id", sanitizeLog(e.ID()))
 		return nil
 	}
 
@@ -202,7 +202,7 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 			return fmt.Errorf("claim processed event: %w", err)
 		}
 		if !claimed {
-			c.Logger.InfoContext(ctx, "skipping already-processed ShiftPlanCommitted event", "event_id", e.ID())
+			c.Logger.InfoContext(ctx, "skipping already-processed ShiftPlanCommitted event", "event_id", sanitizeLog(e.ID()))
 			return nil
 		}
 
@@ -218,7 +218,7 @@ func (c *LaborCapacityConsumer) HandleMessage(ctx context.Context, value []byte)
 func (c *LaborCapacityConsumer) registerLabor(ctx context.Context, cmd usecases.RegisterProcessCapacityConstraintCommand, eventID string) error {
 	if _, err := c.Register.Handle(ctx, cmd); err != nil {
 		if usecases.IsDomainValidationError(err) {
-			c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted that failed domain validation", "error", err, "event_id", eventID)
+			c.Logger.WarnContext(ctx, "skipping ShiftPlanCommitted that failed domain validation", "error", sanitizeErr(err), "event_id", sanitizeLog(eventID))
 			return nil
 		}
 		return fmt.Errorf("register labor constraint: %w", err)
@@ -246,7 +246,7 @@ func (c *LaborCapacityConsumer) recordCommitment(ctx context.Context, data shift
 		CommittedHeads: data.PlannedHeads, ObservedAt: observedAt,
 	})
 	if usecases.IsCommitmentRejection(err) {
-		c.Logger.WarnContext(ctx, "skipping the labour plan drift of a ShiftPlanCommitted with an invalid commitment", "error", err, "event_id", eventID)
+		c.Logger.WarnContext(ctx, "skipping the labour plan drift of a ShiftPlanCommitted with an invalid commitment", "error", sanitizeErr(err), "event_id", sanitizeLog(eventID))
 		return nil
 	}
 	if err != nil {

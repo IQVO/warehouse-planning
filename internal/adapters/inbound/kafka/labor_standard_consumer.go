@@ -152,9 +152,9 @@ func (c *LaborStandardConsumer) HandleMessage(ctx context.Context, value []byte)
 	}
 	switch outcome {
 	case usecases.OutcomeDuplicate:
-		c.Logger.InfoContext(ctx, "skipping already-processed labor-performance event", "event_id", e.ID())
+		c.Logger.InfoContext(ctx, "skipping already-processed labor-performance event", "event_id", sanitizeLog(e.ID()))
 	case usecases.OutcomeStale:
-		c.Logger.InfoContext(ctx, "labor standard id already in the copy; unchanged", "event_id", e.ID(), "standard_id", standard.ID())
+		c.Logger.InfoContext(ctx, "labor standard id already in the copy; unchanged", "event_id", sanitizeLog(e.ID()), "standard_id", sanitizeLog(standard.ID()))
 	}
 	return nil
 }

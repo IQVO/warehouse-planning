@@ -142,7 +142,7 @@ func (c *ObservedCapacityConsumer) HandleMessage(ctx context.Context, value []by
 		return fmt.Errorf("record observed completion: %w", err)
 	}
 	if outcome == usecases.OutcomeDuplicate {
-		c.Logger.InfoContext(ctx, "skipping already-processed task event", "event_id", e.ID())
+		c.Logger.InfoContext(ctx, "skipping already-processed task event", "event_id", sanitizeLog(e.ID()))
 	}
 	return nil
 }

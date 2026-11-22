@@ -129,8 +129,8 @@ func (r *Relay) logAttemptCap(ctx context.Context, err error) {
 		return
 	}
 	r.logger.ErrorContext(ctx, AttemptCapReachedMsg,
-		"outbox_id", sf.RowID, "topic", sf.Message.Topic, "event_type", sf.Message.EventType,
-		"key", string(sf.Message.Key), "attempts", sf.Attempts, "max_attempts", r.maxAttempts, "error", sf.Err)
+		"outbox_id", sf.RowID, "topic", sf.Message.Topic, "event_type", sanitizeLog(sf.Message.EventType),
+		"key", sanitizeLog(string(sf.Message.Key)), "attempts", sf.Attempts, "max_attempts", r.maxAttempts, "error", sanitizeErr(sf.Err))
 }
 
 // Run drains the outbox until ctx is cancelled and then returns ctx.Err().
@@ -146,7 +146,7 @@ func (r *Relay) Run(ctx context.Context) error {
 		}
 		n, err := r.RelayOnce(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			r.logger.ErrorContext(ctx, "outbox relay pass failed", "error", err)
+			r.logger.ErrorContext(ctx, "outbox relay pass failed", "error", sanitizeErr(err))
 		}
 		if n == r.batchSize && err == nil {
 			continue
@@ -174,7 +174,7 @@ func (s LogSink) Send(ctx context.Context, msgs ...outbox.Message) error {
 	}
 	for _, m := range msgs {
 		logger.InfoContext(ctx, "event published (log sink)",
-			"topic", m.Topic, "type", m.EventType, "subject", m.Subject, "id", m.EventID)
+			"topic", m.Topic, "type", sanitizeLog(m.EventType), "subject", sanitizeLog(m.Subject), "id", sanitizeLog(m.EventID))
 	}
 	return nil
 }
