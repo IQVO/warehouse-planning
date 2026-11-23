@@ -25,6 +25,10 @@ plan (the same key and body replays the first answer); a repeated publish is a
 2xx answers replay; a RETRYABLE refusal (`version-conflict`,
 `process-path-not-found`, `missing-step-capacity`, ...) is not stored and
 releases the key, so the same key re-executes once the state it names arrives.
+A stored answer replays for 24 hours (`ports.IdempotencyRetention`); past that
+window the key is free again (a retry is a first execution) and the row is
+deleted by the always-on hourly purge (`cmd/api/retention.go`; ADR 0026
+addendum).
 
 ## Boot and readiness
 

@@ -27,7 +27,8 @@ import (
 //  3. httpServer.Shutdown -- drain in-flight HTTP requests (one outbox
 //     writer);
 //  4. stop and await the Kafka consumers (the other outbox writer),
-//     including the commit of any message they are mid-handling;
+//     including the commit of any message they are mid-handling, and the
+//     idempotency-key retention purge (a reader, never a writer of events);
 //  5. stop and await the outbox relay LAST -- only after every writer
 //     above has stopped, so an event committed by the HTTP drain or a
 //     consumer's last message is not stranded until the next pod boots;
@@ -48,6 +49,7 @@ func serveUntilSignal(
 	readiness *inboundhttp.Readiness,
 	consumers []*worker,
 	closeConsumers func(),
+	closePurge func(),
 	relay *worker,
 	closeRelay func(),
 ) error {
@@ -66,10 +68,12 @@ func serveUntilSignal(
 	select {
 	case err := <-errCh:
 		closeConsumers()
+		closePurge()
 		closeRelay()
 		return err
 	case name := <-died:
 		closeConsumers()
+		closePurge()
 		closeRelay()
 		_ = httpServer.Close()
 		return fmt.Errorf("%s stopped unexpectedly: exiting so the orchestrator restarts the service", name)
@@ -87,6 +91,7 @@ func serveUntilSignal(
 	err := httpServer.Shutdown(shutdownCtx)
 
 	closeConsumers()
+	closePurge() // the purge joins the consumers' stop: a reader, never an outbox writer
 	for _, c := range consumers {
 		await(logger, c)
 	}

@@ -228,8 +228,14 @@ Nothing in this repo consumes or replays a DLQ topic. See
 
 ## Housekeeping
 
-There is **no sweeper or retention job** in this service. The following tables
-only grow:
+The idempotency-key retention is the one sweeper this service runs: an
+always-on worker in `cmd/api` purges `idempotency_keys` rows past the 24h
+window (`ports.IdempotencyRetention`) — at start, then hourly, in bounded
+batches of 1000, `FOR UPDATE SKIP LOCKED`, so it never deletes a row a
+request holds nor waits on one ([ADR 0026
+addendum](/docs/adr/0026-idempotency-replay-classes)). A failed pass logs
+`idempotency purge failed` and is retried at the next tick; a dead purge
+worker exits the pod. The following tables still only grow:
 
 - `outbox_events`: published rows keep `published_at` set and are never deleted;
 - `processed_events` and `analytics_processed_events`: one row per consumed event, forever;
@@ -239,9 +245,9 @@ only grow:
 
 None of these sizes is a correctness problem: every read is indexed, and the
 relay only scans `published_at IS NULL` through a partial index. Pruning
-published outbox rows or old idempotency claims is a manual, out-of-band
-operation. If you delete a `processed_events` row for an event that is later
-redelivered, that event is applied again.
+published outbox rows is a manual, out-of-band operation. If you delete a
+`processed_events` row for an event that is later redelivered, that event is
+applied again.
 
 ## Scaling
 
