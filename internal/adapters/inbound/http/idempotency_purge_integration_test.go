@@ -30,7 +30,7 @@ import (
 // purgeServer wires the REAL UnitOfWork + IdempotencyStore over a private
 // migrated Postgres (the same shape the poison proofs use), plus a probe
 // table the wrapped handler writes through the request's unit of work.
-func purgeServer(t *testing.T) (*inboundhttp.Server, *pgxpool.Pool, *atomic.Int32) {
+func purgeServer(t *testing.T) (*inboundhttp.Server, *pgxpool.Pool, *atomic.Int32, *atomic.Pointer[error]) {
 	t.Helper()
 	pool, err := postgres.NewPool(context.Background(), httpMigratedDB(t))
 	if err != nil {
@@ -43,15 +43,18 @@ func purgeServer(t *testing.T) (*inboundhttp.Server, *pgxpool.Pool, *atomic.Int3
 	return &inboundhttp.Server{
 		UnitOfWork:  postgres.NewUnitOfWork(pool),
 		Idempotency: postgres.NewIdempotencyStore(pool),
-	}, pool, new(atomic.Int32)
+	}, pool, new(atomic.Int32), new(atomic.Pointer[error])
 }
 
 // purgeHandler answers 200 and writes one probe row through the request's
-// unit of work, counting how many times the key EXECUTED.
-func purgeHandler(calls *atomic.Int32) http.HandlerFunc {
+// unit of work, counting how many times the key EXECUTED. A write error is
+// captured for the test's failure message (it becomes a 500 the middleware
+// does not store).
+func purgeHandler(calls *atomic.Int32, writeErr *atomic.Pointer[error]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if err := inboundhttp.ExportWriteInRequestUnit(r.Context(), `INSERT INTO purge_probe (tag) VALUES ($1)`, r.Header.Get(inboundhttp.IdempotencyKeyHeader)); err != nil {
+			writeErr.CompareAndSwap(nil, &err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -88,7 +91,7 @@ func purgeKeys(t *testing.T, pool *pgxpool.Pool) []string {
 }
 
 func TestPurgeDeletesExpiredKeysAndKeepsLiveOnes(t *testing.T) {
-	_, pool, _ := purgeServer(t)
+	_, pool, _, _ := purgeServer(t)
 	seedKeyRow(t, pool, "expired-a", ports.IdempotencyRetention+time.Hour)
 	seedKeyRow(t, pool, "expired-b", 48*time.Hour)
 	seedKeyRow(t, pool, "live-a", time.Hour)
@@ -107,7 +110,7 @@ func TestPurgeDeletesExpiredKeysAndKeepsLiveOnes(t *testing.T) {
 }
 
 func TestPurgeDeletesAtMostOneBatchPerCall(t *testing.T) {
-	_, pool, _ := purgeServer(t)
+	_, pool, _, _ := purgeServer(t)
 	for i := range 5 {
 		seedKeyRow(t, pool, fmt.Sprintf("old-%d", i), 30*time.Hour)
 	}
@@ -143,8 +146,8 @@ func TestPurgeDeletesAtMostOneBatchPerCall(t *testing.T) {
 // The age guard, through the real middleware: a key whose stored row is past
 // the 24h window EXECUTES again instead of answering the stored 200.
 func TestAnExpiredKeyExecutesInsteadOfReplaying(t *testing.T) {
-	s, pool, calls := purgeServer(t)
-	h := s.ExportIdempotent(purgeHandler(calls))
+	s, pool, calls, writeErr := purgeServer(t)
+	h := s.ExportIdempotent(purgeHandler(calls, writeErr))
 	post := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/capacity-plans", nil)
 		req.Header.Set(inboundhttp.IdempotencyKeyHeader, "age-guard")
@@ -154,7 +157,11 @@ func TestAnExpiredKeyExecutesInsteadOfReplaying(t *testing.T) {
 	}
 
 	if r := post(); r.Code != http.StatusOK || r.Header().Get(inboundhttp.IdempotencyReplayedHeader) == "true" || calls.Load() != 1 {
-		t.Fatalf("first post = %d replayed %v calls %d, want a fresh 200", r.Code, r.Header().Get(inboundhttp.IdempotencyReplayedHeader), calls.Load())
+		we := "none"
+		if e := writeErr.Load(); e != nil {
+			we = (*e).Error()
+		}
+		t.Fatalf("first post = %d replayed %v calls %d body %q writeErr %v, want a fresh 200", r.Code, r.Header().Get(inboundhttp.IdempotencyReplayedHeader), calls.Load(), r.Body.String(), we)
 	}
 	if _, err := pool.Exec(context.Background(), `UPDATE idempotency_keys SET created_at = now() - $1::interval WHERE key = 'age-guard'`, (ports.IdempotencyRetention + time.Hour).String()); err != nil {
 		t.Fatalf("age the stored row: %v", err)
@@ -171,7 +178,7 @@ func TestAnExpiredKeyExecutesInsteadOfReplaying(t *testing.T) {
 // purge must neither delete the row the request is about to refresh nor wait
 // for the request: FOR UPDATE SKIP LOCKED skips the locked row.
 func TestPurgeNeverDeletesARowARequestHoldsAndNeverWaitsForIt(t *testing.T) {
-	_, pool, _ := purgeServer(t)
+	_, pool, _, _ := purgeServer(t)
 	ctx := context.Background()
 	seedKeyRow(t, pool, "held", 30*time.Hour)
 
@@ -211,8 +218,8 @@ func TestPurgeNeverDeletesARowARequestHoldsAndNeverWaitsForIt(t *testing.T) {
 // the same time: every request is a FRESH one (an expired row never replays),
 // answers 200, and leaves exactly one live row per key.
 func TestPurgeRacingARequestOnAnExpiredKeyKeepsTheRequestCorrect(t *testing.T) {
-	s, pool, calls := purgeServer(t)
-	h := s.ExportIdempotent(purgeHandler(calls))
+	s, pool, calls, writeErr := purgeServer(t)
+	h := s.ExportIdempotent(purgeHandler(calls, writeErr))
 	store := postgres.NewIdempotencyStore(pool)
 	post := func(key string) int {
 		req := httptest.NewRequest(http.MethodPost, "/capacity-plans", nil)
@@ -237,7 +244,11 @@ func TestPurgeRacingARequestOnAnExpiredKeyKeepsTheRequestCorrect(t *testing.T) {
 		wg.Wait()
 		for _, c := range codes {
 			if c != http.StatusOK {
-				t.Fatalf("round %d: a request racing the purge answered %d, want 200", i, c)
+				we := "none"
+				if e := writeErr.Load(); e != nil {
+					we = (*e).Error()
+				}
+				t.Fatalf("round %d: a request racing the purge answered %d, want 200 (writeErr %v)", i, c, we)
 			}
 		}
 	}
