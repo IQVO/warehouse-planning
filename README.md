@@ -338,7 +338,10 @@ body `409 idempotency-key-reused`, and a replay carries
 type's replay class (ADR 0026): FINAL and OUTCOME refusals and every 2xx are
 stored and replayed; a RETRYABLE refusal (version-conflict,
 process-path-not-found, missing-step-capacity, ...) is not stored and releases
-the key, so a retry under the same key executes again. Consumer-side
+the key, so a retry under the same key executes again. A stored answer replays
+for 24 hours (`ports.IdempotencyRetention`); past the window the key is free
+again and the row is deleted by the always-on hourly purge
+(`cmd/api/retention.go`). Consumer-side
 idempotency (Kafka) is the `processed_events` table.
 
 Write side:

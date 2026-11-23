@@ -198,3 +198,33 @@ new).
   `missing-conversion-factor` mixed-cause slug could be split; a real
   unique-index loss through the joined REST transaction escalates to a 500
   (unstored and released, but the wrong status — see the PR body).
+
+## Addendum — 2026-11-23: expired key rows are purged
+
+The Consequences above recorded as a follow-up that "expired
+`idempotency_keys` rows are never purged (retention is enforced at
+read/upsert only)". That gap — the last one in the fleet — is now closed;
+no Decision text above changes.
+
+The retention is one constant, `ports.IdempotencyRetention` (24h), on all
+three of its edges: the replay read (`Lock`'s
+`created_at > now() - retention` age guard, unchanged), the upsert
+(`Save` sets `created_at = now()`, unchanged) and the new purge.
+`PurgeExpired` joined `ports.IdempotencyStore`, implemented by both the
+Postgres store and the memory double: it deletes at most a bounded batch
+of rows with `created_at <= now() - retention` — the exact complement of
+the read guard — oldest first (`idx_idempotency_keys_created_at`),
+`FOR UPDATE SKIP LOCKED`, the age test repeated on the DELETE itself, and
+no advisory lock: a row a request holds is skipped, never waited for, and
+a row `Save` just refreshed reads live and stays. The port contract is
+`repocontract.RunIdempotencyPurge` (both implementations run it).
+`cmd/api/retention.go` runs the purge as an always-on worker under the
+same supervision as the consumers and the outbox relay: at start, then
+hourly, batches of 1000, a short batch ends the pass; a failed pass is
+logged and retried at the next tick; a dead worker exits the process.
+
+No replay class flips: past the window the key is free, so a retry under
+an expired key is a first execution (the age guard pinned through the
+real middleware), and the purge only stops the table from growing — the
+fleet pattern (order-sourcing #84, last-mile-delivery #86,
+network-inventory-planning #142).
