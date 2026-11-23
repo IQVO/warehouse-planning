@@ -10,13 +10,6 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/domain/workloadforecast"
 )
 
-// Problem categories of the forecast body that the adapter itself detects
-// (the domain never sees a cpt string or an absent quantity).
-var (
-	problemMalformedCPT          = problemInfo{slug: "malformed-cpt", title: "cpt must be an RFC3339 timestamp"}
-	problemMissingBucketQuantity = problemInfo{slug: "missing-bucket-quantity", title: "Every forecast bucket needs a quantity"}
-)
-
 // registerRequirementRoutes registers the docs/adr/0023 routes whose use
 // cases are wired. The PUTs are naturally idempotent (the same body twice is
 // the same resource state), so they are NOT behind the Idempotency-Key

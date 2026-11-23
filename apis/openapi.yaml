@@ -499,7 +499,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
         "404":
-          description: No ProcessPath registered under path_id.
+          description: >-
+            No ProcessPath registered under path_id (process-path-not-found --
+            RETRYABLE: the ACTIVE flow arrives as a process-path-management
+            event, so the refusal is not stored and the key is released; retry
+            the SAME key once the path is known).
           content:
             application/problem+json:
               schema:
@@ -508,11 +512,15 @@ paths:
           $ref: "#/components/responses/KeyReused"
         "422":
           description: >
-            A path step has no ProcessCapacity registered for this
-            location/window; a WorkloadProfile factor is missing, not
-            positive, or cannot normalize a step's unit; assigned_demand is
-            negative, or is omitted and the order-demand read model has no
-            order for this location and window (missing-assigned-demand);
+            RETRYABLE (not stored, key released -- the state can arrive later):
+            a path step has no ProcessCapacity registered for this
+            location/window (missing-step-capacity); a WorkloadProfile factor
+            is missing for a step's unit (missing-conversion-factor) or cannot
+            normalize it (unsupported-normalization-unit); assigned_demand is
+            omitted and the order-demand read model has no order yet for this
+            location and window (missing-assigned-demand). FINAL (stored and
+            replayed): a WorkloadProfile factor is not positive; assigned_demand is
+            negative;
             a tasks_per_order value is not positive
             (non-positive-tasks-per-order); site_id is absent/blank; or
             warehouse_id/location/path_id is blank. demand_source
@@ -657,7 +665,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
         "409":
-          description: The plan is already PUBLISHED (capacity-plan-already-published), was SUPERSEDED by a newer published plan of its window (capacity-plan-superseded), a concurrent publish of the same site, location, path and window won twice (version-conflict; retry it), or the Idempotency-Key was already used with a different request (idempotency-key-reused).
+          description: >-
+            The plan is already PUBLISHED (capacity-plan-already-published) or
+            was SUPERSEDED by a newer published plan of its window
+            (capacity-plan-superseded) -- both FINAL, stored and replayed under
+            the key; a concurrent publish of the same site, location, path and
+            window won twice (version-conflict -- RETRYABLE: not stored, the
+            key is released, retry it under the SAME key); or the
+            Idempotency-Key was already used with a different request
+            (idempotency-key-reused).
           content:
             application/problem+json:
               schema:
@@ -1424,7 +1440,11 @@ components:
         Postgres (ADR 0016), so the key is required on every POST/PATCH. A missing key is 400 idempotency-key-required, a malformed one
         400 idempotency-key-invalid; the same key with a different method, path or body is 409
         idempotency-key-reused; the same key with the same request replays the stored answer with
-        Idempotency-Replayed: true.
+        Idempotency-Replayed: true. Which answers a retry replays is the problem type's replay
+        class (ADR 0026): FINAL refusals and every 2xx are stored and replayed; a RETRYABLE
+        refusal (version-conflict, process-path-not-found, missing-step-capacity,
+        missing-assigned-demand, ...) commits nothing, is not stored and RELEASES the key, so a
+        retry under the same key executes again and a different body under it is a new request.
       schema:
         type: string
         minLength: 1

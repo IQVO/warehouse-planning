@@ -10,15 +10,6 @@ import (
 	"github.com/claudioed/warehouse-planning/internal/application/usecases"
 )
 
-// Problem categories of the labour-plan request that the adapter itself
-// detects.
-var (
-	problemMalformedShiftStart      = problemInfo{slug: "malformed-shift-start", title: "shift_start must be an RFC3339 timestamp"}
-	problemMissingInstalledStations = problemInfo{slug: "missing-installed-stations", title: "installed_stations is required"}
-	problemMissingSiteID            = problemInfo{slug: "missing-site-id", title: "site_id is required"}
-	problemMissingShiftID           = problemInfo{slug: "missing-shift-id", title: "shift_id is required"}
-)
-
 // labourPlanListFilters are the declared filters of GET /labour-plans.
 var labourPlanListFilters = []string{"site_id", "shift_id"}
 

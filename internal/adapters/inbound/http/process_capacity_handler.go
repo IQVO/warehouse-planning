@@ -213,7 +213,7 @@ func (s *Server) handleRegisterProcessCapacityConstraint(w http.ResponseWriter, 
 		return
 	}
 	if req.PeriodSeconds <= 0 {
-		writeProblem(w, http.StatusUnprocessableEntity, problemInfo{"non-positive-period", "period_seconds must be positive"}, "period_seconds must be positive", r.URL.Path)
+		writeProblem(w, http.StatusUnprocessableEntity, problemNonPositivePeriod, "period_seconds must be positive", r.URL.Path)
 		return
 	}
 
@@ -263,7 +263,7 @@ func (s *Server) handleGetEffectiveProcessCapacity(w http.ResponseWriter, r *htt
 		return
 	}
 	if pc == nil {
-		writeProblem(w, http.StatusNotFound, problemInfo{"process-capacity-not-found", "No ProcessCapacity is registered for this process, location and window"},
+		writeProblem(w, http.StatusNotFound, problemProcessCapacityNotFound,
 			"no ProcessCapacity registered for the given process_type/location/window", r.URL.Path)
 		return
 	}
