@@ -173,6 +173,28 @@ func isRequirementValidation(err error) bool {
 	return false
 }
 
+// standaloneProblem is one problem answered with a fixed status, written by
+// the middleware or a handler directly rather than mapped from a domain error.
+type standaloneProblem struct {
+	status int
+	info   problemInfo
+}
+
+// standaloneProblems lists every problem the service answers without mapping a
+// domain error: today the idempotency middleware's own four plus the shared
+// handler-level validation problems. The replay-class adoption
+// (docs/adr/0026) moves EVERY handler-level problemInfo literal into this
+// table with its replay class; until then it carries the middleware's own.
+func standaloneProblems() []standaloneProblem {
+	return []standaloneProblem{
+		{http.StatusBadRequest, problemInfo{"idempotency-key-required", "The Idempotency-Key header is required"}},
+		{http.StatusBadRequest, problemInfo{"idempotency-key-invalid", "The Idempotency-Key header is malformed"}},
+		{http.StatusConflict, problemInfo{"idempotency-key-reused", "Idempotency-Key was already used with a different request"}},
+		{http.StatusBadRequest, problemInfo{"malformed-request-body", "Request body could not be read"}},
+		{http.StatusInternalServerError, problemInfo{"internal-error", "An unexpected internal error occurred"}},
+	}
+}
+
 // problemFor maps a typed domain error to its RFC 7807 (type, title) pair
 // by walking problemCatalog in order. Mirrors statusFor's groupings.
 func problemFor(err error) problemInfo {
