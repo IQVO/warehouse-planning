@@ -58,7 +58,10 @@ func purgeHandler(calls *atomic.Int32, writeErr *atomic.Pointer[error]) http.Han
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		// A stored answer's body column is BYTEA NOT NULL: the answer must
+		// carry bytes (a nil []byte would encode as NULL and fail the save).
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
 	}
 }
 
