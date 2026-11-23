@@ -146,7 +146,7 @@ func seedActiveFlow(t *testing.T, flows *memory.ProcessFlowRepo, id string) {
 // location over [ws, we) through the real keyed route.
 func registerStepCapacity(t *testing.T, srv *httptest.Server, key, process, location, ws, we string) {
 	t.Helper()
-	body := fmt.Sprintf(`{"process_type":%q,"location":%q,"window_start":%q,"window_end":%q,"constraint_type":"LABOR","quantity":120,"unit":"UNIT/HOUR","period_seconds":3600}`,
+	body := fmt.Sprintf(`{"process_type":%q,"location":%q,"window_start":%q,"window_end":%q,"constraint_type":"LABOR","quantity":120,"unit":"UNIT","period_seconds":3600}`,
 		process, location, ws, we)
 	status, _, resp := proofPost(t, srv, "/process-capacities", key, body)
 	if status != http.StatusCreated {
