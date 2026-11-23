@@ -25,6 +25,12 @@ const (
 // aggregate change and is never stored: the retry re-executes.
 var errServerAnswer = errors.New("5xx answers are not stored")
 
+// errRetryableAnswer aborts the unit of work so a RETRYABLE (or unclassified)
+// refusal rolls back exactly like a 5xx: nothing is stored, the key row rolls
+// back with it and the transaction-scoped advisory lock releases, so the same
+// key may be tried again (fleet replay-class rule, docs/adr/0026).
+var errRetryableAnswer = errors.New("retryable refusals are not stored")
+
 // errAbortedSuccess fails a 2xx answer whose writes died with an aborted
 // transaction: it must be neither returned nor cached.
 var errAbortedSuccess = errors.New("success answer over an aborted transaction")
@@ -44,7 +50,7 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-request-body", "Request body could not be read"}, err.Error(), r.URL.Path)
+			writeProblem(w, http.StatusBadRequest, problemMalformedRequestBody, err.Error(), r.URL.Path)
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -58,8 +64,8 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			replayed, err = s.runKeyed(ctx, next, rec, r, key, fingerprint)
 			return err
 		})
-		if doErr != nil && !errors.Is(doErr, errServerAnswer) {
-			writeProblem(w, http.StatusInternalServerError, problemInfo{"internal-error", "An unexpected internal error occurred"}, "idempotency store failure", r.URL.Path)
+		if doErr != nil && !errors.Is(doErr, errServerAnswer) && !errors.Is(doErr, errRetryableAnswer) {
+			writeProblem(w, http.StatusInternalServerError, problemInternalError, "idempotency store failure", r.URL.Path)
 			return
 		}
 		rec.flush(w, replayed)
@@ -80,6 +86,13 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 // committed like any other. A 2xx answer over an aborted transaction is a lie
 // (its writes are gone), so the unit of work fails (500, nothing cached) and
 // the same key retries the real work.
+//
+// A 4xx refusal is stored only when its problem type's replay class says so
+// (docs/adr/0026): FINAL and OUTCOME answers are recorded exactly as before;
+// a RETRYABLE answer -- and, as a safe fallback, any 4xx the production
+// writer did not mark with a class -- returns errRetryableAnswer, which rolls
+// the unit of work back (handler writes, key row and the transaction-scoped
+// advisory lock with it) so the key is free and a retry executes again.
 func (s *Server) runKeyed(ctx context.Context, next http.HandlerFunc, rec *recorder, r *http.Request, key, fingerprint string) (bool, error) {
 	stored, err := s.Idempotency.Lock(ctx, key)
 	if err != nil {
@@ -87,7 +100,7 @@ func (s *Server) runKeyed(ctx context.Context, next http.HandlerFunc, rec *recor
 	}
 	if stored != nil {
 		if stored.Fingerprint != fingerprint {
-			writeProblem(rec, http.StatusConflict, problemInfo{"idempotency-key-reused", "Idempotency-Key was already used with a different request"}, "the Idempotency-Key was first used with a different method, path or body", r.URL.Path)
+			writeProblem(rec, http.StatusConflict, problemIdempotencyKeyReused, "the Idempotency-Key was first used with a different method, path or body", r.URL.Path)
 			return false, nil
 		}
 		rec.load(stored)
@@ -99,6 +112,9 @@ func (s *Server) runKeyed(ctx context.Context, next http.HandlerFunc, rec *recor
 	next(rec, r.WithContext(ctx))
 	if rec.status >= http.StatusInternalServerError {
 		return false, errServerAnswer
+	}
+	if rec.status >= http.StatusBadRequest && !rec.storesAnswer() {
+		return false, errRetryableAnswer
 	}
 	aborted, err := s.Idempotency.ReleaseSavepoint(ctx)
 	if err != nil {
@@ -115,11 +131,11 @@ func (s *Server) runKeyed(ctx context.Context, next http.HandlerFunc, rec *recor
 func idempotencyKey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	vals := r.Header.Values(IdempotencyKeyHeader)
 	if len(vals) == 0 || (len(vals) == 1 && vals[0] == "") {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"idempotency-key-required", "The Idempotency-Key header is required"}, "send an Idempotency-Key header (1-128 printable ASCII characters, e.g. a UUID)", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemIdempotencyKeyRequired, "send an Idempotency-Key header (1-128 printable ASCII characters, e.g. a UUID)", r.URL.Path)
 		return "", false
 	}
 	if len(vals) > 1 || !validIdempotencyKey(vals[0]) {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"idempotency-key-invalid", "The Idempotency-Key header is malformed"}, "the Idempotency-Key must be a single value of 1-128 printable ASCII characters", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemIdempotencyKeyInvalid, "the Idempotency-Key must be a single value of 1-128 printable ASCII characters", r.URL.Path)
 		return "", false
 	}
 	return vals[0], true
@@ -138,10 +154,21 @@ func validIdempotencyKey(k string) bool {
 }
 
 // recorder buffers a handler's answer so it can be stored before it is sent.
+// The production problem writer marks class on it (writeProblem), which is how
+// the middleware learns the replay class of a refusal without holding any list
+// of slugs: an unmarked 4xx is treated as RETRYABLE (released, not stored).
 type recorder struct {
 	header http.Header
 	status int
+	class  replayClass
 	body   bytes.Buffer
+}
+
+// storesAnswer reports whether the buffered 4xx answer is stored under the
+// key: FINAL and OUTCOME refusals are; an empty class (a writer that bypassed
+// the catalogue) is the RETRYABLE fallback.
+func (r *recorder) storesAnswer() bool {
+	return r.class == replayFinal || r.class == replayOutcome
 }
 
 func (r *recorder) Header() http.Header         { return r.header }

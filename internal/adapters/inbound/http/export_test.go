@@ -20,17 +20,14 @@ type ProblemTypeForTest struct {
 }
 
 // ExportProblemTypesForTest returns every problem type the idempotent routes
-// can answer, from the production catalogue. The replay-class rollout fills
-// Class from the catalogue entry; until the class field exists every entry
-// reports the empty class, which is exactly what the template's first test
-// flags.
+// can answer, from the production catalogue (allProblemTypes: the domain-error
+// catalogue plus every standalone problem), each with the replay class its
+// entry declares.
 func ExportProblemTypesForTest() []ProblemTypeForTest {
-	out := make([]ProblemTypeForTest, 0, 64)
-	for _, entry := range problemCatalog() {
-		out = append(out, ProblemTypeForTest{Slug: entry.info.slug, Status: statusFor(entry.err)})
-	}
-	for _, p := range standaloneProblems() {
-		out = append(out, ProblemTypeForTest{Slug: p.info.slug, Status: p.status})
+	types := allProblemTypes()
+	out := make([]ProblemTypeForTest, 0, len(types))
+	for _, p := range types {
+		out = append(out, ProblemTypeForTest{Slug: p.slug, Status: p.status, Class: string(p.class)})
 	}
 	return out
 }

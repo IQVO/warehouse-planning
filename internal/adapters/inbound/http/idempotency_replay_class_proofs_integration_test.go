@@ -131,8 +131,8 @@ func seedActiveFlow(t *testing.T, flows *memory.ProcessFlowRepo, id string) {
 	t.Helper()
 	f, err := processflow.New(processflow.Params{
 		FlowID: id, Name: "proof-" + id,
-		Stages:  []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}},
-		Status:  processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC(),
+		Stages: []processflow.Stage{{PathID: "PICK", ProcessType: processflow.Pick}},
+		Status: processflow.StatusActive, Version: 1, UpdatedAt: time.Unix(0, 0).UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)

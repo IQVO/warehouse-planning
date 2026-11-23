@@ -13,9 +13,9 @@ const maxBodyBytes = 1 << 20
 
 // The problems rejectNUL answers with.
 var (
-	notFoundResource   = problemInfo{"resource-not-found", "Resource not found"}
-	malformedBody      = problemInfo{"malformed-request-body", "Request body must not contain a NUL character"}
-	malformedQueryNull = problemInfo{"malformed-request-query", "Query string must not contain a NUL character"}
+	notFoundResource   = problemResourceNotFound
+	malformedBody      = problemNULRequestBody
+	malformedQueryNull = problemMalformedRequestQuery
 )
 
 // rejectNUL turns a NUL character in a request into a client error before it

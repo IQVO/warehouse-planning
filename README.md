@@ -334,8 +334,12 @@ below is declared at the same path in `apis/openapi.yaml`. Every `POST`
 a missing key is `400 idempotency-key-required`, a malformed one
 `400 idempotency-key-invalid`, the same key with a different method, path or
 body `409 idempotency-key-reused`, and a replay carries
-`Idempotency-Replayed: true`. Consumer-side idempotency (Kafka) is the
-`processed_events` table.
+`Idempotency-Replayed: true`. Which answers a retry replays is the problem
+type's replay class (ADR 0026): FINAL and OUTCOME refusals and every 2xx are
+stored and replayed; a RETRYABLE refusal (version-conflict,
+process-path-not-found, missing-step-capacity, ...) is not stored and releases
+the key, so a retry under the same key executes again. Consumer-side
+idempotency (Kafka) is the `processed_events` table.
 
 Write side:
 

@@ -47,7 +47,7 @@ type comparedPlanItem struct {
 func (s *Server) handleCompareCapacityPlans(w http.ResponseWriter, r *http.Request) {
 	for name := range r.URL.Query() {
 		if name != "ids" {
-			writeProblem(w, http.StatusBadRequest, problemInfo{"unknown-query-parameter", "Unknown query parameter"}, "query parameter \""+name+"\" is not declared by this read (it takes ids only)", r.URL.Path)
+			writeProblem(w, http.StatusBadRequest, problemUnknownQueryParameter, "query parameter \""+name+"\" is not declared by this read (it takes ids only)", r.URL.Path)
 			return
 		}
 	}

@@ -82,12 +82,12 @@ func (s *Server) handleGetProcessPathCapacity(w http.ResponseWriter, r *http.Req
 
 	unitsPerOrder, err := parseOptionalFloatQueryParam(q.Get("units_per_order"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-units-per-order", "units_per_order must be a number"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedUnitsPerOrder, err.Error(), r.URL.Path)
 		return
 	}
 	packagesPerOrder, err := parseOptionalFloatQueryParam(q.Get("packages_per_order"))
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-packages-per-order", "packages_per_order must be a number"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMalformedPackagesPerOrder, err.Error(), r.URL.Path)
 		return
 	}
 

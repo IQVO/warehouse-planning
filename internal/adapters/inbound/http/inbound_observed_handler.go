@@ -165,7 +165,7 @@ func (s *Server) handleGetInboundDemand(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if pathID == "" {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"missing-path-id", "path_id is required"}, "the path_id query parameter (the process path whose inbound standard prices the appointments) must be provided", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemMissingPathID, "the path_id query parameter (the process path whose inbound standard prices the appointments) must be provided", r.URL.Path)
 		return
 	}
 	start, err := time.Parse(time.RFC3339, q.Get("window_start"))
@@ -263,7 +263,7 @@ func (s *Server) handleGetCapacityPlanVariance(w http.ResponseWriter, r *http.Re
 	if raw := r.URL.Query().Get("tasks_per_order"); raw != "" {
 		parsed, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-tasks-per-order", "tasks_per_order must be a number"}, err.Error(), r.URL.Path)
+			writeProblem(w, http.StatusBadRequest, problemMalformedTasksPerOrder, err.Error(), r.URL.Path)
 			return
 		}
 		tasksPerOrder = &parsed
