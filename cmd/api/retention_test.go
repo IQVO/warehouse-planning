@@ -75,9 +75,28 @@ func TestACancelledPurgeDeletesNothing(t *testing.T) {
 	}
 }
 
+// syncedBuffer is a mutex-guarded buffer: the loop's logger writes from its
+// own goroutine while the test polls String().
+type syncedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func TestThePurgeLoopLogsAFailedPassAndStopsOnCancel(t *testing.T) {
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	logs := &syncedBuffer{}
+	logger := slog.New(slog.NewTextHandler(logs, nil))
 	store := &scriptedPurgeStore{err: errors.New("db down")}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

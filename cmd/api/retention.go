@@ -19,9 +19,6 @@ const (
 	idempotencyPurgeBatch    = 1000
 )
 
-// purgeBatch deletes one batch of expired rows and returns how many it deleted.
-type purgeBatch func(ctx context.Context, limit int) (int, error)
-
 // purgeIdempotencyKeys runs batches until one comes back short (the backlog
 // is gone) or ctx ends, and returns how many rows it deleted.
 func purgeIdempotencyKeys(ctx context.Context, store ports.IdempotencyStore, batch int) (int, error) {
