@@ -111,7 +111,7 @@ func (g *Readiness) Failing(ctx context.Context) []string {
 }
 
 // dependencyUnavailable is the 503 problem of a failed dependency check.
-var dependencyUnavailable = problemInfo{"dependency-unavailable", "A runtime dependency is unavailable"}
+var dependencyUnavailable = problemDependencyUnavailable
 
 // handleReadyz handles GET /readyz: 200 {"status":"ready"} while ready; 503
 // {"status":"not_ready"} once SetNotReady was called (draining); 503

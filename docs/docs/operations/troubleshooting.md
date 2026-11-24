@@ -20,7 +20,15 @@ loses a race twice is `409 version-conflict`. There is **no** circuit breaker:
 the service makes no synchronous call to another
 context. A repeated `POST /capacity-plans` under a *fresh* key creates a second
 plan (the same key and body replays the first answer); a repeated publish is a
-409.
+409. Which refusals a retry replays is the problem type's replay class
+(ADR 0026, `docs/adr/0026-idempotency-replay-classes.md`): FINAL refusals and
+2xx answers replay; a RETRYABLE refusal (`version-conflict`,
+`process-path-not-found`, `missing-step-capacity`, ...) is not stored and
+releases the key, so the same key re-executes once the state it names arrives.
+A stored answer replays for 24 hours (`ports.IdempotencyRetention`); past that
+window the key is free again (a retry is a first execution) and the row is
+deleted by the always-on hourly purge (`cmd/api/retention.go`; ADR 0026
+addendum).
 
 ## Boot and readiness
 

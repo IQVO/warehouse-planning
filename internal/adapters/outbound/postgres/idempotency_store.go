@@ -64,6 +64,32 @@ func (s *IdempotencyStore) Save(ctx context.Context, rec idempotency.Record) err
 	return nil
 }
 
+// PurgeExpired implements ports.IdempotencyStore: it deletes at most limit
+// rows older than IdempotencyRetention, oldest first
+// (idx_idempotency_keys_created_at). It runs on the pool, never inside a
+// request's unit of work, and takes no advisory lock: an expired row is
+// already invisible to Lock. FOR UPDATE SKIP LOCKED leaves a row another
+// transaction is writing (a request that holds the key refreshes it under a
+// row lock, and Save's upsert resets created_at), and the age test is
+// repeated on the DELETE itself, so a row a request just refreshed is never
+// deleted. `created_at <= now() - retention` is the exact complement of
+// Lock's `created_at > now() - retention`, over the same constant.
+func (s *IdempotencyStore) PurgeExpired(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM idempotency_keys
+		WHERE created_at <= now() - make_interval(secs => $1) AND key IN (
+			SELECT key FROM idempotency_keys
+			WHERE created_at <= now() - make_interval(secs => $1)
+			ORDER BY created_at LIMIT $2 FOR UPDATE SKIP LOCKED)`,
+		ports.IdempotencyRetention.Seconds(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("purge idempotency keys: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // Savepoint implements ports.IdempotencyStore.
 func (s *IdempotencyStore) Savepoint(ctx context.Context) error {
 	if _, err := queryFor(ctx, s.pool).Exec(ctx, "SAVEPOINT handler_run"); err != nil {

@@ -14,7 +14,10 @@ cutover): EVERY POST is keyed — the key is GLOBAL (looked up alone,
 fingerprint = method + path + body hash), a missing key is 400
 `idempotency-key-required`, an invalid key 400 `idempotency-key-invalid`,
 key reuse with another request 409 `idempotency-key-reused`, and replays
-carry `Idempotency-Replayed: true`.
+carry `Idempotency-Replayed: true`. Every problem type has one replay class
+(ADR 0026): FINAL/OUTCOME refusals and 2xx answers are stored and replayed; a
+RETRYABLE refusal (version-conflict, process-path-not-found, ...) is not
+stored and releases the key, so the retry executes again.
 
 Phase 1 (current):
 

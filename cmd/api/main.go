@@ -145,7 +145,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	return serveUntilSignal(ctx, logger, httpServer, readiness, consumers, closeConsumers, relayRunner, closeRelay)
+	// The idempotency-key retention purge (ADR 0026 addendum, 2026-11-23)
+	// runs next to the consumers and the relay, always on: it deletes the
+	// key rows past ports.IdempotencyRetention in bounded hourly passes.
+	purgeRunner, closePurge := startIdempotencyPurge(ad.idempotency, logger)
+
+	return serveUntilSignal(ctx, logger, httpServer, readiness, append(consumers, purgeRunner), closeConsumers, closePurge, relayRunner, closeRelay)
 }
 
 // buildServer assembles the REST inbound adapter's Server from the wired
