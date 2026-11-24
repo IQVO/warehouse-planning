@@ -34,6 +34,14 @@ Hard cutover, no aliases, no toggles.
    Migration `0011_idempotency_keys` adds the table; the key row is saved in the
    same `UnitOfWork` as the aggregate and its outbox rows. 4xx answers are
    stored and replayed, 5xx are not. PUT takes no key.
+
+   > **2026-11-23 (ADR 0026):** the "4xx answers are stored and replayed"
+   > sentence above now holds only for FINAL and OUTCOME refusals. Every
+   > problem type carries a replay class on its catalogue entry; a RETRYABLE
+   > refusal (version-conflict, process-path-not-found,
+   > missing-step-capacity, ...) is not stored and its key is released, so a
+   > retry under the same key executes again. See
+   > [ADR 0026](0026-idempotency-replay-classes.md).
 3. **Paging.** `GET /process-paths`, `/capacity-plans`, `/station-standards`
    and `/inbound-labour-standards` answer `{items, nextCursor}` with `limit`
    (default 100, max 500) and an opaque keyset `cursor`; problems `invalid-limit`,

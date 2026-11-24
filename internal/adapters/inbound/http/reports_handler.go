@@ -136,7 +136,7 @@ func (s *ReportsServer) parseRange(w http.ResponseWriter, r *http.Request) (repo
 	rg, err := report.ParseRange(q.Get("from"), q.Get("to"), now())
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest,
-			problemInfo{"invalid-report-range", "from and to must form a valid RFC 3339 range of at most 366 days"},
+			problemInvalidReportRange,
 			err.Error(), r.URL.Path)
 		return report.Range{}, false
 	}
@@ -147,7 +147,7 @@ func (s *ReportsServer) parseRange(w http.ResponseWriter, r *http.Request) (repo
 // not echoed: it can carry SQL and connection details.
 func writeReportError(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, http.StatusInternalServerError,
-		problemInfo{"report-store-error", "The report could not be served"},
+		problemReportStoreError,
 		"the analytical database query failed", r.URL.Path)
 }
 

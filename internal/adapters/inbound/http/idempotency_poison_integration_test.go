@@ -67,16 +67,17 @@ func countRows(t *testing.T, pool *pgxpool.Pool, key string) int {
 
 // TestIdempotency_AbortedTransaction409CommitsTheOutcome: a lost race that
 // aborts the transaction still answers the truthful 409, the outcome is
-// committed, and a replay returns it without re-running the handler.
+// committed, and a replay returns it without re-running the handler. Since the
+// replay-class adoption (docs/adr/0026) the refusal must go through the
+// production problem writer so its class (here FINAL,
+// capacity-plan-already-published) marks the capture: a FINAL 409 is stored.
 func TestIdempotency_AbortedTransaction409CommitsTheOutcome(t *testing.T) {
 	s, pool := poisonServer(t)
 	var calls atomic.Int64
 	mw := s.ExportIdempotent(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		poisonTx(t, r)
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"type":"https://errors.example/some-conflict","status":409}`))
+		inboundhttp.ExportRefuseForTest(w, r, "capacity-plan-already-published")
 	})
 
 	first := httptest.NewRecorder()
@@ -102,6 +103,34 @@ func TestIdempotency_AbortedTransaction409CommitsTheOutcome(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("handler ran %d times, want 1 (replay must not re-run it)", calls.Load())
+	}
+}
+
+// TestIdempotency_AbortedTransactionRetryable409IsReleased: the same aborted
+// transaction, but the refusal's problem type is RETRYABLE (version-conflict):
+// nothing is stored, the key is released and the retry executes again.
+func TestIdempotency_AbortedTransactionRetryable409IsReleased(t *testing.T) {
+	s, pool := poisonServer(t)
+	var calls atomic.Int64
+	mw := s.ExportIdempotent(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			poisonTx(t, r)
+		}
+		inboundhttp.ExportRefuseForTest(w, r, "version-conflict")
+	})
+
+	first := httptest.NewRecorder()
+	mw(first, poisonRequest("k-poison-retry"))
+	if first.Code != http.StatusConflict || !strings.Contains(first.Body.String(), "version-conflict") {
+		t.Fatalf("first = %d %s, want the truthful 409", first.Code, first.Body.String())
+	}
+	if n := countRows(t, pool, "k-poison-retry"); n != 0 {
+		t.Fatalf("a RETRYABLE 409 left %d idempotency rows: the key must be released", n)
+	}
+	second := httptest.NewRecorder()
+	mw(second, poisonRequest("k-poison-retry"))
+	if second.Code != http.StatusConflict || second.Header().Get(inboundhttp.IdempotencyReplayedHeader) != "" || calls.Load() != 2 {
+		t.Fatalf("retry = %d replayed=%q calls=%d, want a fresh refusal after 2 calls", second.Code, second.Header().Get(inboundhttp.IdempotencyReplayedHeader), calls.Load())
 	}
 }
 

@@ -30,4 +30,11 @@ type IdempotencyStore interface {
 	// reports aborted=true. A non-nil error means the transaction could not
 	// be healed.
 	ReleaseSavepoint(ctx context.Context) (aborted bool, err error)
+	// PurgeExpired is the retention: it deletes at most limit stored
+	// answers older than IdempotencyRetention, oldest first, and returns
+	// how many it deleted. A result below limit means nothing expired is
+	// left. It must never delete a row a request holds and never block on
+	// one, and it takes no advisory lock: an expired row is already
+	// invisible to Lock, so the purge only stops the table from growing.
+	PurgeExpired(ctx context.Context, limit int) (deleted int, err error)
 }

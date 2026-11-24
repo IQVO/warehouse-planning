@@ -16,17 +16,17 @@ import (
 // first page) and the number of rows to fetch (limit+1, to detect a next page).
 func pageParams(w http.ResponseWriter, r *http.Request, filters ...string) (limit int, after *pagecursor.Cursor, ok bool) {
 	if name := page.Unknown(r, filters...); name != "" {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"unknown-query-parameter", "Unknown query parameter"}, "query parameter \""+name+"\" is not declared by this collection (paging uses limit and cursor)", r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemUnknownQueryParameter, "query parameter \""+name+"\" is not declared by this collection (paging uses limit and cursor)", r.URL.Path)
 		return 0, nil, false
 	}
 	limit, err := page.Limit(r)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-limit", "limit must be an integer between 1 and 500"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemInvalidLimit, err.Error(), r.URL.Path)
 		return 0, nil, false
 	}
 	pos, err := page.After(r)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-cursor", "cursor is not a valid page token"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemInvalidCursor, err.Error(), r.URL.Path)
 		return 0, nil, false
 	}
 	if pos != nil {
