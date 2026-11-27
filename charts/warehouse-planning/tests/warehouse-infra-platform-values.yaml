@@ -25,12 +25,15 @@ gatewayApi:
 
 mcp:
   route:
-    parentRefs: *gateway
+    parentRefs: &agentRouterGateway
+      - name: agent-router
+        namespace: envoy-gateway-system
+        sectionName: http
 
 # ANTICIPATED (ADR 0018): added by the separate warehouse-infra A2A flip PR.
 a2a:
   route:
-    parentRefs: *gateway
+    parentRefs: *agentRouterGateway
 
 analytics:
   reports:
